@@ -3,11 +3,24 @@
   "version": "1.0.0",
   "private": true,
   "description": "Gmail-style webmail that splits one GoDaddy mailbox into separate inboxes per alias",
+  "main": "server/app.cjs",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "install:all": "npm install && npm install --prefix server && npm install --prefix client",
     "dev": "concurrently -n api,web -c yellow,magenta \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
     "build": "npm run build --prefix client",
-    "start": "npm start --prefix server"
+    "start": "node server/app.cjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0",
+    "imapflow": "^1.0.188",
+    "jsonwebtoken": "^9.0.2",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^10.2.1"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

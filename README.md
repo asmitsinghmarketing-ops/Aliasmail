@@ -68,7 +68,7 @@ client/  React + Vite UI (Gmail-style mailbox + admin console)
 ## Going live on GoDaddy
 
 ### 1. Before uploading
-- [ ] `npm run build` (in `mail/`), so `client/dist` exists. The server serves it.
+- [ ] `npm run build` (in the project root), so `client/dist` exists. The server serves it.
 - [ ] In `server/.env`: `NODE_ENV=production`, `COOKIE_SECURE=true`, `TRUST_PROXY=true`.
 - [ ] `ADMIN_PASSWORD`: long (12+ characters) and not used anywhere else.
 - [ ] Keep the same `JWT_SECRET`. 2-step secrets are encrypted with it.
@@ -81,9 +81,10 @@ client/  React + Vite UI (Gmail-style mailbox + admin console)
 2. cPanel → **Setup Node.js App** → Create:
    - Node.js version **18 or newer**
    - Application mode **Production**
-   - Application root `aliasmail/server`
+   - Application root `aliasmail` (or `aliasmail/server`; both have a package.json with the
+     dependencies, including Express)
    - Application URL your domain or subdomain (e.g. `mail.nexternconsultancy.com`)
-   - Application startup file **`app.cjs`**
+   - Application startup file **`server/app.cjs`** (just `app.cjs` if the root is `aliasmail/server`)
 3. Click **Run NPM Install**, then **Restart**.
 4. cPanel → **SSL/TLS Status**: make sure the domain has a certificate. Then cPanel → **Domains**:
    turn on **Force HTTPS Redirect**. Leave `FORCE_HTTPS=false` in `.env`, so cPanel does the redirect.
