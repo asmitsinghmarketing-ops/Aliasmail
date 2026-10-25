@@ -43,6 +43,46 @@ export default function Compose({ from, draft, onClose, onSend }) {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
   const body = useRef(null);
+  // The window can be dragged by its title bar. null = docked bottom-right; else { left, top } in px.
+  const [pos, setPos] = useState(null);
+  const win = useRef(null);
+  const drag = useRef(null); // { dx, dy, x, y, moved } while the pointer is down
+  const justDragged = useRef(false); // swallow the click that ends a drag (a click minimizes)
+
+  // Keep the title bar on screen: the whole width inside the window, the top above the bottom edge.
+  const clamp = (left, top) => ({
+    left: Math.min(Math.max(0, left), Math.max(0, window.innerWidth - win.current.offsetWidth)),
+    top: Math.min(Math.max(0, top), window.innerHeight - 44),
+  });
+
+  useEffect(() => {
+    if (!pos) return;
+    const onResize = () => setPos((p) => p && clamp(p.left, p.top));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [Boolean(pos)]);
+
+  const dragHandlers = {
+    onPointerDown(e) {
+      if (mode === 'full' || e.button !== 0 || e.target.closest('.compose-head-actions')) return;
+      const rect = win.current.getBoundingClientRect();
+      drag.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top, x: e.clientX, y: e.clientY, moved: false };
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    onPointerMove(e) {
+      const d = drag.current;
+      if (!d || (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4)) return;
+      d.moved = true;
+      setPos(clamp(e.clientX - d.dx, e.clientY - d.dy));
+    },
+    onPointerUp() {
+      justDragged.current = Boolean(drag.current?.moved);
+      drag.current = null;
+    },
+    // Double-click the title bar to dock the window back in the corner.
+    onDoubleClick: () => setPos(null),
+  };
+  const floating = pos && mode !== 'full';
 
   // Replies open with the cursor above the quoted text and signature.
   useEffect(() => {
@@ -133,7 +173,9 @@ export default function Compose({ from, draft, onClose, onSend }) {
 
   const compose = (
     <form
-      className={`compose ${mode}`}
+      ref={win}
+      className={`compose ${mode} ${floating ? 'floating' : ''}`}
+      style={floating ? { left: pos.left, top: pos.top, right: 'auto', bottom: 'auto', maxHeight: `calc(100vh - ${pos.top + 8}px)` } : undefined}
       onSubmit={send}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(e);
@@ -150,7 +192,18 @@ export default function Compose({ from, draft, onClose, onSend }) {
         addFiles(e.dataTransfer.files);
       }}
     >
-      <div className="compose-head" onClick={() => setMode(mode === 'min' ? 'normal' : 'min')}>
+      <div
+        className="compose-head"
+        title={mode === 'full' ? undefined : 'Drag to move · double-click to dock'}
+        {...dragHandlers}
+        onClick={() => {
+          if (justDragged.current) {
+            justDragged.current = false;
+            return;
+          }
+          setMode(mode === 'min' ? 'normal' : 'min');
+        }}
+      >
         <span>{form.subject || 'New message'}</span>
         <span className="compose-head-actions" onClick={(e) => e.stopPropagation()}>
           <button type="button" className="icon-btn light" title="Minimize" onClick={() => setMode(mode === 'min' ? 'normal' : 'min')}>

@@ -283,6 +283,10 @@ label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; }
   background: #2b2825; color: #fff; border-radius: 12px 12px 0 0; font-weight: 600; cursor: pointer;
 }
 .compose-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compose:not(.full) .compose-head { cursor: grab; touch-action: none; user-select: none; }
+.compose:not(.full) .compose-head:active { cursor: grabbing; }
+.compose.floating { border-radius: 12px; animation: none; }
+.compose.floating .compose-foot { border-radius: 0 0 12px 12px; }
 .compose-line { display: flex; align-items: center; gap: 8px; margin: 0 16px; padding: 8px 0; border-bottom: 1px solid var(--border); }
 .compose-line input { border: 0; padding: 2px 0; border-radius: 0; }
 .compose-line input:focus-visible { outline: none; }
