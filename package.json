@@ -20,7 +20,9 @@
     "imapflow": "^1.0.188",
     "jsonwebtoken": "^9.0.2",
     "mailparser": "^3.7.2",
-    "nodemailer": "^10.2.1"
+    "mysql2": "^3.24.6",
+    "nodemailer": "^10.2.1",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

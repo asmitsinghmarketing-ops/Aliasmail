@@ -8,7 +8,7 @@ import { PALETTE, aliasesOf, createAlias, deleteAlias, findAliasById, updateAlia
 import { requireAuth } from '../auth.js';
 import { cacheOf, deleteFromServer, fetchParsed, prefetch, syncInbox, testConnection } from '../mailbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
-import { HttpError } from '../errors.js';
+import { HttpError, describeError } from '../errors.js';
 
 const router = Router();
 router.use(requireAuth('admin'));
@@ -58,7 +58,7 @@ router.post('/test-connection', async (req, res) => {
   try {
     res.json(await testConnection());
   } catch (err) {
-    throw new HttpError(502, `Connection failed: ${err.responseText || err.response || err.message}`);
+    throw new HttpError(502, `Connection failed: ${err instanceof HttpError ? err.message : describeError(err)}`);
   }
 });
 

@@ -5,13 +5,20 @@ import config from './config.js';
 import { db, flush, load } from './store.js';
 import { keepWarm, syncInbox } from './mailbox.js';
 import { runScheduled } from './outbox.js';
-import { AVATAR_DIR, AVATAR_FILE } from './avatars.js';
-import { HttpError } from './errors.js';
+import { readAvatar } from './avatars.js';
+import { HttpError, describeError } from './errors.js';
 import authRoutes from './routes/auth.js';
 import mailRoutes from './routes/mail.js';
 import adminRoutes from './routes/admin.js';
 
-load();
+// Log what kills the process, so the host's runtime logs show why requests got a 502.
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] uncaught exception:', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (err) => console.error('[error] unhandled rejection:', err));
+
+await load();
 
 // Marks which process owns the data folder (see checkDeployment).
 const lockFile = path.join(path.dirname(config.dataFile), '.pid');
@@ -75,10 +82,11 @@ app.use('/api/auth', express.json({ limit: '16kb' }));
 app.use(express.json({ limit: '35mb' }));
 
 // Profile pictures. File names are random and change on every upload, so they cache forever.
-app.get('/api/avatars/:file', (req, res) => {
-  if (!AVATAR_FILE.test(req.params.file)) return res.status(404).end();
+app.get('/api/avatars/:file', async (req, res) => {
+  const avatar = await readAvatar(req.params.file);
+  if (!avatar) return res.status(404).end();
   res.set({ 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' });
-  res.sendFile(path.join(AVATAR_DIR, req.params.file), (err) => err && !res.headersSent && res.status(404).end());
+  res.type(avatar.type).send(avatar.data);
 });
 
 app.use('/api/auth', authRoutes);
@@ -108,7 +116,7 @@ checkDeployment();
 if (config.configured) {
   const tick = () => {
     keepWarm();
-    syncInbox().catch((err) => console.warn('[sync] failed:', err.message));
+    syncInbox().catch((err) => console.warn('[sync] failed:', describeError(err)));
   };
   tick();
   setInterval(tick, config.syncIntervalMs);
@@ -116,8 +124,8 @@ if (config.configured) {
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    flush();
+  process.on(signal, async () => {
+    await flush();
     releaseLock();
     process.exit(0);
   });

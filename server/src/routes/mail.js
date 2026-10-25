@@ -573,9 +573,9 @@ const settingsOf = (account) => ({
 router.get('/settings', (req, res) => res.json(settingsOf(accountOf(req.me))));
 
 /** Upload a profile picture: { image: "data:image/jpeg;base64,..." } */
-router.post('/settings/avatar', (req, res) => {
+router.post('/settings/avatar', async (req, res) => {
   const account = accountOf(req.me);
-  setAvatar(account, saveAvatar(req.body?.image));
+  setAvatar(account, await saveAvatar(req.body?.image));
   res.json(settingsOf(accountOf(req.me)));
 });
 

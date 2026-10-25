@@ -72,6 +72,8 @@ client/  React + Vite UI (Gmail-style mailbox + admin console)
 - [ ] In `server/.env`: `NODE_ENV=production`, `COOKIE_SECURE=true`, `TRUST_PROXY=true`.
 - [ ] `ADMIN_PASSWORD`: long (12+ characters) and not used anywhere else.
 - [ ] Keep the same `JWT_SECRET`. 2-step secrets are encrypted with it.
+- [ ] Hosting that deploys from git (GoDaddy Node.js hosting): set `DATABASE_URL` (MySQL or
+      PostgreSQL). Without it, users, settings and profile pictures are lost on every redeploy.
 - [ ] Never upload `node_modules`. Run `npm install --omit=dev` in `server/` on the host.
 
 ### 2a. cPanel shared hosting ("Setup Node.js App")

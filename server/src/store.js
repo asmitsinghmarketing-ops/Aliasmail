@@ -1,8 +1,7 @@
-// Tiny JSON-file store. Holds aliases, metadata caches of the INBOX and Sent folders,
-// per-alias message state (read / starred / archived / trashed), drafts and app-sent mail.
-import fs from 'node:fs';
-import path from 'node:path';
-import config from './config.js';
+// In-memory store, saved to a JSON file or a database (see persist.js). Holds aliases, metadata
+// caches of the INBOX and Sent folders, per-alias message state (read / starred / archived /
+// trashed), drafts and app-sent mail.
+import { initPersistence, persistence } from './persist.js';
 
 const emptyFolder = () => ({ uidValidity: null, lastUid: 0, messages: {} });
 
@@ -25,6 +24,8 @@ const empty = () => ({
 
 let data = withMessagesAlias(empty());
 let timer = null;
+let writing = Promise.resolve();
+const written = {}; // key -> JSON last saved, so a database write only touches changed keys
 
 // `db().messages` is shorthand for the INBOX cache. Not enumerable, so it isn't saved twice.
 function withMessagesAlias(obj) {
@@ -32,17 +33,18 @@ function withMessagesAlias(obj) {
   return obj;
 }
 
-export function load() {
-  try {
-    const { messages, ...stored } = JSON.parse(fs.readFileSync(config.dataFile, 'utf8'));
+export async function load() {
+  const backend = await initPersistence();
+  const raw = await backend.readState();
+  if (raw) {
+    const { messages, ...stored } = raw;
     data = { ...empty(), ...stored, sync: { ...empty().sync, ...stored.sync } };
     // Files from before the Sent folder sync kept the INBOX cache at the top level.
     if (!stored.inbox && messages) {
       data.inbox = { uidValidity: stored.sync?.uidValidity ?? null, lastUid: stored.sync?.lastUid ?? 0, messages };
     }
     withMessagesAlias(data);
-  } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+    for (const [k, v] of Object.entries(data)) written[k] = JSON.stringify(v);
   }
   return data;
 }
@@ -54,10 +56,18 @@ export function save() {
   timer = setTimeout(flush, 200);
 }
 
+/** Write pending changes now. Writes run one at a time; the promise settles when this one is done. */
 export function flush() {
   clearTimeout(timer);
-  fs.mkdirSync(path.dirname(config.dataFile), { recursive: true });
-  const tmp = `${config.dataFile}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data));
-  fs.renameSync(tmp, config.dataFile);
+  writing = writing.then(write).catch((err) => console.error('[store] save failed:', err.message));
+  return writing;
+}
+
+async function write() {
+  const changed = Object.entries(data)
+    .map(([k, v]) => [k, JSON.stringify(v)])
+    .filter(([k, json]) => written[k] !== json);
+  if (!changed.length) return;
+  await persistence().writeState(changed, data);
+  for (const [k, json] of changed) written[k] = json;
 }

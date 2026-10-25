@@ -7,7 +7,7 @@ import MailComposer from 'nodemailer/lib/mail-composer';
 import config from './config.js';
 import { db, save } from './store.js';
 import { normalize } from './aliases.js';
-import { HttpError } from './errors.js';
+import { HttpError, describeError } from './errors.js';
 
 // Headers mail servers add with the address a message was actually delivered to.
 // They catch aliases that were BCC'd or reached through a forward.
@@ -36,7 +36,7 @@ const connections = {}; // lane -> { client, ready }
 function connect(lane) {
   if (connections[lane]) return connections[lane];
   const client = new ImapFlow({ ...config.imap });
-  client.on('error', (err) => console.warn(`[imap:${lane}]`, err.message));
+  client.on('error', (err) => console.warn(`[imap:${lane}]`, describeError(err)));
   client.on('close', () => {
     if (connections[lane]?.client === client) delete connections[lane];
   });
@@ -236,7 +236,7 @@ async function runSync() {
     prefetch(newest('inbox', 25), 'inbox');
     prefetch(newest('sent', 10), 'sent');
   } catch (err) {
-    data.sync.lastError = err.message;
+    data.sync.lastError = describeError(err);
     throw err;
   } finally {
     data.sync.lastSyncAt = new Date().toISOString();
@@ -388,11 +388,22 @@ export async function sendMail(mail) {
 
 /** Log in the interactive connection ahead of time (and keep it alive) so no click pays for the login. */
 export function keepWarm() {
-  return withClient((client) => client.noop()).catch((err) => console.warn('[imap:main] keep-alive failed:', err.message));
+  return withClient((client) => client.noop()).catch((err) => console.warn('[imap:main] keep-alive failed:', describeError(err)));
 }
 
 export async function testConnection() {
-  const folders = await withClient(async (client) => (await client.list()).map((b) => b.path));
-  await transport.verify();
+  assertConfigured();
+  // Report each side's failure to the admin; a bare 500 hides whether the host blocks IMAP or SMTP.
+  let folders;
+  try {
+    folders = await withClient(async (client) => (await client.list()).map((b) => b.path));
+  } catch (err) {
+    throw new HttpError(502, `IMAP ${config.imap.host}:${config.imap.port} failed - ${describeError(err)}`);
+  }
+  try {
+    await transport.verify();
+  } catch (err) {
+    throw new HttpError(502, `SMTP ${config.smtp.host}:${config.smtp.port} failed - ${describeError(err)}`);
+  }
   return { imap: true, smtp: true, folders };
 }

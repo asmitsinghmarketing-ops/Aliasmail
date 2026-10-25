@@ -50,11 +50,16 @@ const config = {
     secure: bool('IMAP_SECURE', true),
     auth: { user: mailUser, pass: mailPassword },
     logger: false,
+    // Fail fast when the host blocks the port, instead of outlasting the proxy (which shows 502).
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
   },
   smtp: {
     host: env('SMTP_HOST', 'smtpout.secureserver.net'),
     port: Number(env('SMTP_PORT', '465')),
     secure: bool('SMTP_SECURE', true),
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
     // SMTP_AUTH=false for GoDaddy shared hosting's local relay (SMTP_HOST=localhost, port 25),
     // which accepts mail from the server without a login.
     ...(bool('SMTP_AUTH', true) && { auth: { user: mailUser, pass: mailPassword } }),
@@ -70,6 +75,9 @@ const config = {
   trustProxy: bool('TRUST_PROXY', false),
   forceHttps: bool('FORCE_HTTPS', false),
   dataFile,
+  // mysql://user:pass@host:3306/db or postgres://user:pass@host:5432/db. Unset: use dataFile.
+  databaseUrl: env('DATABASE_URL'),
+  databaseSsl: bool('DATABASE_SSL', false),
   clientDist: path.resolve(root, '../client/dist'),
 };
 
