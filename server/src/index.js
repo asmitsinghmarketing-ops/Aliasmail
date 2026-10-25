@@ -82,6 +82,8 @@ app.get('/api/avatars/:file', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+// Health check for the host (GoDaddy pings the site to see that the app started).
+app.get('/api/health', (req, res) => res.json({ ok: true }));
 app.use('/api/mail', mailRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
