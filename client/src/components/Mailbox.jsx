@@ -10,19 +10,20 @@ import MessageView from './MessageView.jsx';
 import Pager from './Pager.jsx';
 import Settings from './Settings.jsx';
 
-// Gmail's folders, in Gmail's order. `count` is the key in /mail/folders shown beside it.
+// Gmail's folders, in Gmail's order. `count` is the key in /mail/folders shown beside it;
+// `color` tints the folder's icon tile in the sidebar.
 const FOLDERS = [
-  { id: 'inbox', label: 'Inbox', icon: 'inbox', count: 'inbox' },
-  { id: 'starred', label: 'Starred', icon: 'star' },
-  { id: 'snoozed', label: 'Snoozed', icon: 'clock' },
-  { id: 'important', label: 'Important', icon: 'important', count: 'important' },
-  { id: 'sent', label: 'Sent', icon: 'send' },
-  { id: 'scheduled', label: 'Scheduled', icon: 'scheduleSend', count: 'scheduled', plain: true },
-  { id: 'drafts', label: 'Drafts', icon: 'draft', count: 'drafts', plain: true },
-  { id: 'all', label: 'All Mail', icon: 'mail' },
+  { id: 'inbox', label: 'Inbox', icon: 'inbox', count: 'inbox', color: '#e8590c' },
+  { id: 'starred', label: 'Starred', icon: 'star', color: '#f59f00' },
+  { id: 'snoozed', label: 'Snoozed', icon: 'clock', color: '#0c8599' },
+  { id: 'important', label: 'Important', icon: 'important', count: 'important', color: '#d6336c' },
+  { id: 'sent', label: 'Sent', icon: 'send', color: '#1c7ed6' },
+  { id: 'scheduled', label: 'Scheduled', icon: 'scheduleSend', count: 'scheduled', plain: true, color: '#7048e8' },
+  { id: 'drafts', label: 'Drafts', icon: 'draft', count: 'drafts', plain: true, color: '#ae3ec9' },
+  { id: 'all', label: 'All Mail', icon: 'mail', color: '#2b8a3e' },
   // Spam is switched off for now (also SYNCED_FOLDERS in server/src/mailbox.js). Uncomment to show it:
-  // { id: 'spam', label: 'Spam', icon: 'spam', count: 'spam', plain: true },
-  { id: 'trash', label: 'Trash', icon: 'trash' },
+  // { id: 'spam', label: 'Spam', icon: 'spam', count: 'spam', plain: true, color: '#e03131' },
+  { id: 'trash', label: 'Trash', icon: 'trash', color: '#868e96' },
 ];
 
 const CATEGORY_TABS = [
@@ -637,7 +638,9 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
           <nav>
             {FOLDERS.map((f) => (
               <button key={f.id} className={`nav-item ${folder === f.id ? 'active' : ''}`} onClick={() => goTo(f.id)} title={f.label}>
-                <Icon name={f.icon} />
+                <span className="nav-icon" style={{ '--c': f.color }}>
+                  <Icon name={f.icon} size={18} />
+                </span>
                 <span className="nav-label">{f.label}</span>
                 {f.count && counts[f.count] > 0 && <span className={`count ${f.plain ? 'plain' : ''}`}>{counts[f.count]}</span>}
               </button>

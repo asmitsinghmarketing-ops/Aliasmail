@@ -186,13 +186,24 @@ label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; }
 }
 .compose-btn:hover { background: color-mix(in srgb, var(--alias) 24%, white); }
 .nav-item {
-  width: 100%; display: flex; align-items: center; gap: 16px; padding: 8px 16px;
+  width: 100%; display: flex; align-items: center; gap: 14px; padding: 8px 16px;
   border: 0; border-radius: 0 999px 999px 0; background: none; color: var(--text); text-align: left;
 }
 .nav-item:hover { background: var(--hover); }
 .nav-item.active {
   background: color-mix(in srgb, var(--alias) 16%, white); font-weight: 700;
   color: color-mix(in srgb, var(--alias) 75%, black);
+}
+/* Folder icons sit on a tile tinted with the folder's colour; solid when the folder is open. */
+.nav-icon {
+  flex: none; display: grid; place-items: center; width: 30px; height: 30px; margin: -3px 0; border-radius: 9px;
+  color: var(--c); background: color-mix(in srgb, var(--c) 13%, white);
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.nav-item:hover .nav-icon { background: color-mix(in srgb, var(--c) 22%, white); }
+.nav-item.active .nav-icon {
+  color: #fff; background: linear-gradient(135deg, var(--c), color-mix(in srgb, var(--c) 70%, black));
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--c) 40%, transparent);
 }
 .count { margin-left: auto; font-size: 12px; font-weight: 700; }
 .count.plain { font-weight: 500; color: var(--muted); }
