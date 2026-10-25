@@ -2,3 +2,5 @@ node_modules/
 client/dist/
 server/.env
 server/data/
+php-mail-bridge/settings.local.php
+aliasmail-settings.php

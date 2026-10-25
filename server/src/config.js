@@ -15,6 +15,8 @@ const bool = (key, fallback) => {
 
 const mailUser = env('MAIL_USER');
 const mailPassword = env('MAIL_PASSWORD');
+const mailBridgeUrl = env('MAIL_BRIDGE_URL').replace(/\/$/, '');
+const mailBridgeToken = env('MAIL_BRIDGE_TOKEN');
 
 // Without a JWT_SECRET, generate one once and keep it beside the data file, so sign-ins and
 // encrypted secrets survive restarts.
@@ -43,7 +45,8 @@ const config = {
     password: env('ADMIN_PASSWORD'),
   },
   mailbox: mailUser.toLowerCase(),
-  configured: Boolean(mailUser && mailPassword),
+  configured: Boolean(mailUser && (mailPassword || (mailBridgeUrl && mailBridgeToken))),
+  mailBridge: { url: mailBridgeUrl, token: mailBridgeToken, configured: Boolean(mailBridgeUrl && mailBridgeToken) },
   imap: {
     host: env('IMAP_HOST', 'imap.secureserver.net'),
     port: Number(env('IMAP_PORT', '993')),
@@ -81,7 +84,7 @@ const config = {
   clientDist: path.resolve(root, '../client/dist'),
 };
 
-if (!config.configured) console.warn('[config] MAIL_USER / MAIL_PASSWORD missing - mailbox sync is disabled.');
+if (!config.configured) console.warn('[config] MAIL_USER or PHP mail bridge settings missing - mailbox sync is disabled.');
 if (!config.admin.password) console.warn('[config] ADMIN_PASSWORD missing - admin login is disabled.');
 
 export default config;

@@ -1,8 +1,6 @@
 // Everything that talks to the real mailbox: IMAP for reading / moving / deleting,
 // SMTP for sending as an alias.
-import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import nodemailer from 'nodemailer';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import config from './config.js';
 import { db, save } from './store.js';
@@ -13,85 +11,34 @@ import { HttpError, describeError } from './errors.js';
 // They catch aliases that were BCC'd or reached through a forward.
 const ROUTING_HEADERS = ['delivered-to', 'x-original-to', 'envelope-to', 'x-forwarded-to'];
 // Headers used to sort the inbox into Primary / Promotions / Social / Updates.
-const CATEGORY_HEADERS = ['list-unsubscribe', 'list-id', 'precedence', 'auto-submitted'];
 const EMAIL_IN_TEXT = /[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+/g;
 
 // Mail folders the app mirrors. Sent and Spam have provider-specific names, so they are
 // found by their special-use flag.
-const FOLDERS = { inbox: 'INBOX', sent: '\\Sent', spam: '\\Junk' };
-// Spam is switched off for now: its folder isn't synced and the app doesn't show it.
 const SYNCED_FOLDERS = ['inbox', 'sent'];
-
-const transport = nodemailer.createTransport(config.smtp);
 
 function assertConfigured() {
   if (!config.configured) {
-    throw new HttpError(503, 'Mailbox is not configured. Set MAIL_USER and MAIL_PASSWORD in server/.env');
+    throw new HttpError(503, 'Mailbox is not configured. Set MAIL_USER and the PHP mail bridge settings.');
   }
+  if (!config.mailBridge.configured) throw new HttpError(503, 'PHP mail bridge is not configured. Set MAIL_BRIDGE_URL and MAIL_BRIDGE_TOKEN.');
 }
 
-// Long-lived IMAP connections: logging in to GoDaddy takes seconds, so they are reused and
-// re-opened when the server drops them. ImapFlow runs one command at a time per connection, so
-// background work (sync, prefetch) gets its own "lane" and never makes a user's click wait.
-const connections = {}; // lane -> { client, ready }
-
-function connect(lane) {
-  if (connections[lane]) return connections[lane];
-  const client = new ImapFlow({ ...config.imap });
-  client.on('error', (err) => console.warn(`[imap:${lane}]`, describeError(err)));
-  client.on('close', () => {
-    if (connections[lane]?.client === client) delete connections[lane];
-  });
-  const ready = client.connect().then(
-    () => client,
-    (err) => {
-      delete connections[lane];
-      throw err;
-    },
-  );
-  connections[lane] = { client, ready };
-  return connections[lane];
-}
-
-async function withClient(fn, { lane = 'main', retry = true } = {}) {
+async function bridge(action, data = {}) {
   assertConfigured();
-  const client = await connect(lane).ready;
-  try {
-    return await fn(client);
-  } catch (err) {
-    // The connection died mid-request (idle timeout, network blip): reconnect and try once more.
-    if (retry && !client.usable) {
-      if (connections[lane]?.client === client) delete connections[lane];
-      return withClient(fn, { lane, retry: false });
-    }
-    throw err;
+  const bridgeUrl = new URL(config.mailBridge.url);
+  if (process.env.NODE_ENV === 'production' && bridgeUrl.protocol !== 'https:') {
+    throw new HttpError(500, 'MAIL_BRIDGE_URL must use HTTPS in production');
   }
-}
-
-async function folderPath(client, folder) {
-  const target = FOLDERS[folder];
-  if (!target?.startsWith('\\')) return target;
-  const boxes = await client.list();
-  return boxes.find((b) => b.specialUse === target)?.path;
-}
-
-async function trashPath(client) {
-  const boxes = await client.list();
-  return boxes.find((b) => b.specialUse === '\\Trash')?.path;
-}
-
-/** Run `fn(client, path)` with a folder ('inbox' | 'sent' | 'spam') selected. path is null if it doesn't exist. */
-function withFolder(folder, fn, lane = 'main') {
-  return withClient(async (client) => {
-    const path = await folderPath(client, folder);
-    if (!path) return fn(client, null);
-    const lock = await client.getMailboxLock(path);
-    try {
-      return await fn(client, path);
-    } finally {
-      lock.release();
-    }
-  }, { lane });
+  const response = await fetch(config.mailBridge.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.mailBridge.token}` },
+    body: JSON.stringify({ action, ...data }),
+    signal: AbortSignal.timeout(45_000),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new HttpError(response.status >= 500 ? 502 : response.status, result.error || `PHP mail bridge failed (${response.status})`);
+  return result;
 }
 
 /** The local cache of a folder: { uidValidity, lastUid, messages } */
@@ -101,12 +48,6 @@ export function cacheOf(folder) {
 }
 
 const toAddress = (a) => ({ name: a?.name || '', address: normalize(a?.address) });
-
-function hasAttachment(node) {
-  if (!node) return false;
-  if (node.disposition === 'attachment') return true;
-  return (node.childNodes || []).some(hasAttachment);
-}
 
 /** Raw header block → { name: [values] } (folded lines joined). */
 function parseHeaders(buffer) {
@@ -132,88 +73,40 @@ function categorize(record, headers) {
   return 'primary';
 }
 
-function toRecord(msg) {
-  const env = msg.envelope || {};
-  const headers = parseHeaders(msg.headers);
-  const to = (env.to || []).map(toAddress);
-  const cc = (env.cc || []).map(toAddress);
-  const bcc = (env.bcc || []).map(toAddress);
+async function recordFromSource(item) {
+  const uid = item.uid;
+  const encoded = item.raw;
+  const source = Buffer.from(encoded, 'base64');
+  const parsed = await simpleParser(source, { skipImageLinks: true });
+  const headers = parseHeaders(source.subarray(0, source.indexOf('\r\n\r\n') < 0 ? source.length : source.indexOf('\r\n\r\n')));
+  const addresses = (value) => (value?.value || []).map(toAddress);
+  const from = addresses(parsed.from)[0] || { name: '', address: '' };
+  const to = addresses(parsed.to); const cc = addresses(parsed.cc); const bcc = addresses(parsed.bcc);
   const routed = ROUTING_HEADERS.flatMap((h) => headers[h] || []).flatMap((v) => v.match(EMAIL_IN_TEXT) || []).map(normalize);
-  const date = new Date(env.date || msg.internalDate || Date.now());
-
+  const recipients = [...new Set([...to, ...cc, ...bcc].map((a) => a.address).concat(routed).filter(Boolean))];
   const record = {
-    uid: msg.uid,
-    messageId: env.messageId || null,
-    subject: env.subject || '',
-    from: toAddress(env.from?.[0]),
-    replyTo: env.replyTo?.[0] ? toAddress(env.replyTo[0]) : null,
-    to,
-    cc,
-    date: Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString(),
-    size: msg.size || 0,
-    hasAttachments: hasAttachment(msg.bodyStructure),
-    recipients: [...new Set([...to, ...cc, ...bcc].map((a) => a.address).concat(routed).filter(Boolean))],
-    state: {},
+    uid: Number(uid), messageId: parsed.messageId || null, subject: parsed.subject || '', from,
+    replyTo: addresses(parsed.replyTo)[0] || null, to, cc,
+    date: parsed.date && !Number.isNaN(parsed.date.getTime()) ? parsed.date.toISOString() : new Date().toISOString(),
+    size: Number(item.size) || source.length, hasAttachments: Boolean(item.hasAttachments), recipients, state: {},
+    snippet: (parsed.text || '').replace(/\s+/g, ' ').trim().slice(0, 200),
   };
   record.category = categorize(record, headers);
   return record;
 }
 
-async function snippetOf(source) {
-  try {
-    const parsed = await simpleParser(source, { skipImageLinks: true });
-    return (parsed.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-  } catch {
-    return '';
-  }
-}
-
-/** Bring one selected folder's cache up to date. */
-async function syncFolder(client, cache) {
-  const uidValidity = String(client.mailbox.uidValidity);
+/** Update local metadata using raw messages fetched by the PHP IMAP service. */
+async function syncFolder(folder, cache) {
+  const knownUids = Object.keys(cache.messages).map(Number);
+  const result = await bridge('sync', { folder, knownUids, knownUidValidity: cache.uidValidity });
+  const uidValidity = String(result.uidValidity || '');
   if (cache.uidValidity !== uidValidity) {
-    cache.messages = {};
-    cache.lastUid = 0;
-    cache.uidValidity = uidValidity;
+    cache.messages = {}; cache.lastUid = 0; cache.uidValidity = uidValidity;
   }
-  if (!client.mailbox.exists) {
-    cache.messages = {};
-    return;
-  }
-
-  const from = cache.lastUid + 1;
-  const query = { uid: true, envelope: true, internalDate: true, size: true, bodyStructure: true, headers: [...ROUTING_HEADERS, ...CATEGORY_HEADERS] };
-  for await (const msg of client.fetch(`${from}:*`, query, { uid: true })) {
-    if (msg.uid < from) continue; // "N:*" always returns the newest message
-    cache.messages[msg.uid] = toRecord(msg);
-    cache.lastUid = Math.max(cache.lastUid, msg.uid);
-  }
-
-  // Backfill what older cache entries lack. Snippets need only the first 48 KB of the message.
-  const backfill = async (missing, query, apply) => {
-    for (let i = 0; i < missing.length; i += 100) {
-      const batch = missing.slice(i, i + 100).join(',');
-      for await (const msg of client.fetch(batch, { uid: true, ...query }, { uid: true })) {
-        if (cache.messages[msg.uid]) await apply(cache.messages[msg.uid], msg);
-      }
-    }
-  };
-  const all = Object.values(cache.messages);
-  await backfill(all.filter((m) => m.snippet === undefined).map((m) => m.uid), { source: { start: 0, maxLength: 48 * 1024 } }, async (record, msg) => {
-    record.snippet = await snippetOf(msg.source);
-  });
-  await backfill(all.filter((m) => m.category === undefined).map((m) => m.uid), { headers: CATEGORY_HEADERS }, (record, msg) => {
-    record.category = categorize(record, parseHeaders(msg.headers));
-  });
-
-  // Prune messages deleted elsewhere (webmail, phone). search() returns false on failure.
-  const uids = await client.search({ all: true }, { uid: true });
-  if (Array.isArray(uids)) {
-    const onServer = new Set(uids);
-    for (const uid of Object.keys(cache.messages)) {
-      if (!onServer.has(Number(uid))) delete cache.messages[uid];
-    }
-  }
+  for (const item of result.messages || []) cache.messages[item.uid] = await recordFromSource(item);
+  const existing = new Set((result.uids || []).map(Number));
+  for (const uid of Object.keys(cache.messages)) if (!existing.has(Number(uid))) delete cache.messages[uid];
+  cache.lastUid = Math.max(0, ...existing);
 }
 
 let running = null;
@@ -230,7 +123,7 @@ async function runSync() {
   const data = db();
   try {
     for (const folder of SYNCED_FOLDERS) {
-      await withFolder(folder, (client, path) => path && syncFolder(client, cacheOf(folder)), 'background');
+      await syncFolder(folder, cacheOf(folder));
     }
     data.sync.lastError = null;
     // Warm the cache with the newest mail so opening it is instant.
@@ -287,11 +180,12 @@ export function fetchParsed(uid, folder = 'inbox') {
   if (cached) return Promise.resolve(cached);
   if (inFlight.has(key)) return inFlight.get(key);
 
-  const job = withFolder(folder, async (client, path) => {
-    if (!path) return null;
-    const msg = await client.fetchOne(String(uid), { source: true }, { uid: true });
-    return msg?.source ? { parsed: await simpleParser(msg.source), size: msg.source.length } : null;
-  })
+  const job = bridge('fetch', { folder, uid })
+    .then(async (result) => {
+      if (!result.raw) return null;
+      const source = Buffer.from(result.raw, 'base64');
+      return { parsed: await simpleParser(source), size: source.length };
+    })
     .then((result) => {
       if (!result) return null;
       remember(key, result.parsed, result.size);
@@ -314,23 +208,20 @@ export function prefetch(uids, folder = 'inbox') {
   if (!wanted.length || !config.configured) return;
 
   prefetchQueue = prefetchQueue
-    .then(() =>
-      withFolder(
-        folder,
-        async (client, path) => {
-          if (!path) return;
-          const sources = [];
-          for await (const msg of client.fetch(wanted.join(','), { uid: true, source: true }, { uid: true })) {
-            if (msg.source) sources.push([msg.uid, msg.source]);
-          }
-          for (const [uid, source] of sources) {
-            const key = `${folder}:${uid}`;
-            if (!parsedCache.has(key)) remember(key, await simpleParser(source), source.length);
-          }
-        },
-        'background',
-      ),
-    )
+    .then(async () => {
+      for (const uid of wanted) {
+        const key = `${folder}:${uid}`;
+        const { raw } = await bridge('fetch', { folder, uid });
+        if (raw && !parsedCache.has(key)) {
+          const source = Buffer.from(raw, 'base64');
+          const parsed = await simpleParser(source);
+          remember(key, parsed, source.length);
+          const record = cacheOf(folder).messages[uid];
+          if (record) record.snippet = (parsed.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+        }
+      }
+      save();
+    })
     .catch((err) => console.warn('[prefetch]', err.message));
 }
 
@@ -349,63 +240,44 @@ function forget(folder, uids) {
 /** Move messages to Trash, or expunge them when `permanent` (or no Trash folder exists). */
 export async function deleteFromServer(uids, { permanent = false, folder = 'inbox' } = {}) {
   if (!uids.length) return;
-  await withFolder(folder, async (client, path) => {
-    if (!path) return;
-    const range = uids.join(',');
-    const trash = permanent ? null : await trashPath(client);
-    if (trash) await client.messageMove(range, trash, { uid: true });
-    else await client.messageDelete(range, { uid: true });
-  });
+  await bridge('delete', { folder, uids, permanent });
   forget(folder, uids);
 }
 
 /** Move messages between mirrored folders, e.g. inbox → spam ("Report spam") and back. */
 export async function moveMessages(uids, from, to) {
   if (!uids.length) return;
-  await withFolder(from, async (client, path) => {
-    const target = await folderPath(client, to);
-    if (!path || !target) throw new HttpError(400, `This mailbox has no ${to} folder`);
-    await client.messageMove(uids.join(','), target, { uid: true });
-  });
+  await bridge('move', { folder: from, to, uids });
   forget(from, uids);
   await syncInbox().catch(() => {});
 }
 
-/** Send through the main account's SMTP with the alias as From, then keep a copy in Sent. */
+/** Send through SMTP; save the Sent copy in the background so it doesn't delay the send response. */
 export async function sendMail(mail) {
   assertConfigured();
   const compiled = new MailComposer(mail).compile();
   const raw = await compiled.build();
-  await transport.sendMail({ envelope: compiled.getEnvelope(), raw });
-
-  withClient(async (client) => {
-    const sent = await folderPath(client, 'sent');
-    if (sent) await client.append(sent, raw, ['\\Seen']);
-  })
-    .then(() => syncInbox())
-    .catch((err) => console.warn('[mail] could not save a copy to Sent:', err.message));
+  const encodedRaw = raw.toString('base64');
+  const envelope = compiled.getEnvelope();
+  await bridge('sendRaw', { raw: encodedRaw, envelope });
+  void bridge('saveSent', { raw: encodedRaw })
+    .catch((err) => console.warn('[mail] Sent copy save failed:', err.message))
+    .finally(() => syncInbox().catch((err) => console.warn('[mail] post-send sync failed:', err.message)));
 
   return compiled.messageId();
 }
 
 /** Log in the interactive connection ahead of time (and keep it alive) so no click pays for the login. */
 export function keepWarm() {
-  return withClient((client) => client.noop()).catch((err) => console.warn('[imap:main] keep-alive failed:', describeError(err)));
+  // PHP shared hosting owns the IMAP connection and opens it per request.
 }
 
 export async function testConnection() {
   assertConfigured();
   // Report each side's failure to the admin; a bare 500 hides whether the host blocks IMAP or SMTP.
-  let folders;
   try {
-    folders = await withClient(async (client) => (await client.list()).map((b) => b.path));
+    return await bridge('test');
   } catch (err) {
-    throw new HttpError(502, `IMAP ${config.imap.host}:${config.imap.port} failed - ${describeError(err)}`);
+    throw new HttpError(502, `PHP mail bridge connection failed - ${describeError(err)}`);
   }
-  try {
-    await transport.verify();
-  } catch (err) {
-    throw new HttpError(502, `SMTP ${config.smtp.host}:${config.smtp.port} failed - ${describeError(err)}`);
-  }
-  return { imap: true, smtp: true, folders };
 }
