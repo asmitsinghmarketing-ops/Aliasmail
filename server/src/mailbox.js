@@ -19,6 +19,8 @@ const EMAIL_IN_TEXT = /[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+/g;
 // Mail folders the app mirrors. Sent and Spam have provider-specific names, so they are
 // found by their special-use flag.
 const FOLDERS = { inbox: 'INBOX', sent: '\\Sent', spam: '\\Junk' };
+// Spam is switched off for now: its folder isn't synced and the app doesn't show it.
+const SYNCED_FOLDERS = ['inbox', 'sent'];
 
 const transport = nodemailer.createTransport(config.smtp);
 
@@ -216,7 +218,7 @@ async function syncFolder(client, cache) {
 
 let running = null;
 
-/** Pull new INBOX, Sent and Spam messages into the local cache. */
+/** Pull new INBOX and Sent messages into the local cache (and Spam, when it's switched on). */
 export function syncInbox() {
   running ??= runSync().finally(() => {
     running = null;
@@ -227,7 +229,7 @@ export function syncInbox() {
 async function runSync() {
   const data = db();
   try {
-    for (const folder of ['inbox', 'sent', 'spam']) {
+    for (const folder of SYNCED_FOLDERS) {
       await withFolder(folder, (client, path) => path && syncFolder(client, cacheOf(folder)), 'background');
     }
     data.sync.lastError = null;

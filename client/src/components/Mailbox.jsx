@@ -19,7 +19,8 @@ const FOLDERS = [
   { id: 'scheduled', label: 'Scheduled', icon: 'scheduleSend', count: 'scheduled', plain: true },
   { id: 'drafts', label: 'Drafts', icon: 'draft', count: 'drafts', plain: true },
   { id: 'all', label: 'All Mail', icon: 'mail' },
-  { id: 'spam', label: 'Spam', icon: 'spam', count: 'spam', plain: true },
+  // Spam is switched off for now (also SYNCED_FOLDERS in server/src/mailbox.js). Uncomment to show it:
+  // { id: 'spam', label: 'Spam', icon: 'spam', count: 'spam', plain: true },
   { id: 'trash', label: 'Trash', icon: 'trash' },
 ];
 
@@ -62,7 +63,6 @@ const SHORTCUTS = [
   ['x', 'Select message'],
   ['e', 'Archive'],
   ['#', 'Delete'],
-  ['!', 'Report spam'],
   ['s', 'Star / unstar'],
   ['+ / -', 'Mark important / not important'],
   ['Shift + i', 'Mark as read'],
@@ -452,7 +452,6 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
       case 'x': if (!open && current) toggleSelect(current.id); break;
       case 'e': if (mail) act(targets, 'archive'); break;
       case '#': act(targets, folder === 'trash' || folder === 'spam' ? 'delete' : 'trash'); break;
-      case '!': if (mail) act(targets, 'spam'); break;
       case 's': if (current?.kind === 'inbox') toggleStar(current); break;
       case '+':
       case '=': if (mail) act(targets, 'important', {}, { silent: true }); break;
@@ -509,7 +508,6 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
         ) : (
           <IconButton icon="archive" title="Archive (e)" size={size} onClick={() => act(ids, 'archive')} />
         )}
-        {!compact && <IconButton icon="spam" title="Report spam (!)" size={size} onClick={() => act(ids, 'spam')} />}
         <IconButton icon="trash" title="Delete (#)" danger size={size} onClick={() => act(ids, 'trash')} />
         {allRead ? (
           <IconButton icon="mail" title="Mark as unread (Shift+u)" size={size} onClick={() => act(ids, 'unread')} />
