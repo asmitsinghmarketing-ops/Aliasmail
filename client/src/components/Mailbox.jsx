@@ -4,6 +4,7 @@ import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
+import Logo, { Wordmark } from './Logo.jsx';
 import { LabelMenu, Popover, TimeMenu, shortTime, snoozeOptions } from './Menus.jsx';
 import MessageView from './MessageView.jsx';
 import Pager from './Pager.jsx';
@@ -576,8 +577,8 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
           <button className="icon-btn" title="Main menu" onClick={() => setCollapsed(!collapsed)}>
             <Icon name="menu" />
           </button>
-          <span className="brand-mark"><Icon name="mail" size={22} /></span>
-          <span className="brand-text">AliasMail</span>
+          <Logo />
+          <span className="brand-text"><Wordmark /></span>
         </div>
         <form
           className="search"

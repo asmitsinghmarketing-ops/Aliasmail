@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './Icon.jsx';
+import Logo, { Wordmark } from './Logo.jsx';
 import { AuthenticatorSetup, BackupCodes, CodeField } from './TwoStep.jsx';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -136,8 +137,8 @@ export default function Login({ onLogin }) {
 
         <div className="login-side">
           <div className="brand brand-lg">
-            <span className="brand-mark"><Icon name="mail" size={26} /></span>
-            AliasMail
+            <Logo size={46} />
+            <Wordmark />
           </div>
           <div className="login-heading" key={step}>
             <h1>{HEADINGS[step]}</h1>

@@ -159,9 +159,11 @@ label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; }
 }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; width: 220px; flex: none; }
 .brand-lg { font-size: 24px; width: auto; }
-.brand-mark {
-  display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; color: #fff;
-  background: linear-gradient(135deg, var(--brand), var(--pink) 60%, var(--violet));
+.brand-mark { flex: none; display: block; border-radius: 12px; filter: drop-shadow(0 2px 6px rgb(214 51 108 / 28%)); }
+.wordmark { letter-spacing: -0.02em; }
+.wordmark-accent {
+  background: linear-gradient(90deg, var(--brand), var(--pink) 55%, var(--violet));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #f3f0ff; color: var(--violet); }
 .search {

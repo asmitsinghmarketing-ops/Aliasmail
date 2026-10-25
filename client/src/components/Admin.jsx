@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { displayName, formatDate, formatSize, timeAgo } from '../format.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
+import Logo, { Wordmark } from './Logo.jsx';
 import MessageView from './MessageView.jsx';
 import Pager from './Pager.jsx';
 
@@ -38,8 +39,8 @@ export default function Admin({ user, onLogout, onOpenMail }) {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark"><Icon name="mail" size={22} /></span>
-          AliasMail <span className="badge">Admin</span>
+          <Logo />
+          <Wordmark /> <span className="badge">Admin</span>
         </div>
         <div className="account push-right">
           {onOpenMail && (
