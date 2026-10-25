@@ -1,4 +1,6 @@
 // Admin console API: manage aliases and every message in the real mailbox.
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { Router } from 'express';
 import config from '../config.js';
 import { db, save } from '../store.js';
@@ -54,6 +56,40 @@ router.get('/overview', (req, res) => {
 });
 
 router.post('/sync', async (req, res) => res.json(await syncInbox()));
+/** Can this server open TCP connections out? Mail ports next to web ports, so a host that blocks
+ *  only mail traffic shows up as such. Open /api/admin/network-check in the browser as admin. */
+router.get('/network-check', async (req, res) => {
+  const targets = [
+    [config.imap.host, config.imap.port, 'IMAP (receive mail)'],
+    [config.smtp.host, config.smtp.port, 'SMTP (send mail)'],
+    ['smtpout.secureserver.net', 587, 'SMTP alternative port'],
+    ['www.google.com', 443, 'Web HTTPS (control)'],
+    ['www.google.com', 80, 'Web HTTP (control)'],
+  ];
+  const probe = ([host, port, purpose]) =>
+    new Promise((resolve) => {
+      const started = Date.now();
+      const done = (result) => {
+        socket.destroy();
+        resolve({ purpose, target: `${host}:${port}`, ms: Date.now() - started, ...result });
+      };
+      const socket = net.connect({ host, port, timeout: 8000 });
+      socket.once('connect', () => done({ ok: true, address: socket.remoteAddress }));
+      socket.once('timeout', () => done({ ok: false, error: 'TIMEOUT (no answer in 8s)' }));
+      socket.once('error', (err) => done({ ok: false, error: `${err.code || err.message} (${err.syscall || 'connect'} ${err.address || ''})`.trim() }));
+    });
+  const results = await Promise.all(targets.map(probe));
+  const lookups = await Promise.all(
+    [config.imap.host, config.smtp.host].map((host) =>
+      dns.lookup(host, { all: true }).then(
+        (addrs) => ({ host, addresses: addrs.map((a) => a.address) }),
+        (err) => ({ host, error: err.code }),
+      ),
+    ),
+  );
+  res.json({ results, dns: lookups });
+});
+
 router.post('/test-connection', async (req, res) => {
   try {
     res.json(await testConnection());
