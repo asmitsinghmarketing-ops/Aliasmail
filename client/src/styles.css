@@ -968,4 +968,115 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
   .google-account-card .btn { width: 100%; }
   .settings-modal .modal-foot { flex-direction: row; }
   .settings-modal .modal-foot .btn { flex: 1; width: auto; }
-}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
+}
+
+/* ---------- app-style phone layout ---------- */
+.row-avatar, .mobile-only, .bottom-nav { display: none; }
+.row-snippet::before { content: '— '; }
+
+@media (max-width: 800px) {
+  body { -webkit-tap-highlight-color: transparent; background: #fff; }
+  .topbar, .toolbar, .tabs, .row, .sidebar, .bottom-nav, .compose-fab { -webkit-user-select: none; user-select: none; }
+  .mobile-only { display: inline-flex; }
+  .sidebar .nav-item.mobile-only { display: flex; }
+
+  /* One search pill that holds the menu button, the search field and the avatar. */
+  .app:not(.admin-app) .topbar {
+    position: relative; min-height: 0; gap: 0; background: #fff;
+    padding: max(8px, env(safe-area-inset-top)) 14px 6px;
+  }
+  .app:not(.admin-app) .topbar::before {
+    content: ''; position: absolute; left: 14px; right: 14px; top: max(8px, env(safe-area-inset-top)); height: 52px;
+    border-radius: 28px; background: #eef2f8;
+  }
+  .app:not(.admin-app) .topbar > * { position: relative; z-index: 1; }
+  .app:not(.admin-app) .topbar .brand { width: 48px; justify-content: center; }
+  .app:not(.admin-app) .topbar .search { height: 52px; padding: 0 4px; background: none; }
+  .app:not(.admin-app) .topbar .search:focus-within { background: none; box-shadow: none; }
+  .app:not(.admin-app) .topbar .search > svg { display: none; }
+  .app:not(.admin-app) .topbar .search input { font-size: 16px; }
+  .app:not(.admin-app) .topbar .account { padding-right: 8px; }
+  .app:not(.admin-app) .topbar .account > .icon-btn { display: none; }
+  .app:not(.admin-app) .topbar .avatar-btn .avatar { width: 32px; height: 32px; font-size: 14px; }
+
+  /* Section title, or a selection bar while messages are selected. */
+  .toolbar { min-height: 40px; padding: 4px 8px 0 18px; border-bottom: 0; background: #fff; }
+  .toolbar .select-box { display: none; }
+  .toolbar-title { font-size: 13px; font-weight: 600; color: var(--muted); margin-right: auto; }
+  .toolbar .pager { margin-left: 0; }
+  .toolbar.selecting { padding: 4px 4px; gap: 0; background: color-mix(in srgb, var(--alias) 12%, white); }
+  .toolbar.selecting > * { order: 1; }
+  .toolbar.selecting > .mobile-only { order: -2; }
+  .toolbar.selecting > .muted.small { order: -1; margin: 0 auto 0 4px; font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; }
+  .toolbar.selecting > .icon-btn { width: 34px; }
+  .toolbar.selecting .pager { display: none; }
+  .tabs { border-bottom: 0; }
+
+  /* Gmail-app rows: avatar, then sender + date, subject, preview + star. */
+  .row {
+    display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; grid-template-rows: auto auto auto;
+    align-content: start; column-gap: 0; row-gap: 1px; height: auto; min-height: 0;
+    padding: 10px 12px 10px 14px; border-bottom: 0; background: #fff;
+  }
+  .row:hover { box-shadow: none; }
+  .row:active { background: #f1f3f4; }
+  .row.selected { background: color-mix(in srgb, var(--alias) 12%, white); }
+  .row.focused::before { display: none; }
+  .row > input[type='checkbox'] { display: none; }
+  .row-avatar {
+    grid-column: 1; grid-row: 1 / 4; align-self: start; display: grid; margin-top: 2px;
+    padding: 0; border: 0; border-radius: 50%; background: none;
+  }
+  .row-avatar .avatar { width: 40px; height: 40px; font-size: 17px; }
+  .row-check { background: var(--alias); animation: pop-in 0.15s var(--ease-out); }
+  .row-from { grid-column: 2; grid-row: 1; align-self: center; font-size: 15px; color: #3c4043; }
+  .row-date, .row:hover .row-date { position: static; display: block; grid-column: 3; grid-row: 1; align-self: center; padding-left: 8px; font-size: 12px; }
+  .row-main {
+    grid-column: 2 / 4; grid-row: 2 / 4; display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px;
+    width: auto; padding: 0; font-size: 14px; line-height: 20px; white-space: nowrap;
+  }
+  .row-main .tag { flex: none; }
+  .row-main .row-subject { flex: 1 1 0; min-width: 0; max-width: none; color: #3c4043; }
+  .row-snippet { display: block; flex: 0 0 100%; padding-right: 34px; overflow: hidden; text-overflow: ellipsis; }
+  .row-snippet::before { content: none; }
+  .row > .icon-btn:not(.importance) { position: relative; z-index: 1; grid-column: 3; grid-row: 3; justify-self: end; align-self: end; margin: -4px -6px -6px 0; }
+  .row.unread .row-from, .row.unread .row-subject { color: var(--text); font-weight: 700; }
+
+  /* Bottom tab bar. */
+  .bottom-nav {
+    order: 3; flex: none; display: flex; z-index: 14; background: #f6f8fc; border-top: 1px solid #e8eaed;
+    padding: 6px 4px max(6px, env(safe-area-inset-bottom));
+  }
+  .bottom-nav button {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 0;
+    border: 0; background: none; color: #444746; font-size: 12px; font-weight: 600;
+  }
+  .bottom-nav-icon {
+    position: relative; display: grid; place-items: center; width: 60px; height: 30px; border-radius: 16px;
+    transition: background-color 0.2s var(--ease);
+  }
+  .bottom-nav .on { color: var(--text); }
+  .bottom-nav .on .bottom-nav-icon { background: color-mix(in srgb, var(--alias) 18%, white); color: color-mix(in srgb, var(--alias) 80%, black); }
+  .bottom-nav-badge {
+    position: absolute; top: -3px; left: 34px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+    background: var(--alias); color: #fff; font-size: 11px; line-height: 18px; text-align: center;
+  }
+  .content { order: 1; }
+  .compose-fab { bottom: calc(80px + env(safe-area-inset-bottom)); }
+  .toast { bottom: calc(16px + env(safe-area-inset-bottom)); }
+  .app:has(.bottom-nav) .toast { bottom: calc(148px + env(safe-area-inset-bottom)); }
+
+  /* Side drawer: narrower than the screen, like an app's navigation drawer. */
+  .sidebar, .sidebar.collapsed { width: min(86vw, 320px); border-radius: 0 18px 18px 0; }
+
+  /* Message view: its own app bar replaces the search bar. */
+  .app:has(.viewer) .topbar { display: none; }
+  .viewer > .toolbar { padding-top: max(4px, env(safe-area-inset-top)); min-height: 52px; }
+  .viewer > .toolbar .pager .muted { display: none; }
+  .reply-bar .btn { flex: 1 1 0; }
+
+  /* Sign-in fills the screen instead of floating in a card. */
+  .login-page { justify-content: flex-start; padding: max(56px, env(safe-area-inset-top)) 20px 24px; background: var(--surface); }
+  .login-card { padding: 8px 4px 24px; border-radius: 0; box-shadow: none; }
+  .login-footer { margin-top: auto; padding: 0 4px; }
+}

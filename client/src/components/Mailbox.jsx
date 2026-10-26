@@ -690,6 +690,10 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
     return formatDate(item.date);
   }
 
+  // Whose avatar a row shows: the sender, or for mail you wrote, the first recipient.
+  const rowPerson = (item) =>
+    (['sent', 'draft', 'scheduled'].includes(item.kind) ? item.to?.[0] : item.from) || { name: '', address: '' };
+
   const drawerVisiblyOpen = !collapsed || (drawerDrag !== null && drawerDrag > 0);
 
   return (
@@ -812,6 +816,18 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
                 <span className="nav-label">Admin console</span>
               </button>
             )}
+            <button className="nav-item mobile-only" onClick={() => { setCollapsed(true); setModal('settings'); }} title="Settings">
+              <span className="nav-icon" style={{ '--c': '#495057' }}>
+                <Icon name="settings" size={18} />
+              </span>
+              <span className="nav-label">Settings</span>
+            </button>
+            <button className="nav-item mobile-only" onClick={onLogout} title="Sign out">
+              <span className="nav-icon" style={{ '--c': '#495057' }}>
+                <Icon name="logout" size={18} />
+              </span>
+              <span className="nav-label">Sign out</span>
+            </button>
           </nav>
 
           <div className="labels-head">
@@ -863,6 +879,26 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
             <Icon name="edit" /> <span>Compose</span>
           </button>
         )}
+        {!open && (
+          <nav className="bottom-nav" aria-label="Folders">
+            {['inbox', 'starred', 'sent'].map((id) => {
+              const f = FOLDERS.find((x) => x.id === id);
+              return (
+                <button key={id} type="button" className={folder === id ? 'on' : ''} onClick={() => goTo(id)}>
+                  <span className="bottom-nav-icon">
+                    <Icon name={f.icon} />
+                    {f.count && counts[f.count] > 0 && <span className="bottom-nav-badge">{counts[f.count] > 99 ? '99+' : counts[f.count]}</span>}
+                  </span>
+                  {f.label}
+                </button>
+              );
+            })}
+            <button type="button" className={['inbox', 'starred', 'sent'].includes(folder) ? '' : 'on'} onClick={() => setCollapsed(false)}>
+              <span className="bottom-nav-icon"><Icon name="menu" /></span>
+              More
+            </button>
+          </nav>
+        )}
 
         <main className="content">
           {open ? (
@@ -891,7 +927,16 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
             />
           ) : (
             <div className="view-enter" key={`${folder}|${category}|${search}`}>
-              <div className="toolbar">
+              <div className={`toolbar ${selected.size > 0 ? 'selecting' : ''}`}>
+                {selected.size > 0 ? (
+                  <button className="icon-btn mobile-only" title="Clear selection" onClick={() => selectBy('none')}>
+                    <Icon name="close" />
+                  </button>
+                ) : (
+                  <span className="toolbar-title mobile-only">
+                    {folder === 'inbox' && showTabs ? CATEGORY_TABS.find((t) => t.id === category)?.label : folderLabel}
+                  </span>
+                )}
                 <span className="select-box">
                   <input
                     type="checkbox"
@@ -979,6 +1024,21 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
                       onMouseLeave={onRowLeave}
                     >
                       <input type="checkbox" checked={selected.has(item.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleSelect(item.id)} />
+                      <button
+                        type="button"
+                        className="row-avatar"
+                        aria-label={selected.has(item.id) ? 'Deselect' : 'Select'}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSelect(item.id);
+                        }}
+                      >
+                        {selected.has(item.id) ? (
+                          <span className="avatar row-check"><Icon name="check" /></span>
+                        ) : (
+                          <Avatar url={people[rowPerson(item).address]} person={rowPerson(item)} />
+                        )}
+                      </button>
                       {item.kind === 'inbox' ? (
                         <>
                           <IconButton icon={item.starred ? 'star' : 'starOutline'} title={item.starred ? 'Starred' : 'Not starred'} size={18} onClick={() => toggleStar(item)} />
@@ -1017,7 +1077,7 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
                             ),
                         )}
                         <span className="row-subject">{item.subject || '(no subject)'}</span>
-                        {item.snippet && <span className="row-snippet"> — {item.snippet}</span>}
+                        {item.snippet && <span className="row-snippet">{item.snippet}</span>}
                       </span>
                       {item.hasAttachments && <Icon name="attach" size={16} className="muted row-clip" />}
                       <span className="row-date" title={formatDate(item.date, true)}>{rowDate(item)}</span>

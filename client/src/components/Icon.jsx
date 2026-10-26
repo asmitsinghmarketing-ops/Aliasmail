@@ -41,6 +41,7 @@ const PATHS = {
   shield: 'M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z',
   draft:'M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z',
   expandMore:'M16.59 8.59 12 13.17 7.41 8.59 6 10l6 6 6-6z',
+  check: 'M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z',
 };
 
 export default function Icon({ name, size = 20, className }) {
