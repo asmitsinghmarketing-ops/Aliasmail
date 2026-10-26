@@ -5,7 +5,7 @@ import MailComposer from 'nodemailer/lib/mail-composer';
 import config from './config.js';
 import { mailTransport } from './mail-transport.js';
 import { messageCache } from './message-cache.js';
-import { mailEvents } from './mail-events.js';
+import { announceChange } from './mail-events.js';
 import { db, save } from './store.js';
 import { normalize } from './aliases.js';
 import { HttpError, describeError } from './errors.js';
@@ -92,6 +92,7 @@ async function syncFolder(folder, cache) {
     cache.messages = {}; cache.lastUid = 0; cache.uidValidity = uidValidity;
   }
   const records = await Promise.all((result.messages || []).map(recordFromSource));
+  let changed = records.length > 0;
   for (const record of records) cache.messages[record.uid] = record;
   if (Array.isArray(result.seenUids)) {
     const seen = new Set(result.seenUids.map(Number));
@@ -100,6 +101,7 @@ async function syncFolder(folder, cache) {
       // Read or unread in another mail app (Titan, Gmail, phone): that change wins for every account.
       if (typeof record.imapRead === 'boolean' && record.imapRead !== now) {
         for (const state of Object.values(record.state || {})) state.read = now;
+        changed = true;
       }
       record.imapRead = now;
     }
@@ -109,10 +111,14 @@ async function syncFolder(folder, cache) {
     if (!existing.has(Number(uid))) {
       evict(folder, Number(uid));
       delete cache.messages[uid];
+      changed = true;
     }
   }
   cache.lastUid = Math.max(0, ...existing);
-  mailEvents.emit('changed');
+  if (changed) {
+    save();
+    announceChange();
+  }
   return result.hasMore === true;
 }
 
@@ -322,7 +328,7 @@ function forget(folder, uids) {
     delete cacheOf(folder).messages[uid];
   }
   save();
-  mailEvents.emit('changed');
+  announceChange();
 }
 
 /** Move messages to Trash, or expunge them when `permanent` (or no Trash folder exists). */

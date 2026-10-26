@@ -8,26 +8,44 @@ function HtmlBody({ html }) {
   const frame = useRef(null);
   // No allow-scripts: the email's own JavaScript never runs.
   const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">
-<style>html,body{margin:0;padding:0}body{display:flow-root;font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#202124;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>
+<style>html{overflow:hidden}html,body{margin:0;padding:0}body{display:flow-root;font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#202124;overflow-wrap:break-word}img{max-width:100%;height:auto}a{color:#1a73e8}</style>
 </head><body>${html}</body></html>`;
 
-  useEffect(() => () => frame.current?._observer?.disconnect(), []);
+  useEffect(() => () => frame.current?._observers?.forEach((o) => o.disconnect()), []);
 
-  // Grow the iframe to its content, and keep growing as late images load.
+  // Fit the email to the frame like Gmail: newsletters built for a 600-700px column are scaled
+  // down as a whole on a phone instead of having their tables squeezed. The frame then grows to
+  // the content's height, and keeps adjusting as late images load or the window resizes.
   const onLoad = () => {
     const el = frame.current;
     const fit = () => {
       try {
+        const body = el.contentDocument.body;
+        body.style.transform = '';
+        body.style.width = '';
+        const available = el.clientWidth;
+        const natural = Math.max(body.scrollWidth, el.contentDocument.documentElement.scrollWidth);
+        let height = body.scrollHeight;
+        if (available > 0 && natural > available + 1) {
+          const scale = Math.max(0.35, available / natural);
+          body.style.width = `${natural}px`;
+          body.style.transformOrigin = '0 0';
+          body.style.transform = `scale(${scale})`;
+          height = body.scrollHeight * scale;
+        }
         // The body's height, not the document's: the document is never shorter than the frame.
-        el.style.height = `${el.contentDocument.body.scrollHeight + 4}px`;
+        el.style.height = `${Math.ceil(height) + 4}px`;
       } catch {
         /* keep the CSS height */
       }
     };
     fit();
     try {
-      el._observer = new ResizeObserver(fit);
-      el._observer.observe(el.contentDocument.body);
+      const content = new ResizeObserver(fit);
+      content.observe(el.contentDocument.body);
+      const outer = new ResizeObserver(fit);
+      outer.observe(el);
+      el._observers = [content, outer];
     } catch {
       setTimeout(fit, 500);
     }
@@ -46,6 +64,45 @@ function HtmlBody({ html }) {
 }
 
 const joinPeople = (list, me) => (list || []).map((p) => personLabel(p, me)).join(', ');
+
+const LINK = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]|www\.[^\s<>"']+[^\s<>"'.,;:!?)\]])/g;
+
+/** Plain text with its web addresses made clickable (rendered by React, so nothing is injected). */
+function Linkified({ text }) {
+  return text.split(LINK).map((part, i) =>
+    i % 2 ? (
+      <a key={i} href={part.startsWith('www.') ? `https://${part}` : part} target="_blank" rel="noopener noreferrer">
+        {part}
+      </a>
+    ) : (
+      part
+    ),
+  );
+}
+
+// Where an earlier message is quoted in a reply: "On …, … wrote:" or the first "> " line.
+const QUOTE_START = /\n(?=On [^\n]{4,200}wrote:\s*\n|>[^\n]*\n?)/;
+
+/** Plain-text body; the quoted history of a reply folds away behind "•••", like Gmail. */
+function PlainBody({ text }) {
+  const [showQuoted, setShowQuoted] = useState(false);
+  const cut = text.search(QUOTE_START);
+  const own = cut > 0 ? text.slice(0, cut) : text;
+  const quoted = cut > 0 ? text.slice(cut) : '';
+  return (
+    <>
+      <pre className="plain"><Linkified text={own.trimEnd()} /></pre>
+      {quoted && (
+        <>
+          <button type="button" className="quote-toggle" title={showQuoted ? 'Hide trimmed content' : 'Show trimmed content'} aria-expanded={showQuoted} onClick={() => setShowQuoted(!showQuoted)}>
+            •••
+          </button>
+          {showQuoted && <pre className="plain quoted"><Linkified text={quoted.replace(/^\n+/, '')} /></pre>}
+        </>
+      )}
+    </>
+  );
+}
 
 /**
  * One opened message, Gmail style. `url` is its API path; `preview` (the list row) fills the
@@ -155,18 +212,23 @@ export default function MessageView({
             <Avatar url={avatars[head.from?.address]} person={head.from} />
             <div className="sender-info">
               <div className="sender-line">
-                <strong>{displayName(head.from)}</strong>
-                {head.from?.name && <span className="muted small">&lt;{head.from.address}&gt;</span>}
+                <strong className="sender-name">{displayName(head.from)}</strong>
+                {head.from?.name && <span className="muted small sender-address">&lt;{head.from.address}&gt;</span>}
               </div>
-              <button className="details-toggle muted small" onClick={() => setDetails(!details)}>
-                to {joinPeople(head.to, me) || 'undisclosed recipients'}
-                {head.cc?.length > 0 && <>, cc {joinPeople(head.cc, me)}</>}
+              <button className="details-toggle muted small" aria-expanded={details} onClick={() => setDetails(!details)}>
+                <span className="details-who">
+                  to {joinPeople(head.to, me) || 'undisclosed recipients'}
+                  {head.cc?.length > 0 && <>, cc {joinPeople(head.cc, me)}</>}
+                </span>
                 <Icon name="expandMore" size={16} />
               </button>
             </div>
             <div className="sender-meta">
-              <span className="muted small nowrap" title={formatDate(head.date, true)}>
+              <span className="muted small nowrap date-full" title={formatDate(head.date, true)}>
                 {formatDate(head.date, true)} ({timeAgo(head.date)})
+              </span>
+              <span className="muted small nowrap date-short" title={formatDate(head.date, true)}>
+                {formatDate(head.date)}
               </span>
               {onStar && msg?.kind === 'inbox' && (
                 <button className={`icon-btn star ${head.starred ? 'on' : ''}`} title="Star (s)" onClick={star}>
@@ -200,7 +262,7 @@ export default function MessageView({
 
           <div className="message-body">
             {!msg && !error && <div className="loading-lines"><span /><span /><span /></div>}
-            {msg && (msg.html ? <HtmlBody html={msg.html} /> : <pre className="plain">{msg.text}</pre>)}
+            {msg && (msg.html ? <HtmlBody html={msg.html} /> : <PlainBody text={msg.text || ''} />)}
           </div>
 
           {msg?.attachments?.length > 0 && (

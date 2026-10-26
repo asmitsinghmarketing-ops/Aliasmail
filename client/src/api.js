@@ -21,17 +21,40 @@ export function setActiveMailbox(address) {
   clearMailCaches();
 }
 
+// After the device sleeps or the host wakes the app up, the first requests can hit a network
+// that isn't back yet, or the host's proxy answering 502-504. Reads retry after a short wait;
+// changes (send, delete, ...) never retry, because the first attempt may have gone through.
+const RETRY_DELAYS = [600, 2000];
+const RETRY_STATUS = new Set([502, 503, 504]);
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function request(path, { method = 'GET', body, signInFlow = false } = {}) {
   const headers = { 'X-Requested-With': 'AliasMail' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (activeMailbox && path.startsWith('/mail/')) headers['X-Mailbox'] = activeMailbox;
+  const send = () =>
+    fetch(`/api${path}`, {
+      method,
+      headers,
+      credentials: 'same-origin',
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
 
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers,
-    credentials: 'same-origin',
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const retries = method === 'GET' ? RETRY_DELAYS : [];
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await send();
+      if (!RETRY_STATUS.has(res.status) || attempt >= retries.length) break;
+    } catch (err) {
+      if (attempt >= retries.length) {
+        const offline = new Error(navigator.onLine === false ? 'You’re offline. AliasMail will catch up when you’re back online.' : 'Couldn’t reach AliasMail. Check your connection and try again.');
+        offline.network = true;
+        throw offline;
+      }
+    }
+    await wait(retries[attempt]);
+  }
   // Signed out elsewhere, expired, or idle too long: go back to the sign-in page.
   if (res.status === 401 && !signInFlow) window.dispatchEvent(new Event(LOGOUT_EVENT));
   return res;
@@ -44,7 +67,8 @@ export async function api(path, options) {
   const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
   if (options?.signInFlow && res.ok) clearMailCaches();
   if (!res.ok) {
-    const error = new Error(data?.error || `Request failed (${res.status})`);
+    const fallback = RETRY_STATUS.has(res.status) ? 'AliasMail is waking up. Try again in a moment.' : `Request failed (${res.status})`;
+    const error = new Error(data?.error || fallback);
     error.status = res.status;
     // The role giving access to this shared mailbox was removed: go back to the own mailbox.
     if (res.status === 403 && activeMailbox && path.startsWith('/mail/') && /access to that mailbox/.test(error.message)) {

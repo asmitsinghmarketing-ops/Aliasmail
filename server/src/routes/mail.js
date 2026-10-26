@@ -18,8 +18,8 @@ import { requireAuth } from '../auth.js';
 import { deleteFromServer, fetchParsed, moveMessages, prefetch, setServerSeen, syncInbox } from '../mailbox.js';
 import { deliver } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
-import { HttpError } from '../errors.js';
-import { mailEvents } from '../mail-events.js';
+import { HttpError, describeError } from '../errors.js';
+import { announceChange, mailEvents } from '../mail-events.js';
 
 const router = Router();
 
@@ -33,6 +33,12 @@ router.use(requireAuth(), (req, res, next) => {
     if (!canOpenMailbox(req.user.role, req.user.email, wanted)) throw new HttpError(403, 'You don’t have access to that mailbox');
     req.me = wanted;
     req.shared = true;
+  }
+  // Changes (and opening a message, which marks it read) show up at once in other open
+  // mailboxes, e.g. teammates in a shared mailbox, instead of on their next refresh.
+  const opensMessage = req.method === 'GET' && /^\/(messages|sent|spam)\/[^/]+$/.test(req.path) && !req.query.peek;
+  if (req.method !== 'GET' || opensMessage) {
+    res.on('finish', () => res.statusCode < 400 && announceChange());
   }
   next();
 });
@@ -236,7 +242,7 @@ const scheduledSummary = (s) =>
     hasAttachments: s.mail.attachments.length > 0,
   });
 
-const DRAFT_FIELDS = ['to', 'cc', 'bcc', 'subject', 'text', 'inReplyTo'];
+const DRAFT_FIELDS = ['to', 'cc', 'bcc', 'subject', 'text', 'html', 'inReplyTo'];
 
 const myLabels = (me) => db().labels.filter((l) => l.alias === me);
 
@@ -266,7 +272,14 @@ router.get('/folders', (req, res) => {
 });
 
 router.post('/refresh', async (req, res) => {
-  await syncInbox();
+  try {
+    await syncInbox();
+  } catch (err) {
+    // Say why (bridge unreachable, login refused, ...) instead of a bare 500.
+    const reason = err instanceof HttpError ? err.message : describeError(err);
+    console.warn('[sync] refresh failed:', reason);
+    throw new HttpError(502, `Couldn’t check for new mail: ${reason}`);
+  }
   res.json({ ok: true });
 });
 
@@ -550,6 +563,7 @@ router.post('/scheduled/cancel', (req, res) => {
       bcc: mail.bcc.join(', '),
       subject: mail.subject,
       text: mail.text,
+      html: mail.html || '',
       inReplyTo: mail.inReplyTo || '',
       references: mail.references || [],
       updatedAt: new Date().toISOString(),
@@ -579,6 +593,8 @@ router.post('/send', async (req, res) => {
     bcc,
     subject: String(body.subject ?? ''),
     text: String(body.text ?? ''),
+    // Formatted version from the editor; the text above goes along for plain-text mail apps.
+    html: typeof body.html === 'string' && body.html.trim() ? body.html.slice(0, 2_000_000) : undefined,
     inReplyTo: body.inReplyTo || undefined,
     references: Array.isArray(body.references) ? body.references.map(String) : undefined,
     attachments: (body.attachments || []).map((a) => ({

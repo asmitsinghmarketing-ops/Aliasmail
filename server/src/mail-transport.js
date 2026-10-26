@@ -131,14 +131,27 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
     });
   }
 
+  // Repeating these can't change anything twice. Sending, moving and deleting are never retried:
+  // a dropped connection doesn't prove the first attempt failed.
+  const SAFE_TO_RETRY = new Set(['health', 'test', 'sync', 'fetch', 'fetchMany', 'workerStatus', 'flag']);
+
   async function bridge(action, data) {
     if (!settings.mailBridge.configured) throw new HttpError(503, 'PHP mail bridge is not configured');
     const url = new URL(settings.mailBridge.url);
     if (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') throw new HttpError(500, 'MAIL_BRIDGE_URL must use HTTPS in production');
-    const response = await fetcher(url, {
+    const post = () => fetcher(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.mailBridge.token}` },
       body: JSON.stringify({ action, ...data }), signal: AbortSignal.timeout(45_000),
     });
+    let response;
+    try {
+      response = await post();
+    } catch (error) {
+      // After a quiet period the bridge's web server has usually closed the reused connection
+      // ("fetch failed: other side closed"); a second attempt opens a new one.
+      if (!SAFE_TO_RETRY.has(action) || error.name === 'TimeoutError') throw error;
+      response = await post();
+    }
     let result;
     try { result = await response.json(); } catch { throw new HttpError(502, 'Mail bridge returned an invalid response. Check the deployed PHP bridge and its server logs.'); }
     if (!result || typeof result !== 'object' || Array.isArray(result)) throw new HttpError(502, 'Mail bridge returned an invalid response');

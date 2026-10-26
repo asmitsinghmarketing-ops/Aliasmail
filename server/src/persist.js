@@ -100,19 +100,35 @@ export function createFileBackend(dataFile = config.dataFile) {
 async function sqlBackend(url) {
   const postgres = /^postgres(ql)?:/i.test(url);
   const ssl = config.databaseSsl ? { rejectUnauthorized: false } : undefined;
-  let query;
+  let run;
   if (postgres) {
     const { default: pg } = await import('pg');
-    const pool = new pg.Pool({ connectionString: url, ssl, max: 4 });
-    query = async (sql, params = []) => {
+    const pool = new pg.Pool({ connectionString: url, ssl, max: 4, idleTimeoutMillis: 30_000, keepAlive: true });
+    // Without a listener, an idle connection dropped by the server crashes the process.
+    pool.on('error', (err) => console.warn('[store] idle database connection closed:', err.code || err.message));
+    run = async (sql, params) => {
       let n = 0;
       return (await pool.query(sql.replace(/\?/g, () => `$${++n}`), params)).rows;
     };
   } else {
     const mysql = await import('mysql2/promise');
-    const pool = mysql.createPool({ uri: url, ssl, connectionLimit: 4 });
-    query = async (sql, params = []) => (await pool.query(sql, params))[0];
+    // MySQL closes connections that sit idle (wait_timeout); release ours first and keep the
+    // rest alive, so the first query after a quiet period doesn't hit a dead connection.
+    const pool = mysql.createPool({
+      uri: url, ssl, connectionLimit: 4, maxIdle: 2, idleTimeout: 60_000, enableKeepAlive: true, keepAliveInitialDelay: 10_000,
+    });
+    run = async (sql, params) => (await pool.query(sql, params))[0];
   }
+  // A connection that died while idle fails once; the retry gets a fresh one from the pool.
+  const LOST = /PROTOCOL_CONNECTION_LOST|ECONNRESET|EPIPE|ETIMEDOUT|ECONNREFUSED|Connection lost|Connection terminated|server closed the connection|read ECONNRESET/i;
+  const query = async (sql, params = []) => {
+    try {
+      return await run(sql, params);
+    } catch (err) {
+      if (!LOST.test(`${err.code} ${err.message}`)) throw err;
+      return run(sql, params);
+    }
+  };
   const upsert = (table, key, cols) =>
     postgres
       ? `ON CONFLICT (${key}) DO UPDATE SET ${cols.map((c) => `${c} = EXCLUDED.${c}`).join(', ')}`

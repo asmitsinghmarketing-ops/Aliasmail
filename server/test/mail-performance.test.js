@@ -135,6 +135,29 @@ test('worker status is null without a bridge, and an old bridge reports an error
   await assert.rejects(old.workers(), /Unsupported bridge action/);
 });
 
+test('a connection dropped while idle is retried for reads, never for sending', async (t) => {
+  const flaky = () => {
+    let calls = 0;
+    const fetcher = async () => {
+      calls++;
+      if (calls === 1) throw new TypeError('fetch failed', { cause: new Error('other side closed') });
+      return { ok: true, json: async () => ({ raw: raw.toString('base64'), ok: true }) };
+    };
+    return { fetcher, calls: () => calls };
+  };
+  const read = flaky();
+  const reader = createMailTransport(settings, { fetcher: read.fetcher });
+  t.after(() => reader.close());
+  assert.equal((await reader.request('fetch', { uid: 1 })).raw, raw.toString('base64'));
+  assert.equal(read.calls(), 2);
+
+  const send = flaky();
+  const sender = createMailTransport(settings, { fetcher: send.fetcher });
+  t.after(() => sender.close());
+  await assert.rejects(sender.request('sendRaw', { raw: 'eA==', envelope: { from: 'a@example.com', to: ['b@example.com'] } }), /fetch failed/);
+  assert.equal(send.calls(), 1);
+});
+
 test('invalid bridge JSON is a visible failure', async (t) => {
   const transport = createMailTransport(settings, { fetcher: async () => ({ ok: true, json: async () => { throw new SyntaxError(); } }) });
   t.after(() => transport.close());

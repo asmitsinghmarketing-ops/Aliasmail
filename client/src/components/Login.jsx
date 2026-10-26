@@ -137,7 +137,7 @@ export default function Login({ onLogin }) {
 
         <div className="login-side">
           <div className="brand brand-lg">
-            <Logo size={46} />
+            <Logo />
             <Wordmark />
           </div>
           <div className="login-heading" key={step}>

@@ -4,6 +4,7 @@ import { formatSize } from '../format.js';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { Popover, TimeMenu, scheduleOptions } from './Menus.jsx';
+import RichEditor, { htmlFromText, sanitizeHtml } from './RichEditor.jsx';
 
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
@@ -23,13 +24,44 @@ const readFile = (file) =>
 
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `d${Date.now()}${Math.random().toString(36).slice(2)}`);
 
+// On phones the system back button/gesture closes compose (saving the draft), like Gmail.
+// A history entry is added while compose is open; leaving another way removes it again.
+// The removal waits a tick so React's development double-mount doesn't undo its own entry.
+let pendingHistoryBack = null;
+
+/** The ⋮ menu of the phone compose screen: schedule send, or discard. */
+function MoreMenu({ close, onSchedule, onDiscard }) {
+  const [scheduling, setScheduling] = useState(false);
+  if (scheduling) return <TimeMenu title="Schedule send" options={scheduleOptions()} close={close} onPick={onSchedule} />;
+  return (
+    <div className="menu">
+      <button type="button" className="menu-item check-item" onClick={() => setScheduling(true)}>
+        <Icon name="scheduleSend" size={20} /> Schedule send
+      </button>
+      <button
+        type="button"
+        className="menu-item check-item"
+        onClick={() => {
+          close();
+          onDiscard();
+        }}
+      >
+        <Icon name="trash" size={20} /> Discard
+      </button>
+    </div>
+  );
+}
+
 /**
  * Compose window. Sending is handed to `onSend(payload)` so the mailbox can offer "Undo send";
  * `payload.sendAt` is set for a scheduled send. `draft.unsaved` marks content (e.g. an undone
  * send) that must be kept as a draft on close even if untouched.
  */
 export default function Compose({ from, draft, onClose, onSend }) {
-  const initial = { to: draft.to || '', cc: draft.cc || '', bcc: draft.bcc || '', subject: draft.subject || '', text: draft.text || '' };
+  const initial = {
+    to: draft.to || '', cc: draft.cc || '', bcc: draft.bcc || '', subject: draft.subject || '', text: draft.text || '',
+    html: draft.html || htmlFromText(draft.text || ''),
+  };
   const [form, setForm] = useState(initial);
   const [showCc, setShowCc] = useState(Boolean(draft.cc));
   const [showBcc, setShowBcc] = useState(Boolean(draft.bcc));
@@ -40,7 +72,9 @@ export default function Compose({ from, draft, onClose, onSend }) {
   const saveTimer = useRef(null);
   const sending = useRef(false);
   const [files, setFiles] = useState(draft.files || []);
-  const [mode, setMode] = useState(() => (window.matchMedia('(max-width: 800px)').matches ? 'full' : 'normal')); // normal | min | full
+  // Phones get a full-screen compose screen like the Gmail app; larger screens a floating window.
+  const [phone] = useState(() => window.matchMedia('(max-width: 800px)').matches);
+  const [mode, setMode] = useState('normal'); // normal | min | full
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
   const body = useRef(null);
@@ -85,15 +119,20 @@ export default function Compose({ from, draft, onClose, onSend }) {
   };
   const floating = pos && mode !== 'full';
 
-  // Replies open with the cursor above the quoted text and signature.
-  useEffect(() => {
-    if (draft.to && body.current) {
-      body.current.setSelectionRange(0, 0);
-      body.current.scrollTop = 0;
-    }
-  }, []);
-
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
+  const onBody = ({ html, text }) => setForm((f) => ({ ...f, html, text }));
+  // Replies and forwards open with the cursor above the quoted text and signature.
+  const editor = (props) => (
+    <RichEditor
+      initialHtml={initial.html}
+      onChange={onBody}
+      placeholder="Compose email"
+      autoFocus={Boolean(draft.to)}
+      caretAtStart={Boolean(draft.to)}
+      editorRef={body}
+      {...props}
+    />
+  );
   const textChanged = Boolean(draft.unsaved) || Object.keys(initial).some((k) => form[k] !== initial[k]);
   const changed = files.length > 0 || textChanged;
 
@@ -104,7 +143,7 @@ export default function Compose({ from, draft, onClose, onSend }) {
     try {
       await api(`/mail/drafts/${id}`, {
         method: 'PUT',
-        body: { ...form, inReplyTo: draft.inReplyTo || '', references: draft.references || [] },
+        body: { ...form, html: sanitizeHtml(form.html), inReplyTo: draft.inReplyTo || '', references: draft.references || [] },
       });
       onServer.current = true;
       setSaveState('Draft saved');
@@ -139,6 +178,28 @@ export default function Compose({ from, draft, onClose, onSend }) {
     }
   }
 
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    if (!phone) return undefined;
+    clearTimeout(pendingHistoryBack);
+    if (history.state?.aliasmailCompose !== id) history.pushState({ ...history.state, aliasmailCompose: id }, '');
+    let popped = false;
+    const onPop = () => {
+      popped = true;
+      closeRef.current();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (!popped) {
+        pendingHistoryBack = setTimeout(() => {
+          if (history.state?.aliasmailCompose === id) history.back();
+        }, 0);
+      }
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function discard() {
     if (changed && !(await ask({ title: 'Discard this draft?', message: 'What you wrote will be deleted.', confirmLabel: 'Discard', danger: true }))) return;
     clearTimeout(saveTimer.current);
@@ -164,12 +225,101 @@ export default function Compose({ from, draft, onClose, onSend }) {
     sending.current = true;
     onSend({
       ...form,
+      html: sanitizeHtml(form.html),
       draftId: id,
       inReplyTo: draft.inReplyTo || undefined,
       references: draft.references,
       files,
       sendAt: sendAt?.toISOString(),
     });
+  }
+
+  const attachments = files.length > 0 && (
+    <div className="compose-files">
+      {files.map((f, i) => (
+        <span key={i} className="file-pill">
+          {f.filename} <span className="muted">({formatSize(f.size)})</span>
+          <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label={`Remove ${f.filename}`}>
+            <Icon name="close" size={14} />
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+
+  if (phone) {
+    return (
+      <form className="compose-mobile" onSubmit={send} aria-label="Compose email">
+        <div className="cm-bar">
+          <button type="button" className="icon-btn" aria-label="Back (saves the draft)" title="Back" onClick={close}>
+            <Icon name="back" />
+          </button>
+          <span className="cm-title">Compose</span>
+          <label className="icon-btn" aria-label="Attach files" title="Attach files">
+            <Icon name="attach" />
+            <input type="file" multiple hidden onChange={(e) => addFiles(e.target.files)} />
+          </label>
+          <button className="icon-btn cm-send" aria-label="Send" title="Send">
+            <Icon name="send" />
+          </button>
+          <Popover icon="moreVert" title="More options" align="right">
+            {(closeMenu) => <MoreMenu close={closeMenu} onSchedule={(date) => send(null, date)} onDiscard={discard} />}
+          </Popover>
+        </div>
+
+        <div className="cm-scroll">
+          <div className="cm-row">
+            <span className="cm-label">From</span>
+            <span className="cm-from">{from}</span>
+          </div>
+          <div className="cm-row">
+            <span className="cm-label">To</span>
+            <input
+              type="text"
+              inputMode="email"
+              autoComplete="email"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-label="To"
+              autoFocus={!draft.to}
+              {...field('to')}
+            />
+            <button
+              type="button"
+              className="icon-btn cm-expand"
+              aria-label={showCc ? 'Hide Cc and Bcc' : 'Add Cc and Bcc'}
+              aria-expanded={showCc}
+              onClick={() => {
+                setShowCc(!showCc);
+                setShowBcc(!showCc);
+              }}
+            >
+              <Icon name="expandMore" />
+            </button>
+          </div>
+          {showCc && (
+            <div className="cm-row">
+              <span className="cm-label">Cc</span>
+              <input type="text" inputMode="email" autoCapitalize="off" autoCorrect="off" spellCheck={false} aria-label="Cc" {...field('cc')} />
+            </div>
+          )}
+          {(showCc || showBcc) && (
+            <div className="cm-row">
+              <span className="cm-label">Bcc</span>
+              <input type="text" inputMode="email" autoCapitalize="off" autoCorrect="off" spellCheck={false} aria-label="Bcc" {...field('bcc')} />
+            </div>
+          )}
+          <div className="cm-row">
+            <input type="text" placeholder="Subject" aria-label="Subject" autoCapitalize="sentences" {...field('subject')} />
+          </div>
+          {error && <div className="alert m">{error}</div>}
+          {editor({ className: 'cm-body', toolbarClassName: 'cm-format' })}
+          {attachments}
+          {saveState && <div className="cm-save muted small">{saveState}</div>}
+        </div>
+      </form>
+    );
   }
 
   const compose = (
@@ -251,26 +401,10 @@ export default function Compose({ from, draft, onClose, onSend }) {
           <div className="compose-line">
             <input placeholder="Subject" {...field('subject')} />
           </div>
-          <textarea
-            className="compose-body"
-            autoFocus={Boolean(draft.to)}
-            ref={body}
-            {...field('text')}
-          />
+          {editor({ className: 'compose-body' })}
 
           {dragging && <div className="drop-hint">Drop files to attach</div>}
-          {files.length > 0 && (
-            <div className="compose-files">
-              {files.map((f, i) => (
-                <span key={i} className="file-pill">
-                  {f.filename} <span className="muted">({formatSize(f.size)})</span>
-                  <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label="Remove">
-                    <Icon name="close" size={14} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
+          {attachments}
           {error && <div className="alert m">{error}</div>}
 
           <div className="compose-foot">

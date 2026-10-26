@@ -162,7 +162,7 @@ label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; width: 220px; flex: none; }
 .brand-lg { font-size: 24px; width: auto; }
 /* No filter: a drop-shadow filter turns the logo into a soft bitmap with a pink glow. */
-.brand-mark { flex: none; display: block; border-radius: 12px; }
+.brand-mark { flex: none; display: block; }
 .wordmark { letter-spacing: -0.02em; }
 .wordmark-accent {
   background: linear-gradient(90deg, var(--brand), var(--pink) 55%, var(--violet));
@@ -853,7 +853,7 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
   }
   .admin-app .content { min-height: 0; margin: 0; }
   .admin-app .topbar .account > .admin-switch { display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; }
-  .admin-app .brand > .brand-mark { display: block; width: 36px; height: 36px; }
+  .admin-app .brand > .brand-mark { display: block; width: 40px; height: 40px; }
   .admin-app .topbar .brand { width: auto; flex: 1; }
 }
 
@@ -867,7 +867,7 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
   .menu-open .mobile-menu-toggle { display: none; }
   .mobile-drawer-head { display: flex; align-items: center; justify-content: space-between; min-height: 44px; }
   .mobile-drawer-brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; }
-  .mobile-drawer-logo { display: block; width: 38px; height: 38px; }
+  .mobile-drawer-logo { display: block; width: 40px; height: 40px; }
   .mobile-drawer-close { color: #444746; }
   .sidebar-backdrop {
     position: fixed; z-index: 39; inset: 0; display: block;
@@ -1213,4 +1213,106 @@ a.btn { color: inherit; text-decoration: none; }
   .switcher .popover { position: fixed; top: max(64px, calc(env(safe-area-inset-top) + 60px)); right: 12px; left: 12px; }
   .app:not(.admin-app) .topbar { z-index: 30; }
   .switcher-menu { width: auto; max-width: none; }
+}
+
+/* ---------- phone compose screen (Gmail app style) ---------- */
+.dialog-backdrop { z-index: 60; }
+.compose-mobile {
+  position: fixed; inset: 0; z-index: 45; display: flex; flex-direction: column;
+  height: 100%; height: 100dvh; background: var(--surface); animation: rise-in 0.22s var(--ease-out);
+}
+.cm-bar {
+  flex: none; display: flex; align-items: center; gap: 2px; min-height: 56px;
+  padding: max(4px, env(safe-area-inset-top)) 4px 4px; border-bottom: 1px solid #e8eaed;
+}
+.cm-bar .icon-btn { width: 44px; height: 44px; }
+.cm-title { flex: 1; min-width: 0; margin-left: 6px; font-size: 20px; font-weight: 500; }
+.cm-bar .cm-send { color: var(--alias); }
+.cm-bar .popover .menu { min-width: 230px; }
+.cm-scroll { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; padding-bottom: env(safe-area-inset-bottom); }
+.cm-row { flex: none; display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 6px 0 16px; border-bottom: 1px solid #e8eaed; }
+.cm-label { flex: none; width: 44px; color: #5f6368; font-size: 16px; }
+.cm-from { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; }
+.cm-row input[type='text'] {
+  flex: 1; min-width: 0; width: auto; padding: 14px 0; border: 0; border-radius: 0;
+  background: none; font-size: 16px; outline: none;
+}
+.cm-row input[type='text']:focus-visible { outline: none; }
+.cm-row:focus-within { border-bottom-color: var(--alias); }
+.cm-expand svg { transition: transform 0.2s var(--ease); }
+.cm-expand[aria-expanded='true'] svg { transform: rotate(180deg); }
+.cm-body {
+  flex: 1 0 auto; min-height: 220px; padding: 16px; border: 0; resize: none; outline: none;
+  font: inherit; font-size: 16px; line-height: 1.55; background: none;
+}
+.cm-body:focus-visible { outline: none; }
+.compose-mobile .compose-files { padding: 4px 16px 12px; }
+.compose-mobile .file-pill { font-size: 13px; padding: 8px 8px 8px 12px; }
+.compose-mobile .alert.m { margin: 8px 16px; }
+.cm-save { padding: 0 16px 12px; }
+
+/* ---------- formatted message editor ---------- */
+.rich-editor { overflow-y: auto; overflow-wrap: anywhere; outline: none; cursor: text; }
+.rich-editor:focus-visible { outline: none; }
+.rich-editor:empty::before { content: attr(data-placeholder); color: #80868b; pointer-events: none; }
+.rich-editor ul, .rich-editor ol { margin: 4px 0; padding-left: 28px; }
+.rich-editor a { color: #1a73e8; }
+.rich-editor blockquote { margin: 4px 0 4px 8px; padding-left: 12px; border-left: 2px solid var(--border); color: var(--muted); }
+.compose .compose-body { max-height: 52vh; }
+.compose.full .compose-body { max-height: none; }
+
+.format-bar { display: flex; align-items: center; gap: 2px; padding: 2px 12px; border-top: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.format-bar .icon-btn { width: 32px; height: 32px; border-radius: 6px; }
+.format-bar .icon-btn.on { background: color-mix(in srgb, var(--alias) 16%, white); color: color-mix(in srgb, var(--alias) 80%, black); }
+
+/* Phone: the bar sits at the bottom of the screen, just above the keyboard. */
+.compose-mobile .cm-body { flex: 1 0 auto; min-height: 220px; padding: 16px; font-size: 16px; line-height: 1.55; }
+.compose-mobile .cm-format {
+  position: sticky; bottom: 0; z-index: 1; justify-content: space-around; padding: 4px 8px;
+  padding-bottom: max(4px, env(safe-area-inset-bottom)); background: #f6f8fc; border-top: 1px solid #e8eaed;
+}
+.compose-mobile .cm-format .icon-btn { width: 40px; height: 40px; }
+
+/* ---------- opened message (all sizes) ---------- */
+.sender { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; column-gap: 16px; align-items: start; }
+.sender .avatar { grid-column: 1; }
+.sender-info { min-width: 0; }
+.sender-line { flex-wrap: nowrap; min-width: 0; }
+.sender-name { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sender-address { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.details-toggle { max-width: 100%; }
+.details-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sender-meta { align-self: start; gap: 0; }
+.sender-meta .date-short { display: none; }
+.sender-meta .nowrap { margin-right: 6px; }
+.message-body { overflow-x: hidden; }
+.plain a { color: #1a73e8; }
+.plain.quoted { margin-top: 8px; color: var(--muted); }
+.quote-toggle {
+  display: inline-flex; align-items: center; justify-content: center; height: 14px; margin-top: 12px; padding: 0 8px;
+  border: 0; border-radius: 7px; background: #e8eaed; color: #5f6368; font-size: 11px; line-height: 1; letter-spacing: 1px;
+}
+.quote-toggle:hover { background: #dadce0; }
+
+@media (max-width: 800px) {
+  .message { padding: 16px 16px 28px; }
+  .message-head h2 { font-size: 21px; font-weight: 400; }
+  .sender { grid-template-columns: 40px minmax(0, 1fr) auto; column-gap: 12px; margin-left: 0; }
+  .sender-address { display: none; }
+  .sender-meta { flex-wrap: nowrap; justify-content: flex-end; }
+  .sender-meta .date-full { display: none; }
+  .sender-meta .date-short { display: inline; margin: 10px 2px 0 0; font-size: 12px; }
+  .sender-meta .icon-btn { width: 36px; height: 36px; }
+  .details { width: 100%; }
+  .attachments { gap: 8px; }
+  .attachment { flex: 1 1 100%; max-width: none; }
+  .reply-bar { gap: 8px; }
+}
+
+/* Phone side menu: own and shared mailboxes */
+@media (max-width: 800px) {
+  .sidebar .drawer-mailboxes.mobile-only { display: block; }
+  .sidebar .mailbox-item { min-height: 54px; }
+  .sidebar .mailbox-item .nav-label { display: grid; line-height: 1.25; }
+  .sidebar .mailbox-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
 }

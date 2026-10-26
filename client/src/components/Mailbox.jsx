@@ -264,8 +264,18 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       // newly deployed app doesn't leave the first mailbox view empty until the 30s poll.
       api('/mail/refresh', { method: 'POST' }).then(() => latestLoad.current?.()).catch(() => {});
     }
-    const timer = setInterval(load, 30000);
-    return () => clearInterval(timer);
+    // Poll only while the page is on screen; catch up at once when it comes back (a phone
+    // waking up, a tab brought to the front, the network returning).
+    const visible = () => document.visibilityState === 'visible';
+    const timer = setInterval(() => visible() && load(), 30000);
+    const wake = () => visible() && load();
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('online', wake);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', wake);
+      window.removeEventListener('online', wake);
+    };
   }, [load]);
 
   useEffect(() => {
@@ -891,7 +901,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         >
           <div className="mobile-drawer-head">
             <div className="mobile-drawer-brand">
-              <Logo size={38} className="mobile-drawer-logo" />
+              <Logo className="mobile-drawer-logo" />
               <Wordmark />
             </div>
             <button className="icon-btn mobile-drawer-close" type="button" aria-label="Close menu" onClick={() => setCollapsed(true)}>
@@ -955,6 +965,37 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               <span className="nav-label">Sign out</span>
             </button>
           </nav>
+
+          {mailboxes.length > 0 && (
+            <div className="drawer-mailboxes mobile-only">
+              <div className="labels-head">
+                <span>Mailboxes</span>
+              </div>
+              <nav>
+                {[{ ...account, address: account.email, own: true }, ...mailboxes].map((m) => {
+                  const current = m.address === me;
+                  return (
+                    <button
+                      key={m.address}
+                      className={`nav-item mailbox-item ${current ? 'active' : ''}`}
+                      aria-current={current ? 'true' : undefined}
+                      title={m.address}
+                      onClick={() => {
+                        setCollapsed(true);
+                        if (!current) onSwitchMailbox(m.own ? null : m.address);
+                      }}
+                    >
+                      <Avatar url={m.avatarUrl} person={{ name: m.displayName, address: m.address }} color={m.color} size="sm" />
+                      <span className="nav-label">
+                        {m.displayName || m.address}
+                        <span className="muted small mailbox-sub">{m.own ? 'Your mailbox' : m.roles.join(', ')}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+          )}
 
           <div className="labels-head">
             <span>Labels</span>
