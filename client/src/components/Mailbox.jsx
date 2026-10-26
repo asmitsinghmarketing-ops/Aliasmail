@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, cachedMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
+import { ask } from './Dialog.jsx';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
@@ -301,6 +302,7 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
     setFolder(nextFolder);
     setPage(1);
     if (window.matchMedia('(max-width: 800px)').matches) setCollapsed(true);
+    if (modal === 'settings') setModal(null);
     closeViewer();
   }
 
@@ -359,7 +361,8 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
 
   async function emptyFolder() {
     const isTrash = folder === 'trash';
-    if (!confirm(`Delete everything in ${isTrash ? 'Trash' : 'Spam'} forever?`)) return;
+    const name = isTrash ? 'Trash' : 'Spam';
+    if (!(await ask({ title: `Empty ${name}?`, message: `Everything in ${name} will be deleted forever. This can't be undone.`, confirmLabel: `Empty ${name}`, danger: true }))) return;
     try {
       if (isTrash) await api('/mail/trash/empty', { method: 'POST' });
       else await api('/mail/spam/action', { method: 'POST', body: { ids: list.items.map((i) => i.id), action: 'delete' } });
@@ -397,7 +400,7 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
   }
 
   async function deleteLabel(label) {
-    if (!confirm(`Delete the label "${label.name}"? Messages keep everything else.`)) return;
+    if (!(await ask({ title: `Delete the label "${label.name}"?`, message: 'Messages stay in your mailbox; only this label is removed from them.', confirmLabel: 'Delete', danger: true }))) return;
     await api(`/mail/labels/${label.id}`, { method: 'DELETE' });
     setLabels((l) => l.filter((x) => x.id !== label.id));
     if (folder === `label:${label.id}`) goTo('inbox');
@@ -849,9 +852,9 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
             <button
               className="icon-btn"
               title="Create new label"
-              onClick={() => {
-                const name = prompt('New label name');
-                if (name?.trim()) createLabel(name.trim());
+              onClick={async () => {
+                const name = await ask({ title: 'New label', input: { label: 'Label name', placeholder: 'e.g. Clients', maxLength: 40 }, confirmLabel: 'Create' });
+                if (name) createLabel(name);
               }}
             >
               <Icon name="add" size={18} />
@@ -888,12 +891,12 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
           />
         )}
 
-        {!open && (
+        {!open && modal !== 'settings' && (
           <button className="compose-fab" type="button" onClick={() => compose()} aria-label="Compose">
             <Icon name="edit" /> <span>Compose</span>
           </button>
         )}
-        {!open && (
+        {!open && modal !== 'settings' && (
           <nav className="bottom-nav" aria-label="Folders">
             {['inbox', 'starred', 'sent'].map((id) => {
               const f = FOLDERS.find((x) => x.id === id);
@@ -915,7 +918,22 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
         )}
 
         <main className="content">
-          {open ? (
+          {modal === 'settings' ? (
+            <Settings
+              color={user.color}
+              onAvatarChange={(avatarUrl) => {
+                onUserChange({ ...user, avatarUrl });
+                setPeople((p) => ({ ...p, [me]: avatarUrl }));
+              }}
+              onClose={() => setModal(null)}
+              onSaved={(s) => {
+                setModal(null);
+                setSignature(s.signature);
+                onUserChange({ ...user, displayName: s.displayName, avatarUrl: s.avatarUrl });
+                flash('Settings saved.');
+              }}
+            />
+          ) : open ? (
             <MessageView
               key={`${open.kind}:${open.id}`}
               url={messageUrl(open)}
@@ -1115,23 +1133,6 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
             load();
           }}
           onSend={handleSend}
-        />
-      )}
-
-      {modal === 'settings' && (
-        <Settings
-          color={user.color}
-          onAvatarChange={(avatarUrl) => {
-            onUserChange({ ...user, avatarUrl });
-            setPeople((p) => ({ ...p, [me]: avatarUrl }));
-          }}
-          onClose={() => setModal(null)}
-          onSaved={(s) => {
-            setModal(null);
-            setSignature(s.signature);
-            onUserChange({ ...user, displayName: s.displayName, avatarUrl: s.avatarUrl });
-            flash('Settings saved.');
-          }}
         />
       )}
 

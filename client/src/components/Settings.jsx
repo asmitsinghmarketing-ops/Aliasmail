@@ -109,11 +109,11 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
             </div>
 
             <label>
-              Your name <span className="muted">(shown to people you email)</span>
+              <span>Your name <span className="muted">· shown to people you email</span></span>
               <input type="text" {...field('displayName')} placeholder={form.address} />
             </label>
             <label>
-              Signature <span className="muted">(added to new messages and replies)</span>
+              <span>Signature <span className="muted">· added to new messages and replies</span></span>
               <textarea className="textarea" rows={4} {...field('signature')} placeholder={'Best regards,\nJohn'} />
             </label>
             <section className="sec-card google-account-card">
@@ -131,37 +131,36 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
           </>
         )}
         {error && <div className="alert">{error}</div>}
-        <div className="modal-foot">
+        <div className="settings-foot">
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy || !form}>{busy ? 'Saving…' : 'Save'}</button>
+          <button className="btn btn-primary" disabled={busy || !form}>{busy ? 'Saving…' : 'Save changes'}</button>
         </div>
       </form>
     );
   }
 
+  // A page in the mail area, like Gmail's settings, rather than a pop-up over it.
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className={`modal settings-modal ${tab === 'security' ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h2 id="settings-title">Settings</h2>
-          <button type="button" className="icon-btn" aria-label="Close settings" onClick={onClose}>
-            <Icon name="close" />
-          </button>
-        </div>
-        <div className="segmented settings-tabs">
-          {[
-            ['profile', 'Profile', 'people'],
-            ['security', 'Security', 'shield'],
-          ].map(([id, label, icon]) => (
-            <button type="button" key={id} className={tab === id ? 'on' : ''} onClick={() => setTab(id)}>
-              <Icon name={icon} size={18} /> {label}
-            </button>
-          ))}
-        </div>
-        <div className="view-enter settings-body" key={tab}>
-          {tab === 'profile' ? profileTab() : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <div className="muted">Loading…</div>}
-        </div>
+    <section className="settings-page" aria-labelledby="settings-title">
+      <div className="toolbar settings-bar">
+        <button type="button" className="icon-btn" aria-label="Close settings" title="Back to mail" onClick={onClose}>
+          <Icon name="back" />
+        </button>
+        <h2 id="settings-title">Settings</h2>
       </div>
-    </div>
+      <div className="settings-tabs" role="tablist">
+        {[
+          ['profile', 'Profile', 'people'],
+          ['security', 'Security', 'shield'],
+        ].map(([id, label, icon]) => (
+          <button type="button" role="tab" aria-selected={tab === id} key={id} className={`settings-tab ${tab === id ? 'on' : ''}`} onClick={() => setTab(id)}>
+            <Icon name={icon} size={18} /> {label}
+          </button>
+        ))}
+      </div>
+      <div className="view-enter settings-body" key={tab}>
+        {tab === 'profile' ? profileTab() : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <div className="muted">Loading…</div>}
+      </div>
+    </section>
   );
 }

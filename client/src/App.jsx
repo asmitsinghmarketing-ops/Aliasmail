@@ -3,10 +3,20 @@ import { api, LOGOUT_EVENT, signOut } from './api.js';
 import Login from './components/Login.jsx';
 import Mailbox from './components/Mailbox.jsx';
 import Admin from './components/Admin.jsx';
+import { DialogHost } from './components/Dialog.jsx';
 
 const OWNER_COLOR = '#e8590c';
 
 export default function App() {
+  return (
+    <>
+      <Screen />
+      <DialogHost />
+    </>
+  );
+}
+
+function Screen() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
   const [adminView, setAdminView] = useState('mail'); // admin only: 'mail' | 'console'

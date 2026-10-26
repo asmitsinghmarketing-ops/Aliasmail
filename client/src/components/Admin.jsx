@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { displayName, formatDate, formatSize, timeAgo } from '../format.js';
 import Avatar from './Avatar.jsx';
+import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
 import MessageView from './MessageView.jsx';
@@ -210,14 +211,14 @@ function SecurityCard() {
 
   async function toggleRequire() {
     const requireMfa = !security.requireMfa;
-    if (requireMfa && !confirm('Require 2-Step Verification for every alias? People who haven’t set it up will be asked to scan a QR code with Google Authenticator the next time they sign in.')) return;
+    if (requireMfa && !(await ask({ title: 'Require 2-Step Verification?', message: 'People who haven’t set it up will be asked to scan a QR code with Google Authenticator the next time they sign in.', confirmLabel: 'Require it' }))) return;
     await api('/admin/security', { method: 'PATCH', body: { requireMfa } });
     setMessage(requireMfa ? 'Everyone must now use Google Authenticator.' : '2-Step Verification is optional again.');
     load();
   }
 
   async function signOutAll() {
-    if (!confirm('Sign every user out of every device? You stay signed in.')) return;
+    if (!(await ask({ title: 'Sign everyone out?', message: 'Every user is signed out of every device. You stay signed in.', confirmLabel: 'Sign everyone out', danger: true }))) return;
     const { ended } = await api('/admin/security/sign-out-all', { method: 'POST' });
     setMessage(`${ended} session${ended === 1 ? '' : 's'} signed out.`);
     load();
@@ -374,7 +375,7 @@ function Aliases({ overview, onChanged }) {
   }
 
   async function remove(alias) {
-    if (!confirm(`Delete alias ${alias.address}? The person will lose access. Their mail stays in the mailbox.`)) return;
+    if (!(await ask({ title: `Delete ${alias.address}?`, message: 'The person will lose access. Their mail stays in the mailbox.', confirmLabel: 'Delete alias', danger: true }))) return;
     try {
       await api(`/admin/aliases/${alias.id}`, { method: 'DELETE' });
       onChanged();
@@ -458,7 +459,7 @@ function Aliases({ overview, onChanged }) {
                         className="link small"
                         title="For someone who lost their phone"
                         onClick={async () => {
-                          if (!confirm(`Reset 2-Step Verification for ${a.address}? They'll be signed out, and can scan a new QR code with Google Authenticator to turn it back on.`)) return;
+                          if (!(await ask({ title: `Reset 2-Step Verification for ${a.address}?`, message: 'They’ll be signed out, and can scan a new QR code with Google Authenticator to turn it back on.', confirmLabel: 'Reset', danger: true }))) return;
                           await api(`/admin/aliases/${a.id}/reset-mfa`, { method: 'POST' });
                           onChanged();
                         }}
@@ -517,6 +518,12 @@ function AliasForm({ alias, initialAddress, palette, onClose, onSaved }) {
   const [error, setError] = useState('');
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
 
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   async function save(e) {
     e.preventDefault();
     setBusy(true);
@@ -537,30 +544,30 @@ function AliasForm({ alias, initialAddress, palette, onClose, onSaved }) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <form className="modal" onSubmit={save} onMouseDown={(e) => e.stopPropagation()}>
+      <form className="modal form-dialog" role="dialog" aria-modal="true" aria-labelledby="alias-form-title" onSubmit={save} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h2>{alias ? 'Edit alias' : 'Add alias'}</h2>
-          <button type="button" className="icon-btn" onClick={onClose}>
+          <h2 id="alias-form-title">{alias ? 'Edit alias' : 'Add alias'}</h2>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
             <Icon name="close" />
           </button>
         </div>
 
         <label>
-          Alias address
+          <span>Alias address</span>
           <input type="email" required disabled={Boolean(alias)} placeholder="john@abc.com" autoFocus={!form.address} {...field('address')} />
         </label>
         <div className="grid-2">
           <label>
-            Display name <span className="muted">(shown as sender)</span>
-            <input placeholder="John Smith" {...field('displayName')} />
+            <span>Display name <span className="muted">· shown as sender</span></span>
+            <input type="text" placeholder="John Smith" {...field('displayName')} />
           </label>
           <label>
-            Owner / customer
-            <input placeholder="Who uses this alias" {...field('ownerName')} />
+            <span>Owner / customer</span>
+            <input type="text" placeholder="Who uses this alias" {...field('ownerName')} />
           </label>
         </div>
         <label>
-          {alias ? 'New password' : 'Password'}
+          <span>{alias ? 'New password' : 'Password'}</span>
           <input type="text" required={!alias} minLength={8} placeholder={alias ? 'Leave blank to keep the current one' : 'At least 8 characters'} {...field('password')} />
         </label>
         <div className="label">Color</div>
@@ -620,8 +627,14 @@ function AllMail({ overview, onChanged }) {
   }, [load]);
 
   async function remove(ids) {
-    const how = permanent ? 'PERMANENTLY delete' : 'move to Trash';
-    if (!ids.length || !confirm(`${how} ${ids.length} message(s) from the mailbox? This affects every alias that received them.`)) return;
+    if (!ids.length) return;
+    const count = `${ids.length} message${ids.length === 1 ? '' : 's'}`;
+    if (!(await ask({
+      title: permanent ? `Delete ${count} forever?` : `Move ${count} to Trash?`,
+      message: `This affects every alias that received ${ids.length === 1 ? 'it' : 'them'}.${permanent ? ' This can’t be undone.' : ''}`,
+      confirmLabel: permanent ? 'Delete forever' : 'Move to Trash',
+      danger: true,
+    }))) return;
     try {
       await api('/admin/messages/delete', { method: 'POST', body: { ids, permanent, folder: box } });
       setSelected(new Set());

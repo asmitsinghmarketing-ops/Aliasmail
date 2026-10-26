@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { formatSize } from '../format.js';
+import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { Popover, TimeMenu, scheduleOptions } from './Menus.jsx';
 
@@ -139,14 +140,14 @@ export default function Compose({ from, draft, onClose, onSend }) {
   }
 
   async function discard() {
-    if (changed && !confirm('Discard this draft?')) return;
+    if (changed && !(await ask({ title: 'Discard this draft?', message: 'What you wrote will be deleted.', confirmLabel: 'Discard', danger: true }))) return;
     clearTimeout(saveTimer.current);
     sending.current = true; // stop any pending autosave
     if (onServer.current) await api('/mail/drafts/delete', { method: 'POST', body: { ids: [id] } }).catch(() => {});
     onClose(onServer.current || changed ? 'Draft discarded.' : undefined);
   }
 
-  function send(e, sendAt) {
+  async function send(e, sendAt) {
     e?.preventDefault();
     if (sending.current) return;
     if (!form.to.trim() && !form.cc.trim() && !form.bcc.trim()) {
@@ -157,7 +158,7 @@ export default function Compose({ from, draft, onClose, onSend }) {
       setError('Attachments are larger than 20 MB in total');
       return;
     }
-    if (!form.subject.trim() && !confirm('Send this message without a subject?')) return;
+    if (!form.subject.trim() && !(await ask({ title: 'Send without a subject?', message: 'This message has no subject line.', confirmLabel: 'Send anyway' }))) return;
 
     clearTimeout(saveTimer.current);
     sending.current = true;
