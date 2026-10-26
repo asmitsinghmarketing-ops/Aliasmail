@@ -44,7 +44,8 @@ const PATHS = {
   check: 'M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z',
 };
 
-export default function Icon({ name, size = 20, className }) {
+// 24px by default: the paths are drawn on a 24px grid, so other sizes put lines between pixels.
+export default function Icon({ name, size = 24, className }) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path fill="currentColor" d={PATHS[name]} />

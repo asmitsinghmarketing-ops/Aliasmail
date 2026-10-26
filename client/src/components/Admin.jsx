@@ -11,10 +11,11 @@ import Pager from './Pager.jsx';
 const TABS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
   { id: 'aliases', label: 'Aliases', icon: 'people' },
+  { id: 'roles', label: 'Roles', icon: 'shield' },
   { id: 'mail', label: 'All mail', icon: 'inbox' },
 ];
 
-export default function Admin({ user, onLogout, onOpenMail }) {
+export default function Admin({ user, onLogout, onOpenMail, onRolesChanged }) {
   const [tab, setTab] = useState('overview');
   const [overview, setOverview] = useState(null);
   const [error, setError] = useState('');
@@ -80,6 +81,16 @@ export default function Admin({ user, onLogout, onOpenMail }) {
             <div className="view-enter" key={tab}>
               {tab === 'overview' && <Overview overview={overview} onReload={reload} />}
               {tab === 'aliases' && <Aliases overview={overview} onChanged={reload} />}
+              {tab === 'roles' && (
+                <Roles
+                  overview={overview}
+                  onChanged={() => {
+                    reload();
+                    onRolesChanged?.();
+                  }}
+                  onOpenAliases={() => setTab('aliases')}
+                />
+              )}
               {tab === 'mail' && <AllMail overview={overview} onChanged={reload} />}
             </div>
           )}
@@ -423,6 +434,7 @@ function Aliases({ overview, onChanged }) {
           <thead>
             <tr>
               <th>Alias</th>
+              <th>Type</th>
               <th>Owner</th>
               <th className="num">Mail</th>
               <th className="num">Unread</th>
@@ -434,7 +446,7 @@ function Aliases({ overview, onChanged }) {
           <tbody>
             {overview.aliases.length === 0 && (
               <tr>
-                <td colSpan={7} className="empty">No aliases yet.</td>
+                <td colSpan={8} className="empty">No aliases yet.</td>
               </tr>
             )}
             {overview.aliases.map((a) => (
@@ -448,11 +460,17 @@ function Aliases({ overview, onChanged }) {
                     </div>
                   </div>
                 </td>
+                <td>
+                  <span className={`pill ${a.type === 'group' ? 'group' : ''}`}>{a.type === 'group' ? 'Group' : 'Personal'}</span>
+                  {a.roles?.length > 0 && <div className="muted small role-names">{a.roles.join(', ')}</div>}
+                </td>
                 <td>{a.ownerName || <span className="muted">—</span>}</td>
                 <td className="num">{a.total}</td>
                 <td className="num">{a.unread}</td>
                 <td>
-                  {a.mfaEnabled ? (
+                  {a.type === 'group' ? (
+                    <span className="muted" title="Group mailboxes have no sign-in">—</span>
+                  ) : a.mfaEnabled ? (
                     <span className="mfa-cell">
                       <span className="pill on">On</span>
                       <button
@@ -513,10 +531,14 @@ function AliasForm({ alias, initialAddress, palette, onClose, onSaved }) {
     ownerName: alias?.ownerName || '',
     password: '',
     color: alias?.color || palette[Math.floor(Math.random() * palette.length)],
+    type: alias?.type || 'personal',
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
+  const personal = form.type === 'personal';
+  // A new personal mailbox, or a group mailbox turning personal, needs a password to sign in with.
+  const needsPassword = personal && (!alias || alias.type === 'group');
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -530,10 +552,20 @@ function AliasForm({ alias, initialAddress, palette, onClose, onSaved }) {
     setError('');
     try {
       if (alias) {
+        if (alias.type !== 'group' && !personal && !(await ask({
+          title: `Make ${alias.address} a group mailbox?`,
+          message: 'Its password and 2-Step Verification are removed and anyone signed in to it is signed out. People then open it through a role.',
+          confirmLabel: 'Make it a group mailbox',
+          danger: true,
+        }))) {
+          setBusy(false);
+          return;
+        }
         const { address, password, ...changes } = form;
-        await api(`/admin/aliases/${alias.id}`, { method: 'PATCH', body: password ? { ...changes, password } : changes });
+        await api(`/admin/aliases/${alias.id}`, { method: 'PATCH', body: password && personal ? { ...changes, password } : changes });
       } else {
-        await api('/admin/aliases', { method: 'POST', body: form });
+        const { password, ...fields } = form;
+        await api('/admin/aliases', { method: 'POST', body: personal ? form : fields });
       }
       onSaved();
     } catch (err) {
@@ -556,20 +588,45 @@ function AliasForm({ alias, initialAddress, palette, onClose, onSaved }) {
           <span>Alias address</span>
           <input type="email" required disabled={Boolean(alias)} placeholder="john@abc.com" autoFocus={!form.address} {...field('address')} />
         </label>
+
+        <div className="type-choice" role="radiogroup" aria-label="Mailbox type">
+          {[
+            ['personal', 'Personal', 'people', 'One person signs in. Only they and you can see its mail.'],
+            ['group', 'Group', 'inbox', 'Shared, no sign-in of its own. People open it through a role.'],
+          ].map(([value, title, icon, text]) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={form.type === value}
+              key={value}
+              className={`type-option ${form.type === value ? 'on' : ''}`}
+              onClick={() => setForm({ ...form, type: value })}
+            >
+              <Icon name={icon} size={20} />
+              <span>
+                <strong>{title}</strong>
+                <span className="muted small">{text}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+
         <div className="grid-2">
           <label>
             <span>Display name <span className="muted">· shown as sender</span></span>
-            <input type="text" placeholder="John Smith" {...field('displayName')} />
+            <input type="text" placeholder={personal ? 'John Smith' : 'Support team'} {...field('displayName')} />
           </label>
           <label>
-            <span>Owner / customer</span>
-            <input type="text" placeholder="Who uses this alias" {...field('ownerName')} />
+            <span>{personal ? 'Owner / customer' : 'Team or purpose'}</span>
+            <input type="text" placeholder={personal ? 'Who uses this alias' : 'e.g. Customer support'} {...field('ownerName')} />
           </label>
         </div>
-        <label>
-          <span>{alias ? 'New password' : 'Password'}</span>
-          <input type="text" required={!alias} minLength={8} placeholder={alias ? 'Leave blank to keep the current one' : 'At least 8 characters'} {...field('password')} />
-        </label>
+        {personal && (
+          <label>
+            <span>{needsPassword ? 'Password' : 'New password'}</span>
+            <input type="text" required={needsPassword} minLength={8} placeholder={needsPassword ? 'At least 8 characters' : 'Leave blank to keep the current one'} {...field('password')} />
+          </label>
+        )}
         <div className="label">Color</div>
         <div className="swatches">
           {palette.map((c) => (
@@ -584,6 +641,194 @@ function AliasForm({ alias, initialAddress, palette, onClose, onSaved }) {
           ))}
         </div>
 
+        {error && <div className="alert">{error}</div>}
+        <div className="modal-foot">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* ---------------------------------- Roles ---------------------------------- */
+
+const aliasLabel = (a) => a.displayName || a.address;
+
+function Roles({ overview, onChanged, onOpenAliases }) {
+  const [roles, setRoles] = useState(null);
+  const [editing, setEditing] = useState(null); // null | 'new' | role
+  const [error, setError] = useState('');
+  const byId = Object.fromEntries(overview.aliases.map((a) => [a.id, a]));
+  const groups = overview.aliases.filter((a) => a.type === 'group');
+
+  const load = useCallback(() => api('/admin/roles').then(setRoles).catch((err) => setError(err.message)), []);
+  useEffect(() => {
+    load();
+  }, [load, overview]);
+
+  async function remove(role) {
+    if (!(await ask({ title: `Delete the role "${role.name}"?`, message: 'Its members lose access to its group mailboxes. The mailboxes and their mail stay.', confirmLabel: 'Delete role', danger: true }))) return;
+    try {
+      await api(`/admin/roles/${role.id}`, { method: 'DELETE' });
+      load();
+      onChanged();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  const chips = (ids) =>
+    ids.map((id) => byId[id]).filter(Boolean).map((a) => (
+      <span key={a.id} className="chip" style={{ '--chip': a.color }} title={a.address}>
+        {aliasLabel(a)}
+      </span>
+    ));
+
+  return (
+    <>
+      <div className="page-head">
+        <h1 className="page-title">Roles</h1>
+        <button className="btn btn-primary" onClick={() => setEditing('new')}>
+          <Icon name="add" size={18} /> Add role
+        </button>
+      </div>
+      <p className="muted intro">
+        A role gives people access to shared <strong>group</strong> mailboxes. Everyone with the role can switch to those mailboxes from their
+        avatar, read and send mail there, but can’t change the mailbox’s settings. <strong>Personal</strong> mailboxes are never shared:
+        only the person and you see them.
+      </p>
+      {error && <div className="alert">{error}</div>}
+      {groups.length === 0 && (
+        <div className="card detected">
+          <h2 className="card-title">No group mailboxes yet</h2>
+          <p className="muted small">
+            Add an alias with the type <strong>Group</strong> (for example support@ or sales@), then put it in a role here.
+          </p>
+          <button className="btn btn-outline" onClick={onOpenAliases}>Go to Aliases</button>
+        </div>
+      )}
+
+      {!roles && !error && <div className="empty">Loading…</div>}
+      {roles?.length === 0 && <div className="card empty">No roles yet. Create one to share group mailboxes with people.</div>}
+      <div className="role-list">
+        {roles?.map((r) => (
+          <div key={r.id} className="card role-card">
+            <div className="role-head">
+              <h2 className="card-title">{r.name}</h2>
+              <span className="row-actions">
+                <button className="icon-btn" title="Edit role" onClick={() => setEditing(r)}>
+                  <Icon name="edit" size={18} />
+                </button>
+                <button className="icon-btn danger" title="Delete role" onClick={() => remove(r)}>
+                  <Icon name="trash" size={18} />
+                </button>
+              </span>
+            </div>
+            <div className="role-row">
+              <span className="role-label muted small">Group mailboxes</span>
+              <span>{r.mailboxes.length ? chips(r.mailboxes) : <span className="muted small">None yet</span>}</span>
+            </div>
+            <div className="role-row">
+              <span className="role-label muted small">People</span>
+              <span>{r.members.length ? chips(r.members) : <span className="muted small">No one yet</span>}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {editing && (
+        <RoleForm
+          role={editing === 'new' ? null : editing}
+          aliases={overview.aliases}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            load();
+            onChanged();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function RoleForm({ role, aliases, onClose, onSaved }) {
+  const [name, setName] = useState(role?.name || '');
+  const [mailboxes, setMailboxes] = useState(new Set(role?.mailboxes || []));
+  const [members, setMembers] = useState(new Set(role?.members || []));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const groups = aliases.filter((a) => a.type === 'group');
+  const people = aliases.filter((a) => a.type !== 'group');
+
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const toggle = (set, setter, id) => {
+    const next = new Set(set);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setter(next);
+  };
+
+  async function save(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const body = { name, mailboxes: [...mailboxes], members: [...members] };
+      if (role) await api(`/admin/roles/${role.id}`, { method: 'PATCH', body });
+      else await api('/admin/roles', { method: 'POST', body });
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
+  const checklist = (list, set, setter, empty) =>
+    list.length === 0 ? (
+      <p className="muted small">{empty}</p>
+    ) : (
+      <div className="check-list">
+        {list.map((a) => (
+          <label key={a.id} className={`check-row ${set.has(a.id) ? 'on' : ''}`}>
+            <input type="checkbox" checked={set.has(a.id)} onChange={() => toggle(set, setter, a.id)} />
+            <Avatar url={a.avatar ? `/api/avatars/${a.avatar}` : null} person={{ name: a.displayName, address: a.address }} color={a.color} size="sm" />
+            <span className="check-text">
+              <span>{aliasLabel(a)}</span>
+              <span className="muted small">{a.address}{a.active ? '' : ' · disabled'}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    );
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <form className="modal form-dialog role-form" role="dialog" aria-modal="true" aria-labelledby="role-form-title" onSubmit={save} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2 id="role-form-title">{role ? 'Edit role' : 'Add role'}</h2>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
+            <Icon name="close" />
+          </button>
+        </div>
+        <label>
+          <span>Role name</span>
+          <input type="text" required maxLength={40} placeholder="e.g. Support team" autoFocus={!role} value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <div>
+          <div className="label">Group mailboxes <span className="muted">· what this role can open</span></div>
+          {checklist(groups, mailboxes, setMailboxes, 'No group mailboxes yet. Add an alias with the type Group first.')}
+        </div>
+        <div>
+          <div className="label">People <span className="muted">· personal accounts with this role</span></div>
+          {checklist(people, members, setMembers, 'No personal accounts yet.')}
+        </div>
         {error && <div className="alert">{error}</div>}
         <div className="modal-foot">
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>

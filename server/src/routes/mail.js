@@ -6,7 +6,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import config from '../config.js';
 import { db, save } from '../store.js';
-import { EMAIL_RE, PALETTE, accountOf, aliasesOf, findAlias, isOwner, isVisibleTo, messagesFor, normalize, setAvatar, updateAccount } from '../aliases.js';
+import { EMAIL_RE, PALETTE, accountOf, aliasesOf, canOpenMailbox, findAlias, isOwner, isVisibleTo, messagesFor, normalize, setAvatar, updateAccount } from '../aliases.js';
 import { avatarUrl, saveAvatar } from '../avatars.js';
 import { signOutAccount } from '../sessions.js';
 import { limiter } from '../security.js';
@@ -26,8 +26,21 @@ const router = Router();
 router.use(requireAuth(), (req, res, next) => {
   req.me = req.user.role === 'admin' ? config.mailbox : req.user.email;
   if (!req.me) throw new HttpError(503, 'Mailbox is not configured');
+  // A group mailbox opened through the mailbox switcher. Checked on every request, so a
+  // removed role or a disabled mailbox takes effect at once.
+  const wanted = normalize(req.get('X-Mailbox'));
+  if (wanted && wanted !== req.me) {
+    if (!canOpenMailbox(req.user.role, req.user.email, wanted)) throw new HttpError(403, 'You don’t have access to that mailbox');
+    req.me = wanted;
+    req.shared = true;
+  }
   next();
 });
+
+/** Settings of a shared mailbox belong to the administrator. */
+function ownMailboxOnly(req) {
+  if (req.shared) throw new HttpError(403, 'Settings of a shared mailbox are managed by your administrator');
+}
 
 // Push invalidation only; lists and bodies still authorize the current session.
 router.get('/events', (req, res) => {
@@ -616,12 +629,14 @@ router.get('/settings', (req, res) => res.json(settingsOf(accountOf(req.me))));
 
 /** Upload a profile picture: { image: "data:image/jpeg;base64,..." } */
 router.post('/settings/avatar', async (req, res) => {
+  ownMailboxOnly(req);
   const account = accountOf(req.me);
   setAvatar(account, await saveAvatar(req.body?.image));
   res.json(settingsOf(accountOf(req.me)));
 });
 
 router.delete('/settings/avatar', (req, res) => {
+  ownMailboxOnly(req);
   setAvatar(accountOf(req.me), null);
   res.json(settingsOf(accountOf(req.me)));
 });
@@ -635,6 +650,7 @@ router.get('/people', (req, res) => {
 });
 
 router.patch('/settings', async (req, res) => {
+  ownMailboxOnly(req);
   const account = accountOf(req.me);
   const { displayName, signature, currentPassword, newPassword } = req.body ?? {};
 

@@ -12,7 +12,7 @@ import { audit } from '../audit.js';
 import jwt from 'jsonwebtoken';
 import config from '../config.js';
 import { db, save } from '../store.js';
-import { findAlias, normalize } from '../aliases.js';
+import { findAlias, normalize, sharedMailboxesFor, typeOf } from '../aliases.js';
 import { requireAuth, safeEqual } from '../auth.js';
 import { avatarUrl } from '../avatars.js';
 import { HttpError } from '../errors.js';
@@ -62,13 +62,26 @@ function checkLimit(req, check, account) {
 const holderOf = (role, email) => (role === 'admin' ? db().owner : findAlias(email));
 const mfaEnabled = (holder) => Boolean(holder?.mfa?.enabled);
 
+/** Group mailboxes this account can switch to, for the mailbox switcher. */
+const switchable = (role, email) =>
+  sharedMailboxesFor(role, email).map(({ alias, roles }) => ({
+    address: alias.address,
+    displayName: alias.displayName,
+    color: alias.color,
+    avatarUrl: avatarUrl(alias.avatar),
+    roles,
+  }));
+
 function profile({ role, email }) {
   if (role === 'admin') {
     const { displayName = '', avatar } = db().owner;
-    return { role: 'admin', email, mailbox: config.mailbox, displayName, avatarUrl: avatarUrl(avatar) };
+    return { role: 'admin', email, mailbox: config.mailbox, displayName, avatarUrl: avatarUrl(avatar), mailboxes: switchable(role, email) };
   }
   const alias = findAlias(email);
-  return { role: 'user', email: alias.address, displayName: alias.displayName, color: alias.color, avatarUrl: avatarUrl(alias.avatar) };
+  return {
+    role: 'user', email: alias.address, displayName: alias.displayName, color: alias.color, avatarUrl: avatarUrl(alias.avatar),
+    mailboxes: switchable(role, email),
+  };
 }
 
 /** Password check. Returns { role, email } or throws. */
@@ -80,7 +93,8 @@ async function checkPassword(email, password) {
   }
   const alias = findAlias(email);
   const ok = await bcrypt.compare(password, alias?.passwordHash || DUMMY_HASH);
-  if (!alias || !ok) return null;
+  // Group mailboxes have no sign-in of their own; people reach them through roles.
+  if (!alias || !ok || typeOf(alias) === 'group') return null;
   if (!alias.active) throw new HttpError(403, 'This alias has been disabled by the administrator');
   return { role: 'user', email: alias.address };
 }

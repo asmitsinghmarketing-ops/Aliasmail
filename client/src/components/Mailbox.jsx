@@ -102,7 +102,85 @@ function IconButton({ icon, title, onClick, danger, size }) {
   );
 }
 
-export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
+/**
+ * Avatar menu: the open mailbox, then the account's own mailbox and the group mailboxes its
+ * roles give it, Gmail-style. Without any group mailboxes the avatar just opens Settings.
+ */
+function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh, onSettings, onLogout }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    onRefresh?.();
+    const onDown = (e) => !wrap.current?.contains(e.target) && setOpen(false);
+    const onKey = (e) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const choose = (address) => {
+    setOpen(false);
+    onSwitch(address);
+  };
+  const others = [
+    ...(shared ? [{ ...account, address: account.email, own: true }] : []),
+    ...mailboxes.filter((m) => m.address !== user.email),
+  ];
+  const trigger = (
+    <button
+      className="avatar-btn"
+      title={mailboxes.length ? 'Switch mailbox' : 'Settings and profile picture'}
+      aria-haspopup={mailboxes.length ? 'menu' : undefined}
+      aria-expanded={mailboxes.length ? open : undefined}
+      onClick={() => (mailboxes.length || shared ? setOpen(!open) : onSettings())}
+    >
+      <Avatar url={user.avatarUrl} person={{ name: user.displayName, address: user.email }} color={user.color} />
+    </button>
+  );
+
+  return (
+    <span className="popover-wrap switcher" ref={wrap}>
+      {trigger}
+      {open && (
+        <div className="popover right">
+          <div className="menu switcher-menu" role="menu">
+            <div className="switcher-current">
+              <Avatar url={user.avatarUrl} person={{ name: user.displayName, address: user.email }} color={user.color} size="lg" />
+              <strong>{user.displayName || user.email}</strong>
+              <span className="muted small">{user.email}</span>
+              <span className={`pill ${shared ? 'warn' : 'on'}`}>{shared ? `Shared · ${shared.roles.join(', ')}` : 'Your mailbox'}</span>
+              {!shared && (
+                <button type="button" className="btn btn-outline" onClick={() => { setOpen(false); onSettings(); }}>
+                  Manage your settings
+                </button>
+              )}
+            </div>
+            {others.length > 0 && <div className="menu-title small muted">Switch to</div>}
+            {others.map((m) => (
+              <button type="button" role="menuitem" key={m.address} className="menu-item switcher-item" onClick={() => choose(m.own ? null : m.address)}>
+                <Avatar url={m.avatarUrl} person={{ name: m.displayName, address: m.address }} color={m.color} size="sm" />
+                <span className="switcher-text">
+                  <span className="switcher-name">{m.displayName || m.address}</span>
+                  <span className="muted small">{m.own ? 'Your mailbox' : `${m.address} · ${m.roles.join(', ')}`}</span>
+                </span>
+              </button>
+            ))}
+            <button type="button" role="menuitem" className="menu-item switcher-signout" onClick={onLogout}>
+              <Icon name="logout" size={18} /> Sign out
+            </button>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
+export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin }) {
   const [folder, setFolder] = useState('inbox');
   const [category, setCategory] = useState('primary');
   const [page, setPage] = useState(1);
@@ -614,7 +692,7 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
   /* ----- action buttons for the toolbar, row hover and message view ----- */
 
   function actionButtons(ids, items, { compact = false } = {}) {
-    const size = compact ? 18 : 20;
+    const size = compact ? 18 : 24;
     if (folder === 'sent') return <IconButton icon="trash" title="Delete" danger size={size} onClick={() => act(ids, 'delete')} />;
     if (folder === 'drafts') return <IconButton icon="trash" title="Discard drafts" danger size={size} onClick={() => act(ids, 'delete')} />;
     if (folder === 'scheduled') return <IconButton icon="close" title="Cancel send" size={size} onClick={() => act(ids, 'cancel')} />;
@@ -767,12 +845,21 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
           <button className="icon-btn hide-sm" title="Keyboard shortcuts (?)" onClick={() => setModal('shortcuts')}>
             <Icon name="keyboard" />
           </button>
-          <button className="icon-btn" title="Settings" onClick={() => setModal('settings')}>
-            <Icon name="settings" />
-          </button>
-          <button className="avatar-btn" title="Settings and profile picture" onClick={() => setModal('settings')}>
-            <Avatar url={user.avatarUrl} person={{ name: user.displayName, address: me }} color={user.color} />
-          </button>
+          {!shared && (
+            <button className="icon-btn" title="Settings" onClick={() => setModal('settings')}>
+              <Icon name="settings" />
+            </button>
+          )}
+          <MailboxSwitcher
+            user={user}
+            account={account}
+            mailboxes={mailboxes}
+            shared={shared}
+            onSwitch={onSwitchMailbox}
+            onRefresh={onRefreshMailboxes}
+            onSettings={() => setModal('settings')}
+            onLogout={onLogout}
+          />
           <div className="account-text">
             <strong>{user.displayName || me}</strong>
             <span className="muted small">{me}</span>
@@ -782,6 +869,19 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
           </button>
         </div>
       </header>
+
+      {shared && (
+        <div className="shared-banner" role="status">
+          <Icon name="people" size={18} />
+          <span className="shared-banner-text">
+            Shared mailbox <strong>{me}</strong>
+            <span className="muted"> · {shared.roles.join(', ')}</span>
+          </span>
+          <button type="button" className="btn btn-outline" onClick={() => onSwitchMailbox(null)}>
+            Back to my mailbox
+          </button>
+        </div>
+      )}
 
       <div className="layout">
         <aside
@@ -833,12 +933,21 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
                 <span className="nav-label">Admin console</span>
               </button>
             )}
-            <button className="nav-item mobile-only" onClick={() => { setCollapsed(true); setModal('settings'); }} title="Settings">
-              <span className="nav-icon" style={{ '--c': '#495057' }}>
-                <Icon name="settings" size={18} />
-              </span>
-              <span className="nav-label">Settings</span>
-            </button>
+            {shared ? (
+              <button className="nav-item mobile-only" onClick={() => onSwitchMailbox(null)} title="Back to my mailbox">
+                <span className="nav-icon" style={{ '--c': '#495057' }}>
+                  <Icon name="back" size={18} />
+                </span>
+                <span className="nav-label">Back to my mailbox</span>
+              </button>
+            ) : (
+              <button className="nav-item mobile-only" onClick={() => { setCollapsed(true); setModal('settings'); }} title="Settings">
+                <span className="nav-icon" style={{ '--c': '#495057' }}>
+                  <Icon name="settings" size={18} />
+                </span>
+                <span className="nav-label">Settings</span>
+              </button>
+            )}
             <button className="nav-item mobile-only" onClick={onLogout} title="Sign out">
               <span className="nav-icon" style={{ '--c': '#495057' }}>
                 <Icon name="logout" size={18} />
@@ -918,7 +1027,7 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
         )}
 
         <main className="content">
-          {modal === 'settings' ? (
+          {modal === 'settings' && !shared ? (
             <Settings
               color={user.color}
               onAvatarChange={(avatarUrl) => {

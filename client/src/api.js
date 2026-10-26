@@ -2,6 +2,7 @@
 // browser storage. Every request carries X-Requested-With, which the server requires for
 // changes (another website can't add it, which stops cross-site request forgery).
 export const LOGOUT_EVENT = 'aliasmail:logout';
+export const MAILBOX_REVOKED_EVENT = 'aliasmail:mailbox-revoked';
 const mailboxLists = new Map();
 let accountEpoch = 0;
 export const cachedMailboxList = (path) => mailboxLists.get(path) || null;
@@ -10,11 +11,20 @@ export function clearMailCaches() {
   mailboxLists.clear();
   messageCache.clear();
 }
-window.addEventListener(LOGOUT_EVENT, clearMailCaches);
+window.addEventListener(LOGOUT_EVENT, () => setActiveMailbox(null));
+
+// A shared (group) mailbox opened through the switcher; null = the account's own mailbox.
+// The server checks the account's roles on every request.
+let activeMailbox = null;
+export function setActiveMailbox(address) {
+  activeMailbox = address || null;
+  clearMailCaches();
+}
 
 async function request(path, { method = 'GET', body, signInFlow = false } = {}) {
   const headers = { 'X-Requested-With': 'AliasMail' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (activeMailbox && path.startsWith('/mail/')) headers['X-Mailbox'] = activeMailbox;
 
   const res = await fetch(`/api${path}`, {
     method,
@@ -36,6 +46,10 @@ export async function api(path, options) {
   if (!res.ok) {
     const error = new Error(data?.error || `Request failed (${res.status})`);
     error.status = res.status;
+    // The role giving access to this shared mailbox was removed: go back to the own mailbox.
+    if (res.status === 403 && activeMailbox && path.startsWith('/mail/') && /access to that mailbox/.test(error.message)) {
+      window.dispatchEvent(new Event(MAILBOX_REVOKED_EVENT));
+    }
     throw error;
   }
   if (epoch === accountEpoch && (!options?.method || options.method === 'GET') && path.startsWith('/mail/messages?')) {

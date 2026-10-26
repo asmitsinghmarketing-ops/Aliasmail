@@ -6,7 +6,8 @@ import { initPersistence, persistence } from './persist.js';
 const emptyFolder = () => ({ uidValidity: null, lastUid: 0, messages: {} });
 
 const empty = () => ({
-  aliases: [],
+  aliases: [], // each { type: 'personal' | 'group' }; group mailboxes are opened through roles
+  roles: [], // { id, name, mailboxes: [group alias ids], members: [personal alias ids] }
   inbox: emptyFolder(),
   sentBox: emptyFolder(),
   spamBox: emptyFolder(),

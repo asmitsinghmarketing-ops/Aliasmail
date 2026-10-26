@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { findAlias } from './aliases.js';
+import { findAlias, typeOf } from './aliases.js';
 import { HttpError } from './errors.js';
 import { currentSession, endSessions } from './sessions.js';
 
@@ -14,7 +14,8 @@ export function requireAuth(role) {
   return (req, res, next) => {
     const session = currentSession(req);
     if (!session) throw new HttpError(401, 'Please sign in again');
-    if (session.role === 'user' && !findAlias(session.email)?.active) {
+    const account = session.role === 'user' ? findAlias(session.email) : null;
+    if (session.role === 'user' && (!account?.active || typeOf(account) === 'group')) {
       endSessions((s) => s.id === session.id);
       throw new HttpError(401, 'This alias has been disabled');
     }

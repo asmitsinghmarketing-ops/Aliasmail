@@ -4,7 +4,7 @@ import config from '../config.js';
 import { db, save } from '../store.js';
 import { endSessions, signOutAccount } from '../sessions.js';
 import { audit } from '../audit.js';
-import { PALETTE, aliasesOf, createAlias, deleteAlias, findAliasById, updateAlias, withCounts } from '../aliases.js';
+import { PALETTE, aliasesOf, createAlias, createRole, deleteAlias, deleteRole, findAliasById, typeOf, updateAlias, updateRole, withCounts } from '../aliases.js';
 import { requireAuth } from '../auth.js';
 import { cacheOf, deleteFromServer, fetchParsed, prefetch, syncInbox, testConnection } from '../mailbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
@@ -95,8 +95,10 @@ router.post('/aliases', async (req, res) => res.status(201).json(withCounts(awai
 
 router.patch('/aliases/:id', async (req, res) => {
   const alias = await updateAlias(getAlias(req), req.body ?? {});
-  // A new password or disabling the alias signs that person out everywhere.
-  if (req.body?.password || req.body?.active === false) signOutAccount('user', alias.address);
+  // A new password, disabling the alias or making it a shared (sign-in-less) group mailbox
+  // signs that person out everywhere.
+  if (req.body?.password || req.body?.active === false || typeOf(alias) === 'group') signOutAccount('user', alias.address);
+  if (req.body?.type) audit(req, 'admin-set-mailbox-type', alias.address, `${typeOf(alias)} by ${req.user.email}`);
   if (req.body?.password) audit(req, 'admin-set-password', alias.address, `by ${req.user.email}`);
   if (typeof req.body?.active === 'boolean') audit(req, req.body.active ? 'admin-enabled-alias' : 'admin-disabled-alias', alias.address, `by ${req.user.email}`);
   res.json(withCounts(alias));
@@ -119,6 +121,31 @@ router.post('/aliases/:id/reset-mfa', (req, res) => {
   signOutAccount('user', alias.address);
   audit(req, 'admin-reset-2-step', alias.address, `by ${req.user.email}`);
   res.json(withCounts(alias));
+});
+
+/* ----- roles: which people can open which group mailboxes ----- */
+
+const roleView = (role) => ({ id: role.id, name: role.name, mailboxes: role.mailboxes, members: role.members, createdAt: role.createdAt });
+
+router.get('/roles', (req, res) => res.json(db().roles.map(roleView)));
+
+router.post('/roles', (req, res) => {
+  const role = createRole(req.body ?? {});
+  audit(req, 'admin-created-role', role.name, `by ${req.user.email}`);
+  res.status(201).json(roleView(role));
+});
+
+router.patch('/roles/:id', (req, res) => {
+  const role = updateRole(req.params.id, req.body ?? {});
+  audit(req, 'admin-changed-role', role.name, `by ${req.user.email}`);
+  res.json(roleView(role));
+});
+
+router.delete('/roles/:id', (req, res) => {
+  const name = db().roles.find((r) => r.id === req.params.id)?.name || '';
+  deleteRole(req.params.id);
+  audit(req, 'admin-deleted-role', name, `by ${req.user.email}`);
+  res.status(204).end();
 });
 
 /* ----- security settings ----- */
