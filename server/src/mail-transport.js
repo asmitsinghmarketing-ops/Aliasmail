@@ -166,6 +166,11 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
       if (transport === 'direct' && action === 'sendRaw' && settings.mailBridge.configured) return bridge(action, data);
       return transport === 'direct' ? direct(action, data) : bridge(action, data);
     },
+    // Whether the PHP bridge's persistent read workers are running; null without a bridge.
+    async workers() {
+      if (!settings.mailBridge.configured) return null;
+      return bridge('workerStatus', {});
+    },
     onChange(callback) { notify = callback; },
     warm,
     async close() {

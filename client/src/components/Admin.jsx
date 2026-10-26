@@ -90,6 +90,19 @@ export default function Admin({ user, onLogout, onOpenMail }) {
 
 /* ---------------------------------- Overview ---------------------------------- */
 
+/** " Workers: …" for the Test connection result, or '' when there is no PHP bridge. */
+function workerSummary(w) {
+  if (!w) return '';
+  if (w.error) return ' Workers: status unavailable - update the PHP bridge to the version with workers.';
+  if (!w.enabled) return ' Workers: turned off (MAIL_WORKER_ENABLED=false). Reads use the regular bridge.';
+  const lanes = ['foreground', 'background'].map((lane) => {
+    const s = w.workers?.[lane];
+    return s?.running ? `${lane} running (${s.requests ?? 0} requests served)` : `${lane} not running`;
+  });
+  const anyDown = lanes.some((t) => t.endsWith('not running'));
+  return ` Workers: ${lanes.join(', ')}.${anyDown ? ' Reads without a worker log in to the mail server each time and are slower - start worker.php on the PHP host.' : ''}`;
+}
+
 function Overview({ overview, onReload }) {
   const [busy, setBusy] = useState('');
   const [result, setResult] = useState(null);
@@ -105,7 +118,7 @@ function Overview({ overview, onReload }) {
         setResult({ ok: true, text: 'Mailbox synced.' });
       } else {
         const res = await api('/admin/test-connection', { method: 'POST' });
-        setResult({ ok: true, text: `IMAP and SMTP connected. Folders: ${res.folders.join(', ')}` });
+        setResult({ ok: true, text: `IMAP and SMTP connected. Folders: ${res.folders.join(', ')}.${workerSummary(res.workers)}` });
       }
     } catch (err) {
       setResult({ ok: false, text: err.message });

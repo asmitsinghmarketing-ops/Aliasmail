@@ -356,11 +356,15 @@ export function keepWarm() {
 export async function testConnection() {
   assertConfigured();
   // Report each side's failure to the admin; a bare 500 hides whether the host blocks IMAP or SMTP.
+  let result;
   try {
-    return await bridge('test');
+    result = await bridge('test');
   } catch (err) {
     throw new HttpError(502, `Mail connection failed - ${describeError(err)}`);
   }
+  // A bridge from before the workers were added answers "Unsupported bridge action".
+  const workers = await mailTransport.workers().catch((err) => ({ error: describeError(err) }));
+  return { ...result, workers };
 }
 
 // IMAP IDLE notifications are coalesced; periodic sync remains a fallback.

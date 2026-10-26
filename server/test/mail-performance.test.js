@@ -113,6 +113,28 @@ test('an ambiguous move failure is never repeated through the bridge', async (t)
   assert.equal(bridgeCalls, 0);
 });
 
+test('worker status is read from the PHP bridge, even when direct IMAP is used', async (t) => {
+  const status = { enabled: true, workers: { foreground: { running: true, requests: 7 }, background: { running: false } } };
+  let sent;
+  const fetcher = async (url, init) => { sent = JSON.parse(init.body); return { ok: true, json: async () => status }; };
+  for (const mailTransport of ['bridge', 'direct']) {
+    const transport = createMailTransport({ ...settings, mailTransport }, { fetcher });
+    t.after(() => transport.close());
+    assert.deepEqual(await transport.workers(), status);
+    assert.equal(sent.action, 'workerStatus');
+  }
+});
+
+test('worker status is null without a bridge, and an old bridge reports an error', async (t) => {
+  const none = createMailTransport({ ...settings, mailBridge: { configured: false } });
+  t.after(() => none.close());
+  assert.equal(await none.workers(), null);
+
+  const old = createMailTransport(settings, { fetcher: async () => ({ ok: false, status: 502, json: async () => ({ error: 'Unsupported bridge action' }) }) });
+  t.after(() => old.close());
+  await assert.rejects(old.workers(), /Unsupported bridge action/);
+});
+
 test('invalid bridge JSON is a visible failure', async (t) => {
   const transport = createMailTransport(settings, { fetcher: async () => ({ ok: true, json: async () => { throw new SyntaxError(); } }) });
   t.after(() => transport.close());
