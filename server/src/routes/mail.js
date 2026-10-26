@@ -571,6 +571,8 @@ router.post('/send', async (req, res) => {
   try {
     await deliver(me, mail);
   } catch (err) {
+    // Only the browser saw the reason before; keep it in the host's log too (no message content).
+    console.warn(`[send] from ${me} to ${to.length + cc.length + bcc.length} recipient(s) failed: ${err.message}`);
     if (err instanceof HttpError) throw err;
     // Pass on the mail server's reason (e.g. "sender address rejected").
     throw new HttpError(502, `The mail server didn't accept the message: ${err.response || err.message}`);

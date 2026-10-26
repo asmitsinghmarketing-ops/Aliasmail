@@ -495,6 +495,16 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
       ),
     });
 
+  // A send waiting out its undo delay lives only in this page: leaving now would drop it silently.
+  const pendingSends = useRef(0);
+  useEffect(() => {
+    const warn = (e) => {
+      if (pendingSends.current > 0) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, []);
+
   // An undone or failed send reopens compose with everything that was in it.
   const reopen = ({ files, draftId, sendAt, ...fields }) => setDraft({ ...fields, id: draftId, files, unsaved: true });
 
@@ -518,6 +528,7 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
 
     // "Undo send": wait a few seconds before actually sending.
     let cancelled = false;
+    pendingSends.current += 1;
     const timer = setTimeout(async () => {
       if (cancelled) return;
       flash('Sending…', null, 30000);
@@ -528,12 +539,15 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
       } catch (err) {
         flash(`Not sent: ${err.message}`);
         reopen(payload);
+      } finally {
+        pendingSends.current -= 1;
       }
     }, UNDO_SEND_MS);
     flash(
       'Sending…',
       () => {
         cancelled = true;
+        pendingSends.current -= 1;
         clearTimeout(timer);
         reopen(payload);
         flash('Sending undone.');
