@@ -118,7 +118,8 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
   const [draft, setDraft] = useState(null);
   const [signature, setSignature] = useState('');
   const [modal, setModal] = useState(null); // 'settings' | 'shortcuts'
-  const [collapsed, setCollapsed] = useState(() => window.matchMedia('(max-width: 800px)').matches);
+  // Phones hide the drawer; tablets and small laptops start with the icon rail so the list has room.
+  const [collapsed, setCollapsed] = useState(() => window.matchMedia('(max-width: 1100px)').matches);
   const [drawerDrag, setDrawerDrag] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -855,6 +856,12 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
             aria-label="Close navigation menu"
             onClick={() => setCollapsed(true)}
           />
+        )}
+
+        {!open && (
+          <button className="compose-fab" type="button" onClick={() => compose()} aria-label="Compose">
+            <Icon name="edit" /> <span>Compose</span>
+          </button>
         )}
 
         <main className="content">

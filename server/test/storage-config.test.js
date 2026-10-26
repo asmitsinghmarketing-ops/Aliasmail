@@ -24,6 +24,14 @@ test('database URLs are validated without printing credentials', () => {
 test('production accepts a stable database configuration', () => {
   assert.match(check({ DATABASE_URL: 'postgres://user:password@example.test/mail' }), /"databaseConfigured":true/);
 });
+test('separate host, user, password and name variables are accepted', () => {
+  assert.match(check({ DB_HOST: 'db.example.test', DB_USER: 'u', DB_PASSWORD: 'p@ss', DB_NAME: 'mail' }), /"databaseConfigured":true/);
+  assert.match(check({ MYSQL_HOST: 'db.example.test', MYSQL_USER: 'u', MYSQL_PASSWORD: 'p', MYSQL_DATABASE: 'mail' }), /"databaseConfigured":true/);
+});
+test('a missing database names the variables found, without values', () => {
+  assert.throws(() => check({ HOSTING_DB_SERVER: 'secret-host' }),
+    (error) => error.stderr.includes('HOSTING_DB_SERVER') && !error.stderr.includes('secret-host'));
+});
 test('an explicitly persistent disk is allowed', () => {
   assert.match(check({ ALLOW_FILE_STORAGE: 'true' }), /"databaseConfigured":false/);
 });

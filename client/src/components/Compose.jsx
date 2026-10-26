@@ -39,7 +39,7 @@ export default function Compose({ from, draft, onClose, onSend }) {
   const saveTimer = useRef(null);
   const sending = useRef(false);
   const [files, setFiles] = useState(draft.files || []);
-  const [mode, setMode] = useState('normal'); // normal | min | full
+  const [mode, setMode] = useState(() => (window.matchMedia('(max-width: 800px)').matches ? 'full' : 'normal')); // normal | min | full
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
   const body = useRef(null);

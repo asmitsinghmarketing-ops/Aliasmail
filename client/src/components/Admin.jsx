@@ -36,7 +36,7 @@ export default function Admin({ user, onLogout, onOpenMail }) {
   }, [reload]);
 
   return (
-    <div className="app">
+    <div className="app admin-app">
       <header className="topbar">
         <div className="brand">
           <Logo />

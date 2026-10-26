@@ -8,7 +8,7 @@ function HtmlBody({ html }) {
   const frame = useRef(null);
   // No allow-scripts: the email's own JavaScript never runs.
   const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">
-<style>html,body{margin:0;padding:0}body{font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#202124;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>
+<style>html,body{margin:0;padding:0}body{display:flow-root;font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#202124;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>
 </head><body>${html}</body></html>`;
 
   useEffect(() => () => frame.current?._observer?.disconnect(), []);
@@ -18,7 +18,8 @@ function HtmlBody({ html }) {
     const el = frame.current;
     const fit = () => {
       try {
-        el.style.height = `${el.contentDocument.documentElement.scrollHeight + 4}px`;
+        // The body's height, not the document's: the document is never shorter than the frame.
+        el.style.height = `${el.contentDocument.body.scrollHeight + 4}px`;
       } catch {
         /* keep the CSS height */
       }

@@ -35,8 +35,28 @@ function jwtSecret(dataFile) {
   }
 }
 
+// Hosting providers name database settings differently: accept a full URL under common names,
+// or build one from separate host / user / password / name variables.
+function findDatabaseUrl() {
+  for (const key of ['DATABASE_URL', 'MYSQL_URL', 'MYSQL_DATABASE_URL', 'DB_URL', 'POSTGRES_URL', 'PG_URL']) {
+    if (env(key)) return env(key);
+  }
+  for (const prefix of ['DB_', 'MYSQL_', 'DATABASE_']) {
+    const host = env(`${prefix}HOST`);
+    const user = env(`${prefix}USER`) || env(`${prefix}USERNAME`);
+    const name = env(`${prefix}NAME`) || env(`${prefix}DATABASE`) || (prefix === 'MYSQL_' ? '' : env(`${prefix}DB`));
+    if (!host || !user || !name) continue;
+    const password = env(`${prefix}PASSWORD`) || env(`${prefix}PASS`);
+    const scheme = /^(postgres|pg)/i.test(env(`${prefix}DIALECT`) || env(`${prefix}TYPE`) || env(`${prefix}CONNECTION`)) ? 'postgres' : 'mysql';
+    const port = env(`${prefix}PORT`, scheme === 'postgres' ? '5432' : '3306');
+    const e = encodeURIComponent;
+    return `${scheme}://${e(user)}:${e(password)}@${host}:${port}/${e(name)}`;
+  }
+  return '';
+}
+
 // Refuse an ephemeral production store instead of silently recreating accounts.
-const databaseUrl = env('DATABASE_URL');
+const databaseUrl = findDatabaseUrl();
 if (databaseUrl) {
   let protocol;
   try { protocol = new URL(databaseUrl).protocol; } catch { throw new Error('DATABASE_URL must be a valid MySQL or PostgreSQL connection URL'); }
@@ -44,7 +64,9 @@ if (databaseUrl) {
 }
 if (process.env.NODE_ENV === 'production') {
   if (!databaseUrl && !bool('ALLOW_FILE_STORAGE', false)) {
-    throw new Error('Persistent storage is required: set DATABASE_URL in the hosting environment. Local files may be erased on redeploy. Use ALLOW_FILE_STORAGE=true only with a persistent DATA_FILE volume.');
+    // Names only, never values, so the host's log shows what the provider actually set.
+    const seen = Object.keys(process.env).filter((k) => /DB|DATABASE|MYSQL|POSTGRES|^PG/i.test(k));
+    throw new Error(`Persistent storage is required: set DATABASE_URL (or DB_HOST, DB_USER, DB_PASSWORD, DB_NAME) in the hosting environment. Database-related variables found: ${seen.join(', ') || 'none'}. Local files may be erased on redeploy. Use ALLOW_FILE_STORAGE=true only with a persistent DATA_FILE volume.`);
   }
   if (!env('JWT_SECRET') || env('JWT_SECRET') === 'change-me') {
     throw new Error('Set a stable JWT_SECRET in the hosting environment before deploying. A generated local secret does not survive rebuilds.');
