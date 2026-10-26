@@ -15,7 +15,7 @@ import { audit } from '../audit.js';
 // Guessing the current password from a signed-in browser: 5 tries per 15 minutes.
 const passwordChecks = limiter('password-change', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 import { requireAuth } from '../auth.js';
-import { deleteFromServer, fetchParsed, moveMessages, prefetch, syncInbox } from '../mailbox.js';
+import { deleteFromServer, fetchParsed, moveMessages, prefetch, setServerSeen, syncInbox } from '../mailbox.js';
 import { deliver } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError } from '../errors.js';
@@ -118,6 +118,24 @@ function ownMessage(req) {
 
 function setState(msg, address, patch) {
   msg.state[address] = { ...msg.state[address], ...patch };
+}
+
+/**
+ * Whether other mail apps should show the message as read: once every alias it reached has
+ * read it, so one person reading shared mail doesn't hide it from the others. Mail that
+ * reached no alias follows the owner's read state.
+ */
+function readByEveryone(msg) {
+  const accounts = aliasesOf(msg).map((a) => a.address);
+  if (!accounts.length) accounts.push(config.mailbox);
+  return accounts.every((address) => stateOf(msg, address).read);
+}
+
+/** Mirror read state to the mail server in the background (Titan, Gmail and phones see it). */
+function syncSeenToServer(msgs) {
+  const want = (seen) => msgs.filter((m) => readByEveryone(m) === seen && Boolean(m.imapRead) !== seen).map((m) => m.uid);
+  void setServerSeen(want(true), true);
+  void setServerSeen(want(false), false);
 }
 
 /**
@@ -284,6 +302,7 @@ router.get('/messages/:uid', async (req, res) => {
   if (!req.query.peek) {
     setState(msg, me, { read: true });
     save();
+    syncSeenToServer([msg]);
   }
   res.json({ ...summary(msg, me), replyTo: msg.replyTo, messageId: msg.messageId, ...bodyOf(parsed) });
 });
@@ -337,6 +356,7 @@ router.post('/messages/action', async (req, res) => {
     const patchFor = ACTIONS[body.action](body, me);
     for (const m of msgs) setState(m, me, patchFor(stateOf(m, me)));
     save();
+    if (body.action === 'read' || body.action === 'unread') syncSeenToServer(msgs);
   } else {
     throw new HttpError(400, `Unknown action "${body.action}"`);
   }

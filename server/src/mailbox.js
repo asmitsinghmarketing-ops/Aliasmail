@@ -95,7 +95,14 @@ async function syncFolder(folder, cache) {
   for (const record of records) cache.messages[record.uid] = record;
   if (Array.isArray(result.seenUids)) {
     const seen = new Set(result.seenUids.map(Number));
-    for (const record of Object.values(cache.messages)) record.imapRead = seen.has(record.uid);
+    for (const record of Object.values(cache.messages)) {
+      const now = seen.has(record.uid);
+      // Read or unread in another mail app (Titan, Gmail, phone): that change wins for every account.
+      if (typeof record.imapRead === 'boolean' && record.imapRead !== now) {
+        for (const state of Object.values(record.state || {})) state.read = now;
+      }
+      record.imapRead = now;
+    }
   }
   const existing = new Set((result.uids || []).map(Number));
   for (const uid of Object.keys(cache.messages)) {
@@ -331,6 +338,33 @@ export async function moveMessages(uids, from, to) {
   await bridge('move', { folder: from, to, uids });
   forget(from, uids);
   await syncInbox().catch(() => {});
+}
+
+let flagSupportWarned = false;
+
+/**
+ * Set or clear the mail server's \Seen flag so other mail apps show the same read state.
+ * The local copy is updated first, so the next sync doesn't mistake our own change for one
+ * made elsewhere. Never fails the caller: read state in the app is already saved.
+ */
+export async function setServerSeen(uids, seen, folder = 'inbox') {
+  const cache = cacheOf(folder);
+  const changed = uids.map(Number).filter((uid) => cache.messages[uid] && cache.messages[uid].imapRead !== seen);
+  if (!changed.length || !config.configured) return;
+  for (const uid of changed) cache.messages[uid].imapRead = seen;
+  save();
+  try {
+    await bridge('flag', { folder, uids: changed, seen });
+  } catch (err) {
+    for (const uid of changed) if (cache.messages[uid]) cache.messages[uid].imapRead = !seen;
+    save();
+    if (/Unsupported/i.test(err.message)) {
+      if (!flagSupportWarned) console.warn('[mail] The PHP bridge cannot set read flags yet - upload the latest bridge-core.php.');
+      flagSupportWarned = true;
+    } else {
+      console.warn('[mail] Could not update read state on the mail server:', describeError(err));
+    }
+  }
 }
 
 /** Send through SMTP; save the Sent copy in the background so it doesn't delay the send response. */

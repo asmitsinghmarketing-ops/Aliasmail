@@ -156,7 +156,8 @@ function smtp_send_raw(string $raw, array $envelope): void {
         $raw = preg_replace('/(?m)^\./', '..', str_replace(["\r\n", "\r"], "\n", $raw));
         fwrite($socket, str_replace("\n", "\r\n", rtrim($raw, "\n")) . "\r\n.\r\n");
         smtp_command($socket, '', [250]);
-        smtp_command($socket, 'QUIT', [221]);
+        try { smtp_command($socket, 'QUIT', [221]); } catch (Throwable $ignored) {}
+
     } finally { fclose($socket); }
 }
 
@@ -232,6 +233,22 @@ function handle(array $body): array {
             return ['raw' => $raw === null ? null : base64_encode($raw)];
         } finally { imap_release($imap); }
     }
+
+        if ($action === 'flag') {
+        // Read/unread made in AliasMail, so Titan, Gmail and phones show the same state.
+        $uids = array_values(array_filter(array_map('intval', $body['uids'] ?? []), fn($n) => $n > 0));
+        if (count($uids) > 500) throw new RuntimeException('Too many messages in one flag change');
+        [$imap] = imap_open_folder((string)($body['folder'] ?? 'inbox'), false);
+        try {
+            if ($uids) {
+                $list = implode(',', $uids);
+                $ok = empty($body['seen']) ? imap_clearflag_full($imap, $list, '\\Seen', ST_UID) : imap_setflag_full($imap, $list, '\\Seen', ST_UID);
+                if (!$ok) throw new RuntimeException('IMAP flag change failed: ' . (imap_last_error() ?: 'unknown error'));
+            }
+        } finally { imap_release($imap); }
+        return ['ok' => true];
+    }
+
     if ($action === 'delete' || $action === 'move') {
         $folder = (string)($body['folder'] ?? $body['from'] ?? 'inbox');
         [$imap] = imap_open_folder($folder, false);

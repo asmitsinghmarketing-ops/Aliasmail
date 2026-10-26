@@ -110,6 +110,14 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
         const result = messages.map((item) => ({ uid: item.uid, raw: item.source.toString('base64') }));
         return action === 'fetch' ? { raw: result[0]?.raw || null } : { messages: result };
       }
+      if (action === 'flag') {
+        const uids = data.uids.map(Number).filter((uid) => Number.isSafeInteger(uid) && uid > 0);
+        if (uids.length) {
+          if (data.seen) await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true });
+          else await client.messageFlagsRemove(uids, ['\\Seen'], { uid: true });
+        }
+        return { ok: true };
+      }
       if (action === 'delete' || action === 'move') {
         if (action === 'delete' && data.permanent) await client.messageDelete(data.uids, { uid: true });
         else await client.messageMove(data.uids, await folderPath(client, data.to || 'trash'), { uid: true });

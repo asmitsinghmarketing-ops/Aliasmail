@@ -4,3 +4,26 @@ server/.env
 server/data/
 php-mail-bridge/settings.local.php
 aliasmail-settings.php
+
+
+node_modules/
+client/dist/
+server/data/
+
+# Secrets: never commit passwords, tokens or keys
+.env
+.env.*
+!.env.example
+php-mail-bridge/settings.local.php
+aliasmail-settings.php
+*.pem
+*.key
+*.p12
+
+# Zips in the project root can bundle private settings (deploy/ holds the vetted packages)
+/*.zip
+
+# Logs and worker runtime files can contain mailbox details
+error_log
+*.log
+.aliasmail-worker/
