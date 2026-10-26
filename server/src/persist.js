@@ -5,18 +5,26 @@
 // The store is a handful of rows: app_state holds one JSON document per top-level key of the data
 // (aliases, sessions, inbox cache, …) and app_files holds uploaded files such as profile pictures.
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import config from './config.js';
 
 const FILES_DIR = path.join(path.dirname(config.dataFile), 'avatars');
+const CACHE_ID = /^[0-9a-f]{64}$/;
 
-function fileBackend() {
+export function createFileBackend(dataFile = config.dataFile) {
+  const FILES_DIR = path.join(path.dirname(dataFile), 'avatars');
+  const MESSAGES_DIR = path.join(path.dirname(dataFile), 'mail-cache');
+  const messagePath = (id) => {
+    if (!CACHE_ID.test(id)) throw new Error('Invalid message cache ID');
+    return path.join(MESSAGES_DIR, id);
+  };
   return {
     kind: 'file',
     async init() {},
     async readState() {
       try {
-        return JSON.parse(fs.readFileSync(config.dataFile, 'utf8'));
+        return JSON.parse(fs.readFileSync(dataFile, 'utf8'));
       } catch (err) {
         if (err.code === 'ENOENT') return null;
         throw err;
@@ -24,10 +32,52 @@ function fileBackend() {
     },
     // The file is always rewritten whole; `all` is the complete data.
     async writeState(changed, all) {
-      fs.mkdirSync(path.dirname(config.dataFile), { recursive: true });
-      const tmp = `${config.dataFile}.tmp`;
+      fs.mkdirSync(path.dirname(dataFile), { recursive: true });
+      const tmp = `${dataFile}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(all));
-      fs.renameSync(tmp, config.dataFile);
+      fs.renameSync(tmp, dataFile);
+    },
+    async getMessage(id, limits) {
+      const file = messagePath(id);
+      try {
+        const stat = await fs.promises.stat(file);
+        if (limits && Date.now() - stat.mtimeMs > limits.maxAgeMs) {
+          await this.deleteMessage(id);
+          return null;
+        }
+        const data = await fs.promises.readFile(file);
+        const now = new Date();
+        await fs.promises.utimes(file, now, now);
+        return data;
+      } catch (error) {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      }
+    },
+    async putMessage(id, data) {
+      await fs.promises.mkdir(MESSAGES_DIR, { recursive: true });
+      const file = messagePath(id);
+      const tmp = file + '.' + crypto.randomUUID() + '.tmp';
+      try {
+        await fs.promises.writeFile(tmp, data, { mode: 0o600 });
+        await fs.promises.rename(tmp, file);
+      } finally { await fs.promises.rm(tmp, { force: true }); }
+    },
+    async deleteMessage(id) { await fs.promises.rm(messagePath(id), { force: true }); },
+    async pruneMessages({ maxBytes, maxAgeMs }) {
+      const names = await fs.promises.readdir(MESSAGES_DIR).catch((error) => {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+      });
+      const entries = (await Promise.all(names.filter((id) => CACHE_ID.test(id)).map(async (id) => {
+        try { const stat = await fs.promises.stat(messagePath(id)); return { id, size: stat.size, touched: stat.mtimeMs }; }
+        catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+      }))).filter(Boolean).sort((a, b) => b.touched - a.touched);
+      let used = 0;
+      for (const entry of entries) {
+        if (Date.now() - entry.touched > maxAgeMs || used + entry.size > maxBytes) await this.deleteMessage(entry.id);
+        else used += entry.size;
+      }
     },
     async getFile(id) {
       try {
@@ -71,6 +121,7 @@ async function sqlBackend(url) {
   return {
     kind: postgres ? 'postgres' : 'mysql',
     async init() {
+      await query(`CREATE TABLE IF NOT EXISTS app_mail_cache (id VARCHAR(64) PRIMARY KEY, touched BIGINT NOT NULL, data ${postgres ? 'BYTEA' : 'LONGBLOB'} NOT NULL)`);
       await query(`CREATE TABLE IF NOT EXISTS app_state (k VARCHAR(64) PRIMARY KEY, v ${postgres ? 'TEXT' : 'LONGTEXT'} NOT NULL)`);
       await query(
         `CREATE TABLE IF NOT EXISTS app_files (id VARCHAR(64) PRIMARY KEY, type VARCHAR(100) NOT NULL, data ${postgres ? 'BYTEA' : 'LONGBLOB'} NOT NULL)`,
@@ -87,6 +138,29 @@ async function sqlBackend(url) {
         await query(`INSERT INTO app_state (k, v) VALUES (?, ?) ${upsert('app_state', 'k', ['v'])}`, [k, v]);
       }
     },
+    async getMessage(id, limits) {
+      const [row] = await query('SELECT data, touched FROM app_mail_cache WHERE id = ?', [id]);
+      if (!row) return null;
+      if (limits && Date.now() - Number(row.touched) > limits.maxAgeMs) {
+        await this.deleteMessage(id);
+        return null;
+      }
+      await query('UPDATE app_mail_cache SET touched = ? WHERE id = ?', [Date.now(), id]);
+      return Buffer.from(row.data);
+    },
+    async putMessage(id, data) {
+      await query(`INSERT INTO app_mail_cache (id, touched, data) VALUES (?, ?, ?) ${upsert('app_mail_cache', 'id', ['touched', 'data'])}`, [id, Date.now(), data]);
+    },
+    async deleteMessage(id) { await query('DELETE FROM app_mail_cache WHERE id = ?', [id]); },
+    async pruneMessages({ maxBytes, maxAgeMs }) {
+      const entries = await query('SELECT id, touched, OCTET_LENGTH(data) AS size FROM app_mail_cache ORDER BY touched DESC');
+      let used = 0;
+      for (const entry of entries) {
+        const size = Number(entry.size);
+        if (Date.now() - Number(entry.touched) > maxAgeMs || used + size > maxBytes) await this.deleteMessage(entry.id);
+        else used += size;
+      }
+    },
     async getFile(id) {
       const [row] = await query('SELECT type, data FROM app_files WHERE id = ?', [id]);
       return row ? { type: row.type, data: Buffer.from(row.data) } : null;
@@ -100,7 +174,7 @@ async function sqlBackend(url) {
   };
 }
 
-let backend = fileBackend();
+let backend = createFileBackend();
 
 /** Pick the backend. The first time a database is used, copy in the local data file and avatars. */
 export async function initPersistence() {

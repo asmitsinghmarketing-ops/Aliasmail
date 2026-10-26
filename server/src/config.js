@@ -35,6 +35,21 @@ function jwtSecret(dataFile) {
   }
 }
 
+// Refuse an ephemeral production store instead of silently recreating accounts.
+const databaseUrl = env('DATABASE_URL');
+if (databaseUrl) {
+  let protocol;
+  try { protocol = new URL(databaseUrl).protocol; } catch { throw new Error('DATABASE_URL must be a valid MySQL or PostgreSQL connection URL'); }
+  if (!['mysql:', 'postgres:', 'postgresql:'].includes(protocol)) throw new Error('DATABASE_URL must use mysql://, postgres://, or postgresql://');
+}
+if (process.env.NODE_ENV === 'production') {
+  if (!databaseUrl && !bool('ALLOW_FILE_STORAGE', false)) {
+    throw new Error('Persistent storage is required: set DATABASE_URL in the hosting environment. Local files may be erased on redeploy. Use ALLOW_FILE_STORAGE=true only with a persistent DATA_FILE volume.');
+  }
+  if (!env('JWT_SECRET') || env('JWT_SECRET') === 'change-me') {
+    throw new Error('Set a stable JWT_SECRET in the hosting environment before deploying. A generated local secret does not survive rebuilds.');
+  }
+}
 const dataFile = path.resolve(root, env('DATA_FILE', 'data/db.json'));
 
 const config = {
@@ -47,6 +62,14 @@ const config = {
   mailbox: mailUser.toLowerCase(),
   configured: Boolean(mailUser && (mailPassword || (mailBridgeUrl && mailBridgeToken))),
   mailBridge: { url: mailBridgeUrl, token: mailBridgeToken, configured: Boolean(mailBridgeUrl && mailBridgeToken) },
+  // Existing bridge installations stay on the bridge until direct access is enabled.
+  mailTransport: env('MAIL_TRANSPORT', mailBridgeUrl && mailBridgeToken ? 'bridge' : 'direct').toLowerCase(),
+  folders: { inbox: env('MAIL_INBOX_FOLDER', 'INBOX'), sent: env('MAIL_SENT_FOLDER'), spam: env('MAIL_SPAM_FOLDER'), trash: env('MAIL_TRASH_FOLDER') },
+  messageCache: {
+    enabled: bool('MESSAGE_CACHE_ENABLED', true),
+    maxBytes: Math.max(1, Number(env('MESSAGE_CACHE_MB', '250')) || 250) * 1024 * 1024,
+    maxAgeMs: Math.max(1, Number(env('MESSAGE_CACHE_DAYS', '30')) || 30) * 86400_000,
+  },
   imap: {
     host: env('IMAP_HOST', 'imap.secureserver.net'),
     port: Number(env('IMAP_PORT', '993')),
@@ -79,10 +102,12 @@ const config = {
   forceHttps: bool('FORCE_HTTPS', false),
   dataFile,
   // mysql://user:pass@host:3306/db or postgres://user:pass@host:5432/db. Unset: use dataFile.
-  databaseUrl: env('DATABASE_URL'),
+  databaseUrl,
   databaseSsl: bool('DATABASE_SSL', false),
   clientDist: path.resolve(root, '../client/dist'),
 };
+
+if (!['bridge', 'direct', 'auto'].includes(config.mailTransport)) throw new Error('MAIL_TRANSPORT must be bridge, direct, or auto');
 
 if (!config.configured) console.warn('[config] MAIL_USER or PHP mail bridge settings missing - mailbox sync is disabled.');
 if (!config.admin.password) console.warn('[config] ADMIN_PASSWORD missing - admin login is disabled.');

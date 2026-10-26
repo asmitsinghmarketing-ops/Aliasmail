@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, preloadMessage } from '../api.js';
+import { api, cachedMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
 import Avatar from './Avatar.jsx';
@@ -142,26 +142,36 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
 
   const loadLabels = () => api('/mail/labels').then(setLabels).catch(() => {});
 
+  const loadRequest = useRef(0);
+  const latestLoad = useRef(null);
   const load = useCallback(async () => {
+    const request = ++loadRequest.current;
     try {
       const params = new URLSearchParams({ folder, page, q: search, ...(folder === 'inbox' && !search && { category }) });
+      const path = `/mail/messages?${params}`;
+      const cached = cachedMailboxList(path);
+      if (cached) { setList(cached); setLoading(false); }
       const [data, folderCounts] = await Promise.all([
-        api(`/mail/messages?${params}`).then((data) => {
-          setList(data);
-          setLoading(false);
+        api(path).then((data) => {
+          if (request === loadRequest.current) {
+            setList(data);
+            setLoading(false);
+          }
           return data;
         }),
         api('/mail/folders'),
       ]);
+      if (request !== loadRequest.current) return;
       setList(data);
       setCounts(folderCounts);
       setError('');
     } catch (err) {
-      setError(err.message);
+      if (request === loadRequest.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (request === loadRequest.current) setLoading(false);
     }
   }, [folder, category, page, search]);
+  latestLoad.current = load;
 
   useEffect(() => {
     setLoading(true);
@@ -172,10 +182,22 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
       firstMailboxLoad.current = false;
       // Startup sync runs in the API process. Refresh the cached list when it finishes so a
       // newly deployed app doesn't leave the first mailbox view empty until the 30s poll.
-      api('/mail/refresh', { method: 'POST' }).then(() => load()).catch(() => {});
+      api('/mail/refresh', { method: 'POST' }).then(() => latestLoad.current?.()).catch(() => {});
     }
     const timer = setInterval(load, 30000);
     return () => clearInterval(timer);
+  }, [load]);
+
+  useEffect(() => {
+    if (!window.EventSource) return undefined;
+    const events = new EventSource('/api/mail/events');
+    let timer;
+    const update = () => {
+      clearTimeout(timer);
+      timer = setTimeout(load, 150);
+    };
+    events.addEventListener('mail', update);
+    return () => { clearTimeout(timer); events.close(); };
   }, [load]);
 
   useEffect(() => {
@@ -1081,4 +1103,3 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
     </div>
   );
 }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      

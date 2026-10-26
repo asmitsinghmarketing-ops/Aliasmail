@@ -3,7 +3,7 @@ import path from 'node:path';
 import express from 'express';
 import config from './config.js';
 import { db, flush, load } from './store.js';
-import { keepWarm, syncInbox } from './mailbox.js';
+import { closeMailbox, keepWarm, syncInbox } from './mailbox.js';
 import { runScheduled } from './outbox.js';
 import { readAvatar } from './avatars.js';
 import { HttpError, describeError } from './errors.js';
@@ -125,6 +125,7 @@ if (config.configured) {
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
+    await closeMailbox();
     await flush();
     releaseLock();
     process.exit(0);

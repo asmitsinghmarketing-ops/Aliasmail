@@ -2,3 +2,11 @@ Options -Indexes
 <FilesMatch "^settings(\.local|\.example)?\.php$">
   Require all denied
 </FilesMatch>
+
+<Files "connection-probe.php">
+  Require all denied
+</Files>
+
+<FilesMatch "^(bridge-core|worker-common|worker)\.php$">
+  Require all denied
+</FilesMatch>

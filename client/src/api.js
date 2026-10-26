@@ -2,6 +2,15 @@
 // browser storage. Every request carries X-Requested-With, which the server requires for
 // changes (another website can't add it, which stops cross-site request forgery).
 export const LOGOUT_EVENT = 'aliasmail:logout';
+const mailboxLists = new Map();
+let accountEpoch = 0;
+export const cachedMailboxList = (path) => mailboxLists.get(path) || null;
+export function clearMailCaches() {
+  accountEpoch++;
+  mailboxLists.clear();
+  messageCache.clear();
+}
+window.addEventListener(LOGOUT_EVENT, clearMailCaches);
 
 async function request(path, { method = 'GET', body, signInFlow = false } = {}) {
   const headers = { 'X-Requested-With': 'AliasMail' };
@@ -20,17 +29,29 @@ async function request(path, { method = 'GET', body, signInFlow = false } = {}) 
 
 /** `signInFlow: true` for sign-in requests, whose 401s are shown on the form instead. */
 export async function api(path, options) {
+  const epoch = accountEpoch;
   const res = await request(path, options);
   const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
+  if (options?.signInFlow && res.ok) clearMailCaches();
   if (!res.ok) {
     const error = new Error(data?.error || `Request failed (${res.status})`);
     error.status = res.status;
     throw error;
   }
+  if (epoch === accountEpoch && (!options?.method || options.method === 'GET') && path.startsWith('/mail/messages?')) {
+    mailboxLists.delete(path);
+    mailboxLists.set(path, data);
+    if (mailboxLists.size > 30) mailboxLists.delete(mailboxLists.keys().next().value);
+  } else if (options?.method && options.method !== 'GET') {
+    mailboxLists.clear();
+  }
   return data;
 }
 
-export const signOut = () => api('/auth/logout', { method: 'POST', signInFlow: true }).catch(() => {});
+export const signOut = () => {
+  clearMailCaches();
+  return api('/auth/logout', { method: 'POST', signInFlow: true }).catch(() => {});
+};
 
 // Opened / preloaded messages, so showing one again (or one preloaded on hover) is instant.
 // Loaded with ?peek=1, which doesn't mark the message read - opening it does that separately.

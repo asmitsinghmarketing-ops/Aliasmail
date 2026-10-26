@@ -19,6 +19,7 @@ import { deleteFromServer, fetchParsed, moveMessages, prefetch, syncInbox } from
 import { deliver } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError } from '../errors.js';
+import { mailEvents } from '../mail-events.js';
 
 const router = Router();
 
@@ -26,6 +27,25 @@ router.use(requireAuth(), (req, res, next) => {
   req.me = req.user.role === 'admin' ? config.mailbox : req.user.email;
   if (!req.me) throw new HttpError(503, 'Mailbox is not configured');
   next();
+});
+
+// Push invalidation only; lists and bodies still authorize the current session.
+router.get('/events', (req, res) => {
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+  res.flushHeaders();
+  res.write('retry: 3000\n\n');
+  const changed = () => { if (!res.writableEnded) res.write('event: mail\ndata: {}\n\n'); };
+  mailEvents.on('changed', changed);
+  const heartbeat = setInterval(() => res.write(': keepalive\n\n'), 15_000);
+  // Periodic reconnect rechecks revoked/expired sessions.
+  const lifetime = setTimeout(() => res.end(), 60_000);
+  const cleanup = () => {
+    mailEvents.off('changed', changed);
+    clearInterval(heartbeat);
+    clearTimeout(lifetime);
+  };
+  res.on('close', cleanup);
+  res.on('finish', cleanup);
 });
 
 /* ---------------------------------- helpers ---------------------------------- */

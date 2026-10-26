@@ -3,6 +3,9 @@
 import { simpleParser } from 'mailparser';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import config from './config.js';
+import { mailTransport } from './mail-transport.js';
+import { messageCache } from './message-cache.js';
+import { mailEvents } from './mail-events.js';
 import { db, save } from './store.js';
 import { normalize } from './aliases.js';
 import { HttpError, describeError } from './errors.js';
@@ -18,36 +21,12 @@ const EMAIL_IN_TEXT = /[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+/g;
 const SYNCED_FOLDERS = ['inbox', 'sent'];
 
 function assertConfigured() {
-  if (!config.configured) {
-    throw new HttpError(503, 'Mailbox is not configured. Set MAIL_USER and the PHP mail bridge settings.');
-  }
-  if (!config.mailBridge.configured) throw new HttpError(503, 'PHP mail bridge is not configured. Set MAIL_BRIDGE_URL and MAIL_BRIDGE_TOKEN.');
+  if (!config.configured) throw new HttpError(503, 'Mailbox is not configured');
 }
-
-async function bridge(action, data = {}) {
+const bridge = (action, data = {}) => {
   assertConfigured();
-  const bridgeUrl = new URL(config.mailBridge.url);
-  if (process.env.NODE_ENV === 'production' && bridgeUrl.protocol !== 'https:') {
-    throw new HttpError(500, 'MAIL_BRIDGE_URL must use HTTPS in production');
-  }
-  const response = await fetch(config.mailBridge.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.mailBridge.token}` },
-    body: JSON.stringify({ action, ...data }),
-    signal: AbortSignal.timeout(45_000),
-  });
-  let result;
-  try {
-    result = await response.json();
-  } catch {
-    throw new HttpError(502, 'Mail bridge returned an invalid response. Check the deployed PHP bridge and its server logs.');
-  }
-  if (!result || typeof result !== 'object' || Array.isArray(result)) {
-    throw new HttpError(502, 'Mail bridge returned an invalid response');
-  }
-  if (!response.ok) throw new HttpError(response.status >= 500 ? 502 : response.status, result.error || `PHP mail bridge failed (${response.status})`);
-  return result;
-}
+  return mailTransport.request(action, data);
+};
 
 /** The local cache of a folder: { uidValidity, lastUid, messages } */
 export function cacheOf(folder) {
@@ -103,12 +82,13 @@ async function recordFromSource(item) {
   return record;
 }
 
-/** Update local metadata using raw messages fetched by the PHP IMAP service. */
+/** Update local metadata from the selected transport. */
 async function syncFolder(folder, cache) {
   const knownUids = Object.keys(cache.messages).map(Number);
   const result = await bridge('sync', { folder, knownUids, knownUidValidity: cache.uidValidity });
   const uidValidity = String(result.uidValidity || '');
   if (cache.uidValidity !== uidValidity) {
+    for (const uid of Object.keys(cache.messages)) evict(folder, Number(uid));
     cache.messages = {}; cache.lastUid = 0; cache.uidValidity = uidValidity;
   }
   const records = await Promise.all((result.messages || []).map(recordFromSource));
@@ -118,8 +98,14 @@ async function syncFolder(folder, cache) {
     for (const record of Object.values(cache.messages)) record.imapRead = seen.has(record.uid);
   }
   const existing = new Set((result.uids || []).map(Number));
-  for (const uid of Object.keys(cache.messages)) if (!existing.has(Number(uid))) delete cache.messages[uid];
+  for (const uid of Object.keys(cache.messages)) {
+    if (!existing.has(Number(uid))) {
+      evict(folder, Number(uid));
+      delete cache.messages[uid];
+    }
+  }
   cache.lastUid = Math.max(0, ...existing);
+  mailEvents.emit('changed');
   return result.hasMore === true;
 }
 
@@ -195,26 +181,41 @@ function recall(key) {
 // The same message requested twice at once (a prefetch and a click) is downloaded once.
 const inFlight = new Map();
 
-/** Fetch and parse a full message from 'inbox', 'sent' or 'spam'. Returns null if it no longer exists. */
+const identityOf = (folder, uid) => ({ folder, uidValidity: cacheOf(folder).uidValidity, uid: Number(uid) });
+const cacheKey = (folder, uid) => JSON.stringify([folder, cacheOf(folder).uidValidity, Number(uid)]);
+
+async function parseSource(source, identity) {
+  const parsed = await simpleParser(source);
+  if (identity.uidValidity !== cacheOf(identity.folder).uidValidity || !cacheOf(identity.folder).messages[identity.uid]) {
+    throw new HttpError(409, 'Mailbox changed. Refresh the message list.');
+  }
+  remember(cacheKey(identity.folder, identity.uid), parsed, source.length);
+  const record = cacheOf(identity.folder).messages[identity.uid];
+  record.snippet = (parsed.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  record.hasAttachments = parsed.attachments.length > 0;
+  return parsed;
+}
+
+/** Read memory, then durable cache, and only then download from the mail server. */
 export function fetchParsed(uid, folder = 'inbox') {
   uid = Number(uid);
-  const key = `${folder}:${uid}`;
+  const key = cacheKey(folder, uid);
   const cached = recall(key);
   if (cached) return Promise.resolve(cached);
   if (inFlight.has(key)) return inFlight.get(key);
-
-  const job = bridge('fetch', { folder, uid })
-    .then(async (result) => {
-      if (!result.raw) return null;
-      const source = Buffer.from(result.raw, 'base64');
-      return { parsed: await simpleParser(source), size: source.length };
-    })
-    .then((result) => {
-      if (!result) return null;
-      remember(key, result.parsed, result.size);
-      return result.parsed;
-    })
-    .finally(() => inFlight.delete(key));
+  const identity = identityOf(folder, uid);
+  const job = (async () => {
+    let source = await messageCache.get(identity);
+    const persisted = Boolean(source);
+    if (!source) {
+      const { raw } = await bridge('fetch', { folder, uid });
+      if (!raw) return null;
+      source = Buffer.from(raw, 'base64');
+    }
+    const parsed = await parseSource(source, identity);
+    if (!persisted) void messageCache.put(identity, source);
+    return parsed;
+  })().finally(() => inFlight.delete(key));
   inFlight.set(key, job);
   return job;
 }
@@ -228,7 +229,7 @@ const PREFETCH_BATCH_MESSAGES = 5;
 export function prefetch(uids, folder = 'inbox') {
   const wanted = uids.map(Number).filter((uid) => {
     const record = cacheOf(folder).messages[uid];
-    const key = `${folder}:${uid}`;
+    const key = cacheKey(folder, uid);
     return record && record.size <= PREFETCH_MAX_BYTES && !parsedCache.has(key) && !inFlight.has(key) && !prefetching.has(key);
   });
   if (!wanted.length || !config.configured) return;
@@ -237,7 +238,7 @@ export function prefetch(uids, folder = 'inbox') {
   let batch = [];
   let batchBytes = 0;
   for (const uid of wanted) {
-    const key = `${folder}:${uid}`;
+    const key = cacheKey(folder, uid);
     const size = cacheOf(folder).messages[uid].size || 0;
     if (batch.length && (batch.length >= PREFETCH_BATCH_MESSAGES || batchBytes + size > PREFETCH_BATCH_BYTES)) {
       batches.push(batch);
@@ -253,22 +254,32 @@ export function prefetch(uids, folder = 'inbox') {
   prefetchQueue = prefetchQueue
     .then(async () => {
       for (const queued of batches) {
-        const batch = queued.filter((uid) => {
-          const key = `${folder}:${uid}`;
+        let batch = queued.filter((uid) => {
+          const key = cacheKey(folder, uid);
           if (!parsedCache.has(key) && !inFlight.has(key)) return true;
           prefetching.delete(key);
           return false;
         });
+        const restored = await Promise.all(batch.map(async (uid) => {
+          const identity = identityOf(folder, uid);
+          const source = await messageCache.get(identity);
+          if (!source) return false;
+          await parseSource(source, identity);
+          prefetching.delete(cacheKey(folder, uid));
+          return true;
+        }));
+        batch = batch.filter((uid, index) => !restored[index] && !inFlight.has(cacheKey(folder, uid)));
+        for (const uid of queued) if (!batch.includes(uid)) prefetching.delete(cacheKey(folder, uid));
         if (!batch.length) continue;
+        const identities = new Map(batch.map((uid) => [uid, identityOf(folder, uid)]));
         const batchJob = bridge('fetchMany', { folder, uids: batch }).then(async (result) => {
           const parsedMessages = new Map();
           await Promise.all((result.messages || []).map(async ({ uid, raw }) => {
             const source = Buffer.from(raw, 'base64');
-            const parsed = await simpleParser(source);
-            const key = `${folder}:${uid}`;
-            remember(key, parsed, source.length);
-            const record = cacheOf(folder).messages[uid];
-            if (record) record.snippet = (parsed.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+            const identity = identities.get(Number(uid));
+            if (!identity) return;
+            const parsed = await parseSource(source, identity);
+            void messageCache.put(identity, source);
             parsedMessages.set(Number(uid), parsed);
           }));
           return parsedMessages;
@@ -279,27 +290,32 @@ export function prefetch(uids, folder = 'inbox') {
         try {
           await batchJob;
         } finally {
-          for (const uid of batch) prefetching.delete(`${folder}:${uid}`);
+          for (const uid of batch) prefetching.delete(cacheKey(folder, uid));
         }
       }
       save();
     })
     .catch((err) => {
-      for (const uid of wanted) prefetching.delete(`${folder}:${uid}`);
+      for (const uid of wanted) prefetching.delete(cacheKey(folder, uid));
       console.warn('[prefetch]', err.message);
     });
 }
 
+function evict(folder, uid) {
+  const key = cacheKey(folder, uid);
+  const entry = parsedCache.get(key);
+  if (entry) { cachedBytes -= entry.size; parsedCache.delete(key); }
+  prefetching.delete(key);
+  void messageCache.remove(identityOf(folder, uid));
+}
+
 function forget(folder, uids) {
   for (const uid of uids) {
+    evict(folder, uid);
     delete cacheOf(folder).messages[uid];
-    const entry = parsedCache.get(`${folder}:${uid}`);
-    if (entry) {
-      cachedBytes -= entry.size;
-      parsedCache.delete(`${folder}:${uid}`);
-    }
   }
   save();
+  mailEvents.emit('changed');
 }
 
 /** Move messages to Trash, or expunge them when `permanent` (or no Trash folder exists). */
@@ -334,7 +350,7 @@ export async function sendMail(mail) {
 
 /** Log in the interactive connection ahead of time (and keep it alive) so no click pays for the login. */
 export function keepWarm() {
-  // PHP shared hosting owns the IMAP connection and opens it per request.
+  void mailTransport.warm().catch((err) => console.warn('[mail] Warm connection failed:', describeError(err)));
 }
 
 export async function testConnection() {
@@ -343,7 +359,23 @@ export async function testConnection() {
   try {
     return await bridge('test');
   } catch (err) {
-    throw new HttpError(502, `PHP mail bridge connection failed - ${describeError(err)}`);
+    throw new HttpError(502, `Mail connection failed - ${describeError(err)}`);
   }
 }
-                                                                                                                                                         
+
+// IMAP IDLE notifications are coalesced; periodic sync remains a fallback.
+let idleSyncTimer;
+mailTransport.onChange(() => {
+  clearTimeout(idleSyncTimer);
+  idleSyncTimer = setTimeout(() => {
+    syncInbox().catch((err) => console.warn('[mail] IDLE sync failed:', describeError(err)));
+  }, 250);
+  idleSyncTimer.unref?.();
+});
+
+export async function closeMailbox() {
+  clearTimeout(continuation);
+  clearTimeout(idleSyncTimer);
+  await mailTransport.close();
+  await messageCache.drain();
+}
