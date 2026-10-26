@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 // Private AliasMail transport bridge. Keep this file outside the web root when possible and
 // expose it only over HTTPS. Configure credentials in the hosting control panel, not in Git.
+// Keep IMAP warnings out of the JSON response; details stay in PHP logs.
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
 require __DIR__ . '/settings.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -36,6 +39,9 @@ function mailbox_name(string $folder): string {
 
 function imap_open_folder(string $folder, bool $readOnly = true) {
     if (!function_exists('imap_open')) throw new RuntimeException('PHP IMAP extension is not enabled');
+    imap_timeout(IMAP_OPENTIMEOUT, 10);
+    imap_timeout(IMAP_READTIMEOUT, 15);
+    imap_timeout(IMAP_WRITETIMEOUT, 15);
     $host = config_value('IMAP_HOST', 'imap.secureserver.net');
     $port = config_value('IMAP_PORT', '993');
     $flags = config_value('IMAP_SECURE', 'true') === 'true' ? '/imap/ssl' : '/imap/notls';
@@ -71,7 +77,19 @@ function smtp_command($socket, string $command, array $codes): string {
     return $reply;
 }
 
-function smtp_open() {
+function smtp_capabilities(string $reply): array {
+    $capabilities = [];
+    foreach (preg_split('/\r?\n/', trim($reply)) as $line) {
+        if (preg_match('/^250[- ]([A-Za-z0-9][A-Za-z0-9-]*)(?:\s+(.*))?$/', trim($line), $match)) {
+            $capabilities[strtoupper($match[1])] = isset($match[2])
+                ? preg_split('/\s+/', strtoupper(trim($match[2])))
+                : [];
+        }
+    }
+    return $capabilities;
+}
+
+function smtp_open(?array &$capabilities = null) {
     $host = config_value('SMTP_HOST', 'smtpout.secureserver.net');
     $port = (int)config_value('SMTP_PORT', '465');
     $secure = config_value('SMTP_SECURE', 'true') === 'true';
@@ -80,26 +98,43 @@ function smtp_open() {
     if (!$socket) throw new RuntimeException("SMTP connection failed: $errstr ($errno)");
     stream_set_timeout($socket, 15);
     smtp_command($socket, '', [220]);
-    smtp_command($socket, 'EHLO aliasmail.local', [250]);
+    $capabilities = smtp_capabilities(smtp_command($socket, 'EHLO aliasmail.local', [250]));
     if (!$secure && $port !== 25) {
         smtp_command($socket, 'STARTTLS', [220]);
         if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) throw new RuntimeException('SMTP TLS negotiation failed');
-        smtp_command($socket, 'EHLO aliasmail.local', [250]);
+        $capabilities = smtp_capabilities(smtp_command($socket, 'EHLO aliasmail.local', [250]));
     }
     if (config_value('SMTP_AUTH', 'true') === 'true') {
-        smtp_command($socket, 'AUTH LOGIN', [334]);
-        smtp_command($socket, base64_encode(config_value('MAIL_USER')), [334]);
-        smtp_command($socket, base64_encode(config_value('MAIL_PASSWORD')), [235]);
+        if (in_array('PLAIN', $capabilities['AUTH'] ?? [], true)) {
+            $plain = base64_encode("\0" . config_value('MAIL_USER') . "\0" . config_value('MAIL_PASSWORD'));
+            $reply = smtp_command($socket, 'AUTH PLAIN ' . $plain, [235, 334]);
+            if ((int)substr($reply, 0, 3) === 334) smtp_command($socket, $plain, [235]);
+        } else {
+            smtp_command($socket, 'AUTH LOGIN', [334]);
+            smtp_command($socket, base64_encode(config_value('MAIL_USER')), [334]);
+            smtp_command($socket, base64_encode(config_value('MAIL_PASSWORD')), [235]);
+        }
     }
     return $socket;
 }
 
 function smtp_send_raw(string $raw, array $envelope): void {
-    $socket = smtp_open();
+    $capabilities = [];
+    $socket = smtp_open($capabilities);
     try {
-        smtp_command($socket, 'MAIL FROM:<' . str_replace(['<','>','\r','\n'], '', (string)($envelope['from'] ?? config_value('MAIL_USER'))) . '>', [250]);
+        $from = str_replace(['<', '>', "\r", "\n"], '', (string)($envelope['from'] ?? config_value('MAIL_USER')));
+        $commands = [['MAIL FROM:<' . $from . '>', [250]]];
         foreach (array_unique($envelope['to'] ?? []) as $recipient) {
-            smtp_command($socket, 'RCPT TO:<' . str_replace(['<','>','\r','\n'], '', (string)$recipient) . '>', [250, 251]);
+            $recipient = str_replace(['<', '>', "\r", "\n"], '', (string)$recipient);
+            $commands[] = ['RCPT TO:<' . $recipient . '>', [250, 251]];
+        }
+        if (count($commands) === 1) throw new RuntimeException('No recipients in SMTP envelope');
+        if (isset($capabilities['PIPELINING'])) {
+            $payload = implode("\r\n", array_column($commands, 0)) . "\r\n";
+            if (fwrite($socket, $payload) === false) throw new RuntimeException('SMTP envelope write failed');
+            foreach ($commands as [, $codes]) smtp_command($socket, '', $codes);
+        } else {
+            foreach ($commands as [$command, $codes]) smtp_command($socket, $command, $codes);
         }
         smtp_command($socket, 'DATA', [354]);
         $raw = preg_replace('/(?m)^\./', '..', str_replace(["\r\n", "\r"], "\n", $raw));
@@ -129,24 +164,54 @@ function handle(array $body): array {
             : [];
         $all = imap_search($imap, 'ALL', SE_UID) ?: [];
         $messages = [];
-        $overview = imap_fetch_overview($imap, '1:*') ?: [];
+        $newUids = array_values(array_filter(array_map('intval', $all), fn($uid) => $uid > 0 && !isset($known[$uid])));
+        // Fetch newest headers first and finish large mailbox imports over short requests.
+        rsort($newUids, SORT_NUMERIC);
+        $batchUids = array_slice($newUids, 0, 20);
+        $syncStarted = microtime(true);
+        if ($batchUids) {
+            $overview = imap_fetch_overview($imap, implode(',', $batchUids), FT_UID) ?: [];
+        } else {
+            $overview = [];
+        }
+        usort($overview, fn($a, $b) => (int)$b->uid <=> (int)$a->uid);
         foreach ($overview as $item) {
-            $number = (int)$item->msgno; $uid = (int)imap_uid($imap, $number);
-            if (!$uid || isset($known[$uid])) continue;
+            if ($messages && microtime(true) - $syncStarted > 8) break;
+            $number = (int)($item->msgno ?? 0);
+            $uid = (int)($item->uid ?? ($number ? imap_uid($imap, $number) : 0));
+            if (!$uid || !$number) continue;
             $header = imap_fetchheader($imap, $number);
             $messages[] = [
                 'uid' => $uid, 'raw' => base64_encode($header), 'size' => (int)($item->size ?? strlen($header)),
                 'hasAttachments' => structure_has_attachments(@imap_fetchstructure($imap, $number)),
             ];
         }
+        $seenUids = imap_search($imap, 'SEEN', SE_UID) ?: [];
         imap_close($imap);
-        return ['uidValidity' => (string)$status->uidvalidity, 'uids' => array_map('intval', $all), 'messages' => $messages];
+        return ['hasMore' => count($newUids) > count($messages), 'seenUids' => array_map('intval', $seenUids), 'uidValidity' => (string)$status->uidvalidity, 'uids' => array_map('intval', $all), 'messages' => $messages];
+    }
+    if ($action === 'fetchMany') {
+        $uids = array_values(array_unique(array_filter(array_map('intval', $body['uids'] ?? []), fn($uid) => $uid > 0)));
+        if (count($uids) > 20) throw new RuntimeException('Too many messages in one fetch');
+        [$imap] = imap_open_folder((string)($body['folder'] ?? 'inbox'));
+        $messages = [];
+        try {
+            foreach ($uids as $uid) {
+                $number = imap_msgno($imap, $uid);
+                if (!$number) continue;
+                $raw = imap_fetchheader($imap, $number, FT_PREFETCHTEXT) . "\r\n" . imap_body($imap, $number, FT_PEEK);
+                $messages[] = ['uid' => $uid, 'raw' => base64_encode($raw)];
+            }
+        } finally {
+            imap_close($imap);
+        }
+        return ['messages' => $messages];
     }
     if ($action === 'fetch') {
         [$imap] = imap_open_folder((string)($body['folder'] ?? 'inbox'));
         $uid = (int)($body['uid'] ?? 0); $number = imap_msgno($imap, $uid);
         if (!$number) { imap_close($imap); return ['raw' => null]; }
-        $raw = imap_fetchheader($imap, $number) . "\r\n" . imap_body($imap, $number, FT_PEEK);
+        $raw = imap_fetchheader($imap, $number, FT_PREFETCHTEXT) . "\r\n" . imap_body($imap, $number, FT_PEEK);
         imap_close($imap); return ['raw' => base64_encode($raw)];
     }
     if ($action === 'delete' || $action === 'move') {
@@ -196,3 +261,4 @@ $body = json_decode(file_get_contents('php://input'), true);
 if (!is_array($body)) reply(400, ['error' => 'Invalid JSON']);
 try { reply(200, handle($body)); }
 catch (Throwable $e) { error_log('[AliasMail bridge] ' . $e->getMessage()); reply(502, ['error' => $e->getMessage()]); }
+        

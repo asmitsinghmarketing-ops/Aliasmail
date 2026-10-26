@@ -30,7 +30,7 @@ router.use(requireAuth(), (req, res, next) => {
 
 /* ---------------------------------- helpers ---------------------------------- */
 
-const stateOf = (m, me) => m.state[me] || {};
+const stateOf = (m, me) => ({ read: Boolean(m.imapRead), ...(m.state[me] || {}) });
 const isSnoozed = (s) => Boolean(s.snoozedUntil) && Date.parse(s.snoozedUntil) > Date.now();
 const live = (s) => !s.trashed;
 

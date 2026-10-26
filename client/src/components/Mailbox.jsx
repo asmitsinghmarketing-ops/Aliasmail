@@ -118,7 +118,8 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
   const [draft, setDraft] = useState(null);
   const [signature, setSignature] = useState('');
   const [modal, setModal] = useState(null); // 'settings' | 'shortcuts'
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => window.matchMedia('(max-width: 800px)').matches);
+  const [drawerDrag, setDrawerDrag] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -126,6 +127,8 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
   const [leaving, setLeaving] = useState(new Set()); // rows animating out of the list
   const toastTimer = useRef(null);
   const searchInput = useRef(null);
+  const drawerSwipe = useRef(null);
+  const firstMailboxLoad = useRef(true);
   const me = user.email;
 
   const labelsById = useMemo(() => Object.fromEntries(labels.map((l) => [l.id, l])), [labels]);
@@ -142,7 +145,14 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
   const load = useCallback(async () => {
     try {
       const params = new URLSearchParams({ folder, page, q: search, ...(folder === 'inbox' && !search && { category }) });
-      const [data, folderCounts] = await Promise.all([api(`/mail/messages?${params}`), api('/mail/folders')]);
+      const [data, folderCounts] = await Promise.all([
+        api(`/mail/messages?${params}`).then((data) => {
+          setList(data);
+          setLoading(false);
+          return data;
+        }),
+        api('/mail/folders'),
+      ]);
       setList(data);
       setCounts(folderCounts);
       setError('');
@@ -158,6 +168,12 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
     setSelected(new Set());
     setCursor(0);
     load();
+    if (firstMailboxLoad.current) {
+      firstMailboxLoad.current = false;
+      // Startup sync runs in the API process. Refresh the cached list when it finishes so a
+      // newly deployed app doesn't leave the first mailbox view empty until the 30s poll.
+      api('/mail/refresh', { method: 'POST' }).then(() => load()).catch(() => {});
+    }
     const timer = setInterval(load, 30000);
     return () => clearInterval(timer);
   }, [load]);
@@ -169,6 +185,85 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
       .then((s) => setSignature(s.signature))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (collapsed || !window.matchMedia('(max-width: 800px)').matches) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setCollapsed(true);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [collapsed]);
+
+  useEffect(() => {
+    if (!window.matchMedia('(max-width: 800px)').matches) return undefined;
+
+    const onTouchStart = (event) => {
+      if (event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      const sidebar = document.getElementById('mail-sidebar');
+      const width = sidebar?.getBoundingClientRect().width || Math.min(320, window.innerWidth * 0.86);
+      if (collapsed ? touch.clientX > 24 : touch.clientX > width) return;
+
+      drawerSwipe.current = {
+        startX: touch.clientX,
+        startY: touch.clientY,
+        width,
+        wasCollapsed: collapsed,
+        active: false,
+      };
+      setDrawerDrag(0);
+    };
+
+    const onTouchMove = (event) => {
+      const swipe = drawerSwipe.current;
+      if (!swipe || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      const dx = touch.clientX - swipe.startX;
+      const dy = touch.clientY - swipe.startY;
+      if (!swipe.active && Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
+        drawerSwipe.current = null;
+        setDrawerDrag(null);
+        return;
+      }
+      if (Math.abs(dx) < 4 || Math.abs(dx) < Math.abs(dy)) return;
+
+      swipe.active = true;
+      event.preventDefault();
+      const offset = swipe.wasCollapsed
+        ? Math.max(0, Math.min(swipe.width * 1.1, dx))
+        : Math.max(-swipe.width, Math.min(0, dx));
+      setDrawerDrag(offset);
+    };
+
+    const finishSwipe = (event) => {
+      const swipe = drawerSwipe.current;
+      if (!swipe) return;
+      drawerSwipe.current = null;
+      const touch = event.changedTouches[0];
+      const dx = touch ? touch.clientX - swipe.startX : 0;
+      const threshold = Math.max(56, swipe.width * 0.18);
+      setDrawerDrag(null);
+      if (swipe.active && swipe.wasCollapsed && dx > threshold) setCollapsed(false);
+      else if (swipe.active && !swipe.wasCollapsed && dx < -threshold) setCollapsed(true);
+    };
+
+    const cancelSwipe = () => {
+      drawerSwipe.current = null;
+      setDrawerDrag(null);
+    };
+
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', finishSwipe, { passive: true });
+    document.addEventListener('touchcancel', cancelSwipe, { passive: true });
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', finishSwipe);
+      document.removeEventListener('touchcancel', cancelSwipe);
+    };
+  }, [collapsed]);
 
   const folderLabel = folder.startsWith('label:') ? labelsById[folder.slice(6)]?.name || 'Label' : FOLDERS.find((f) => f.id === folder)?.label;
 
@@ -182,6 +277,7 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
   function goTo(nextFolder) {
     setFolder(nextFolder);
     setPage(1);
+    if (window.matchMedia('(max-width: 800px)').matches) setCollapsed(true);
     closeViewer();
   }
 
@@ -571,11 +667,21 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
     return formatDate(item.date);
   }
 
+  const drawerVisiblyOpen = !collapsed || (drawerDrag !== null && drawerDrag > 0);
+
   return (
-    <div className="app" style={{ '--alias': user.color }}>
+    <div className={`app ${drawerVisiblyOpen ? 'menu-open' : ''}`} style={{ '--alias': user.color }}>
       <header className="topbar">
         <div className="brand">
-          <button className="icon-btn" title="Main menu" onClick={() => setCollapsed(!collapsed)}>
+          <button
+            className="icon-btn mobile-menu-toggle"
+            type="button"
+            title="Main menu"
+            aria-label="Main menu"
+            aria-expanded={!collapsed}
+            aria-controls="mail-sidebar"
+            onClick={() => setCollapsed(!collapsed)}
+          >
             <Icon name="menu" />
           </button>
           <Logo />
@@ -594,7 +700,10 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
           <Icon name="search" />
           <input
             ref={searchInput}
-            placeholder="Search mail — try from:  has:attachment  is:unread"
+            aria-label="Search mail"
+            enterKeyHint="search"
+            placeholder="Search mail"
+            title="Search mail. Try from:, has:attachment, or is:unread."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.blur()}
@@ -631,8 +740,28 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
       </header>
 
       <div className="layout">
-        <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
-          <button className="compose-btn" onClick={compose} title="Compose (c)">
+        <aside
+          id="mail-sidebar"
+          className={`sidebar ${collapsed ? 'collapsed' : ''} ${drawerDrag !== null ? 'dragging' : ''}`}
+          style={drawerDrag !== null ? { '--drawer-drag-offset': `${drawerDrag}px` } : undefined}
+        >
+          <div className="mobile-drawer-head">
+            <div className="mobile-drawer-brand">
+              <Logo size={38} className="mobile-drawer-logo" />
+              <Wordmark />
+            </div>
+            <button className="icon-btn mobile-drawer-close" type="button" aria-label="Close menu" onClick={() => setCollapsed(true)}>
+              <Icon name="close" />
+            </button>
+          </div>
+          <button
+            className="compose-btn"
+            onClick={() => {
+              if (window.matchMedia('(max-width: 800px)').matches) setCollapsed(true);
+              compose();
+            }}
+            title="Compose (c)"
+          >
             <Icon name="edit" /> <span>Compose</span>
           </button>
           <nav>
@@ -645,6 +774,21 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
                 {f.count && counts[f.count] > 0 && <span className={`count ${f.plain ? 'plain' : ''}`}>{counts[f.count]}</span>}
               </button>
             ))}
+            {onOpenAdmin && (
+              <button
+                className="nav-item admin-mobile-item"
+                onClick={() => {
+                  setCollapsed(true);
+                  onOpenAdmin();
+                }}
+                title="Admin console"
+              >
+                <span className="nav-icon" style={{ '--c': 'var(--violet)' }}>
+                  <Icon name="shield" size={18} />
+                </span>
+                <span className="nav-label">Admin console</span>
+              </button>
+            )}
           </nav>
 
           <div className="labels-head">
@@ -682,6 +826,14 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
             ))}
           </nav>
         </aside>
+        {!collapsed && (
+          <button
+            className="sidebar-backdrop"
+            type="button"
+            aria-label="Close navigation menu"
+            onClick={() => setCollapsed(true)}
+          />
+        )}
 
         <main className="content">
           {open ? (
@@ -929,3 +1081,4 @@ export default function Mailbox({ user, onLogout, onUserChange, onOpenAdmin }) {
     </div>
   );
 }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      

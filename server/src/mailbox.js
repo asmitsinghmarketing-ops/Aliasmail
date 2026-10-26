@@ -36,7 +36,15 @@ async function bridge(action, data = {}) {
     body: JSON.stringify({ action, ...data }),
     signal: AbortSignal.timeout(45_000),
   });
-  const result = await response.json().catch(() => ({}));
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    throw new HttpError(502, 'Mail bridge returned an invalid response. Check the deployed PHP bridge and its server logs.');
+  }
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    throw new HttpError(502, 'Mail bridge returned an invalid response');
+  }
   if (!response.ok) throw new HttpError(response.status >= 500 ? 502 : response.status, result.error || `PHP mail bridge failed (${response.status})`);
   return result;
 }
@@ -103,13 +111,20 @@ async function syncFolder(folder, cache) {
   if (cache.uidValidity !== uidValidity) {
     cache.messages = {}; cache.lastUid = 0; cache.uidValidity = uidValidity;
   }
-  for (const item of result.messages || []) cache.messages[item.uid] = await recordFromSource(item);
+  const records = await Promise.all((result.messages || []).map(recordFromSource));
+  for (const record of records) cache.messages[record.uid] = record;
+  if (Array.isArray(result.seenUids)) {
+    const seen = new Set(result.seenUids.map(Number));
+    for (const record of Object.values(cache.messages)) record.imapRead = seen.has(record.uid);
+  }
   const existing = new Set((result.uids || []).map(Number));
   for (const uid of Object.keys(cache.messages)) if (!existing.has(Number(uid))) delete cache.messages[uid];
   cache.lastUid = Math.max(0, ...existing);
+  return result.hasMore === true;
 }
 
 let running = null;
+let continuation = null;
 
 /** Pull new INBOX and Sent messages into the local cache (and Spam, when it's switched on). */
 export function syncInbox() {
@@ -120,12 +135,20 @@ export function syncInbox() {
 }
 
 async function runSync() {
+  clearTimeout(continuation);
+  let hasMore = false;
   const data = db();
   try {
     for (const folder of SYNCED_FOLDERS) {
-      await syncFolder(folder, cacheOf(folder));
+      hasMore = (await syncFolder(folder, cacheOf(folder))) || hasMore;
     }
     data.sync.lastError = null;
+    if (hasMore) {
+      continuation = setTimeout(() => {
+        syncInbox().catch((err) => console.warn('[sync] continuation failed:', describeError(err)));
+      }, 1000);
+      continuation.unref?.();
+    }
     // Warm the cache with the newest mail so opening it is instant.
     const newest = (folder, n) => Object.values(cacheOf(folder).messages).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, n).map((m) => m.uid);
     prefetch(newest('inbox', 25), 'inbox');
@@ -197,32 +220,74 @@ export function fetchParsed(uid, folder = 'inbox') {
 }
 
 let prefetchQueue = Promise.resolve();
+const prefetching = new Set();
+const PREFETCH_BATCH_BYTES = 8 * 1024 * 1024;
+const PREFETCH_BATCH_MESSAGES = 5;
 
-/** Download and parse messages in the background (one IMAP command per batch) so they open instantly. */
+/** Warm message bodies in small background batches without blocking foreground opens. */
 export function prefetch(uids, folder = 'inbox') {
   const wanted = uids.map(Number).filter((uid) => {
     const record = cacheOf(folder).messages[uid];
     const key = `${folder}:${uid}`;
-    return record && record.size <= PREFETCH_MAX_BYTES && !parsedCache.has(key) && !inFlight.has(key);
+    return record && record.size <= PREFETCH_MAX_BYTES && !parsedCache.has(key) && !inFlight.has(key) && !prefetching.has(key);
   });
   if (!wanted.length || !config.configured) return;
 
+  const batches = [];
+  let batch = [];
+  let batchBytes = 0;
+  for (const uid of wanted) {
+    const key = `${folder}:${uid}`;
+    const size = cacheOf(folder).messages[uid].size || 0;
+    if (batch.length && (batch.length >= PREFETCH_BATCH_MESSAGES || batchBytes + size > PREFETCH_BATCH_BYTES)) {
+      batches.push(batch);
+      batch = [];
+      batchBytes = 0;
+    }
+    batch.push(uid);
+    batchBytes += size;
+    prefetching.add(key);
+  }
+  if (batch.length) batches.push(batch);
+
   prefetchQueue = prefetchQueue
     .then(async () => {
-      for (const uid of wanted) {
-        const key = `${folder}:${uid}`;
-        const { raw } = await bridge('fetch', { folder, uid });
-        if (raw && !parsedCache.has(key)) {
-          const source = Buffer.from(raw, 'base64');
-          const parsed = await simpleParser(source);
-          remember(key, parsed, source.length);
-          const record = cacheOf(folder).messages[uid];
-          if (record) record.snippet = (parsed.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      for (const queued of batches) {
+        const batch = queued.filter((uid) => {
+          const key = `${folder}:${uid}`;
+          if (!parsedCache.has(key) && !inFlight.has(key)) return true;
+          prefetching.delete(key);
+          return false;
+        });
+        if (!batch.length) continue;
+        const batchJob = bridge('fetchMany', { folder, uids: batch }).then(async (result) => {
+          const parsedMessages = new Map();
+          await Promise.all((result.messages || []).map(async ({ uid, raw }) => {
+            const source = Buffer.from(raw, 'base64');
+            const parsed = await simpleParser(source);
+            const key = `${folder}:${uid}`;
+            remember(key, parsed, source.length);
+            const record = cacheOf(folder).messages[uid];
+            if (record) record.snippet = (parsed.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+            parsedMessages.set(Number(uid), parsed);
+          }));
+          return parsedMessages;
+        });
+
+        // Background downloads must not block an explicit message open.
+        // fetchParsed keeps its own deduplicated foreground request.
+        try {
+          await batchJob;
+        } finally {
+          for (const uid of batch) prefetching.delete(`${folder}:${uid}`);
         }
       }
       save();
     })
-    .catch((err) => console.warn('[prefetch]', err.message));
+    .catch((err) => {
+      for (const uid of wanted) prefetching.delete(`${folder}:${uid}`);
+      console.warn('[prefetch]', err.message);
+    });
 }
 
 function forget(folder, uids) {
@@ -281,3 +346,4 @@ export async function testConnection() {
     throw new HttpError(502, `PHP mail bridge connection failed - ${describeError(err)}`);
   }
 }
+                                                                                                                                                         

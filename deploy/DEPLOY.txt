@@ -1,0 +1,6 @@
+1. Back up the existing deployment.
+2. Deploy aliasmail-speed-fix.zip to the Node app using its existing environment and persistent storage. Keep the existing database configuration.
+3. Upload the php-mail-bridge folder from php-mail-bridge-speed-fix.zip to the existing bridge location. Keep the existing private settings.local.php or external aliasmail-settings.php.
+4. Restart the Node app and hard-refresh the browser.
+5. Check mail refresh, opening messages, and read flags. Large initial imports now continue in small background requests.
+The hosted bridge previously returned an empty HTTP 500 after about 30.5 seconds. If that persists, check the PHP error log and IMAP connectivity; live performance is not yet verified.

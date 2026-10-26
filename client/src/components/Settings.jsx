@@ -116,6 +116,18 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
               Signature <span className="muted">(added to new messages and replies)</span>
               <textarea className="textarea" rows={4} {...field('signature')} placeholder={'Best regards,\nJohn'} />
             </label>
+            <section className="sec-card google-account-card">
+              <div>
+                <h3>Use this address with Google</h3>
+                <p className="muted small">
+                  Create a Google Account with <strong>{form.address}</strong>. Choose “Use your existing email”
+                  during signup; Google will send a verification code to this mailbox. This does not create a Gmail inbox.
+                </p>
+              </div>
+              <a className="btn btn-outline" href="https://accounts.google.com/signup" target="_blank" rel="noreferrer">
+                Set up Google Account
+              </a>
+            </section>
           </>
         )}
         {error && <div className="alert">{error}</div>}
@@ -129,10 +141,10 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className={`modal ${tab === 'security' ? 'modal-wide' : ''}`} onMouseDown={(e) => e.stopPropagation()}>
+      <div className={`modal settings-modal ${tab === 'security' ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h2>Settings</h2>
-          <button type="button" className="icon-btn" onClick={onClose}>
+          <h2 id="settings-title">Settings</h2>
+          <button type="button" className="icon-btn" aria-label="Close settings" onClick={onClose}>
             <Icon name="close" />
           </button>
         </div>
@@ -146,7 +158,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
             </button>
           ))}
         </div>
-        <div className="view-enter" key={tab}>
+        <div className="view-enter settings-body" key={tab}>
           {tab === 'profile' ? profileTab() : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <div className="muted">Loading…</div>}
         </div>
       </div>
