@@ -1,10 +1,67 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Avatar, { squareImage } from './Avatar.jsx';
 import Icon from './Icon.jsx';
 import SecurityPanel from './SecurityPanel.jsx';
 
+const GOOGLE_SIGNUP = 'https://accounts.google.com/signup';
+
+/** Phone only: how to open the Google sign-up page in a private tab, with the link to copy. */
+function PrivateTabHelp({ onClose }) {
+  const [copied, setCopied] = useState(false);
+  const field = useRef(null);
+
+  useEffect(() => {
+    // Capture and stop Escape here, so it closes only this dialog, not Settings behind it.
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(GOOGLE_SIGNUP);
+    } catch {
+      // No clipboard access: select the link so a long-press can copy it.
+      field.current?.select();
+      document.execCommand('copy');
+    }
+    setCopied(true);
+  }
+
+  return (
+    <div className="modal-backdrop dialog-backdrop" onMouseDown={onClose}>
+      <div className="modal dialog private-help" role="dialog" aria-modal="true" aria-labelledby="private-help-title" onMouseDown={(e) => e.stopPropagation()}>
+        <h2 id="private-help-title">Open in a private tab</h2>
+        <p className="dialog-text">
+          So it doesn’t mix with a Google account you’re already signed in to on this phone, open the sign-up page in an incognito
+          or private tab.
+        </p>
+        <ol className="private-steps">
+          <li>Tap <strong>Copy link</strong>.</li>
+          <li>In your browser menu (<strong>⋮</strong> or the tabs button), open a <strong>New incognito tab</strong> (Safari: <strong>Private</strong>).</li>
+          <li>Paste the link into the address bar and go.</li>
+        </ol>
+        <input ref={field} type="text" readOnly value={GOOGLE_SIGNUP} aria-label="Google sign-up link" onFocus={(e) => e.target.select()} />
+        <div className="dialog-actions">
+          <a className="btn btn-ghost" href={GOOGLE_SIGNUP} target="_blank" rel="noreferrer" onClick={onClose}>
+            Open normally
+          </a>
+          <button type="button" className="btn btn-primary" autoFocus onClick={copy}>
+            {copied ? 'Link copied' : 'Copy link'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings({ color, initialTab = 'profile', onClose, onSaved, onAvatarChange }) {
+  const [privateHelp, setPrivateHelp] = useState(false);
   const [tab, setTab] = useState(initialTab);
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -124,7 +181,20 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
                   during signup; Google will send a verification code to this mailbox. This does not create a Gmail inbox.
                 </p>
               </div>
-              <a className="btn btn-outline" href="https://accounts.google.com/signup" target="_blank" rel="noreferrer">
+              <a
+                className="btn btn-outline"
+                href={GOOGLE_SIGNUP}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => {
+                  // On a phone, suggest a private tab so it doesn't mix with a Google account
+                  // already signed in there. A website can't open a private tab itself.
+                  if (window.matchMedia('(max-width: 800px)').matches) {
+                    e.preventDefault();
+                    setPrivateHelp(true);
+                  }
+                }}
+              >
                 Set up Google Account
               </a>
             </section>
@@ -161,6 +231,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
       <div className="view-enter settings-body" key={tab}>
         {tab === 'profile' ? profileTab() : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <div className="muted">Loading…</div>}
       </div>
+      {privateHelp && <PrivateTabHelp onClose={() => setPrivateHelp(false)} />}
     </section>
   );
 }

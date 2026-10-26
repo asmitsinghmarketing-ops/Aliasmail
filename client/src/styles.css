@@ -1316,3 +1316,8 @@ a.btn { color: inherit; text-decoration: none; }
   .sidebar .mailbox-item .nav-label { display: grid; line-height: 1.25; }
   .sidebar .mailbox-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
 }
+
+/* Phone: "open in a private tab" help for the Google sign-up link */
+.private-steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; line-height: 1.5; color: var(--text); }
+.private-help input[type='text'] { font-size: 14px; color: var(--muted); }
+.private-help .dialog-actions .btn { text-decoration: none; }
