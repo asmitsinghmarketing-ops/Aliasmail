@@ -119,27 +119,33 @@ async function syncFolder(folder, cache) {
     save();
     announceChange();
   }
-  return result.hasMore === true;
+  return { hasMore: result.hasMore === true, changed };
 }
 
 let running = null;
 let continuation = null;
 
-/** Pull new INBOX and Sent messages into the local cache (and Spam, when it's switched on). */
-export function syncInbox() {
-  running ??= runSync().finally(() => {
+/**
+ * Pull new INBOX and Sent messages into the local cache (and Spam, when it's switched on).
+ * `{ inboxOnly: true }` is the quick check made every few seconds while someone has the app open.
+ */
+export function syncInbox({ inboxOnly = false } = {}) {
+  running ??= runSync(inboxOnly ? ['inbox'] : SYNCED_FOLDERS).finally(() => {
     running = null;
   });
   return running;
 }
 
-async function runSync() {
+async function runSync(folders) {
   clearTimeout(continuation);
   let hasMore = false;
+  let changed = false;
   const data = db();
   try {
-    for (const folder of SYNCED_FOLDERS) {
-      hasMore = (await syncFolder(folder, cacheOf(folder))) || hasMore;
+    for (const folder of folders) {
+      const result = await syncFolder(folder, cacheOf(folder));
+      hasMore = result.hasMore || hasMore;
+      changed = result.changed || changed;
     }
     data.sync.lastError = null;
     if (hasMore) {
@@ -148,10 +154,13 @@ async function runSync() {
       }, 1000);
       continuation.unref?.();
     }
-    // Warm the cache with the newest mail so opening it is instant.
-    const newest = (folder, n) => Object.values(cacheOf(folder).messages).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, n).map((m) => m.uid);
-    prefetch(newest('inbox', 25), 'inbox');
-    prefetch(newest('sent', 10), 'sent');
+    // Warm the cache with the newest mail so opening it is instant. Skipped on quick checks that
+    // found nothing new, so frequent checks don't re-read cached messages for nothing.
+    if (changed || folders.length > 1) {
+      const newest = (folder, n) => Object.values(cacheOf(folder).messages).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, n).map((m) => m.uid);
+      prefetch(newest('inbox', 25), 'inbox');
+      if (folders.includes('sent')) prefetch(newest('sent', 10), 'sent');
+    }
   } catch (err) {
     data.sync.lastError = describeError(err);
     throw err;

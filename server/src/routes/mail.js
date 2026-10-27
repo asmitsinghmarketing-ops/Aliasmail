@@ -20,6 +20,7 @@ import { deliver } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
 import { announceChange, mailEvents } from '../mail-events.js';
+import { liveSync } from '../live-sync.js';
 
 const router = Router();
 
@@ -55,6 +56,7 @@ router.get('/events', (req, res) => {
   res.write('retry: 3000\n\n');
   const changed = () => { if (!res.writableEnded) res.write('event: mail\ndata: {}\n\n'); };
   mailEvents.on('changed', changed);
+  liveSync.nudge();
   const heartbeat = setInterval(() => res.write(': keepalive\n\n'), 15_000);
   // Periodic reconnect rechecks revoked/expired sessions.
   const lifetime = setTimeout(() => res.end(), 60_000);

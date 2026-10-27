@@ -617,25 +617,24 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       return;
     }
 
-    // "Undo send": wait a few seconds before actually sending.
+    // Like Gmail: "Message sent" right away with Undo; the real send happens quietly once the
+    // undo window ends. A failure is reported then, and the message reopens so nothing is lost.
     let cancelled = false;
     pendingSends.current += 1;
     const timer = setTimeout(async () => {
       if (cancelled) return;
-      flash('Sending…', null, 30000);
       try {
         await api('/mail/send', { method: 'POST', body });
-        flash('Message sent.');
         load();
       } catch (err) {
-        flash(`Not sent: ${err.message}`);
+        flash(`Couldn’t send “${payload.subject || '(no subject)'}”: ${err.message.replace(/[.\s]*$/, '.')} It’s open again so you can retry.`, null, 12000);
         reopen(payload);
       } finally {
         pendingSends.current -= 1;
       }
     }, UNDO_SEND_MS);
     flash(
-      'Sending…',
+      'Message sent.',
       () => {
         cancelled = true;
         pendingSends.current -= 1;

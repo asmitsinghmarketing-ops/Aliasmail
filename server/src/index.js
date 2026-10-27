@@ -3,10 +3,11 @@ import path from 'node:path';
 import express from 'express';
 import config from './config.js';
 import { db, flush, load } from './store.js';
-import { closeMailbox, keepWarm, syncInbox } from './mailbox.js';
+import { closeMailbox } from './mailbox.js';
+import { liveSync } from './live-sync.js';
 import { runScheduled } from './outbox.js';
 import { readAvatar } from './avatars.js';
-import { HttpError, describeError } from './errors.js';
+import { HttpError } from './errors.js';
 import authRoutes from './routes/auth.js';
 import mailRoutes from './routes/mail.js';
 import adminRoutes from './routes/admin.js';
@@ -61,7 +62,8 @@ app.use((req, res, next) => {
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'no-referrer',
     'Cross-Origin-Opener-Policy': 'same-origin',
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+    // Location only for this site, and only when the user asks to share it (Security settings).
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self), payment=()',
   });
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   if (req.path.startsWith('/api/')) {
@@ -119,17 +121,13 @@ app.listen(config.port, () => console.log(`AliasMail API running on http://local
 checkDeployment();
 
 if (config.configured) {
-  const tick = () => {
-    keepWarm();
-    syncInbox().catch((err) => console.warn('[sync] failed:', describeError(err)));
-  };
-  tick();
-  setInterval(tick, config.syncIntervalMs);
+  liveSync.start();
   setInterval(runScheduled, 30_000);
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
+    liveSync.stop();
     await closeMailbox();
     await flush();
     releaseLock();

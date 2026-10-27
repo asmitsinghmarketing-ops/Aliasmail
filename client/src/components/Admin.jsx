@@ -352,7 +352,8 @@ function ActivityLog() {
                 </td>
                 <td>
                   {e.ip}
-                  {e.location && <div className="small">{e.location}</div>}
+                  {e.location && <div className="small" title="From the IP address: may show the internet provider’s city">{e.location} (approx.)</div>}
+                  {e.isp && <div className="muted small">{e.isp}</div>}
                   <div className="muted small">{e.agent}</div>
                 </td>
               </tr>

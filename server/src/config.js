@@ -113,6 +113,8 @@ const config = {
     ...(bool('SMTP_AUTH', true) && { auth: { user: mailUser, pass: mailPassword } }),
   },
   syncIntervalMs: Number(env('SYNC_INTERVAL_SECONDS', '60')) * 1000,
+  // While someone has the app open, check the INBOX this often (at least every 5 seconds).
+  liveSyncMs: Math.max(5, Number(env('LIVE_SYNC_SECONDS', '10')) || 10) * 1000,
   // Sign-in lifetime: sessions end after SESSION_DAYS, or after SESSION_IDLE_HOURS without use.
   sessionDays: Number(env('SESSION_DAYS', '7')),
   sessionIdleHours: Number(env('SESSION_IDLE_HOURS', '24')),

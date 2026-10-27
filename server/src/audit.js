@@ -21,9 +21,10 @@ export function audit(req, event, account = '', detail = '') {
   save();
   // Approximate location, filled in when the lookup answers (cached per IP).
   if (entry.ip) {
-    void locate(entry.ip).then((location) => {
-      if (location) {
-        entry.location = location;
+    void locate(entry.ip).then((found) => {
+      if (found) {
+        entry.location = found.place;
+        entry.isp = found.isp;
         save();
       }
     });

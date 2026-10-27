@@ -25,6 +25,7 @@ import {
   isTrustedDevice,
   sessionsOf,
   signOutAccount,
+  setDeviceLocation,
   startSession,
   trustDevice,
   trustedDevicesOf,
@@ -344,9 +345,26 @@ router.post('/mfa/forget-devices', requireAuth(), (req, res) => {
 
 router.get('/sessions', requireAuth(), (req, res) => {
   const list = sessionsOf(req.user.role, req.user.email)
-    .map(({ id, agent, kind, ip, location, createdAt, lastSeenAt, method }) => ({ id, agent, kind, ip, location, createdAt, lastSeenAt, method, current: id === req.session.id }))
+    .map(({ id, agent, kind, ip, location, locationSource, isp, createdAt, lastSeenAt, method }) => ({
+      id, agent, kind, ip, location, locationSource, isp, createdAt, lastSeenAt, method, current: id === req.session.id,
+    }))
     .sort((a, b) => (a.current ? -1 : b.current ? 1 : a.lastSeenAt < b.lastSeenAt ? 1 : -1));
   res.json(list);
+});
+
+// IP-based locations can name the internet provider's hub city; the user may share this device's
+// real location instead. Only the resulting place name is stored.
+const deviceLocations = limiter('device-location', { max: 10, windowMs: 60 * 60e3, lockMs: 60 * 60e3 });
+router.post('/sessions/current/location', requireAuth(), async (req, res) => {
+  const lat = Number(req.body?.lat);
+  const lon = Number(req.body?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) throw new HttpError(400, 'Location not recognised');
+  const key = `${req.user.role}:${req.user.email}`;
+  deviceLocations.check(key);
+  deviceLocations.fail(key);
+  const place = await setDeviceLocation(req.session, lat, lon);
+  if (!place) throw new HttpError(502, 'Couldn’t look up a place name for this location. Try again later.');
+  res.json({ location: place });
 });
 
 router.delete('/sessions/:id', requireAuth(), (req, res) => {

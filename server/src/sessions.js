@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 import config from './config.js';
 import { db, save } from './store.js';
 import { clientIp, cookieOptions, describeDevice, randomToken, readCookie, sha256 } from './security.js';
-import { locate } from './geo.js';
+import { locate, placeAt } from './geo.js';
 
 export const SESSION_COOKIE = 'am_session';
 const DAY = 24 * 3600e3;
@@ -19,18 +19,29 @@ function prune() {
   db().devices = db().devices.filter((d) => Date.parse(d.expiresAt) > now);
 }
 
-/** Start a session for a fully verified sign-in and set its cookie. */
 /** Fill in the session's approximate location in the background; sign-in never waits for it. */
 function locateSession(session) {
   const ip = session.ip;
-  void locate(ip).then((location) => {
-    if (location && session.ip === ip) {
-      session.location = location;
-      save();
-    }
+  void locate(ip).then((found) => {
+    if (!found || session.ip !== ip || session.locationSource === 'device') return;
+    session.location = found.place;
+    session.isp = found.isp;
+    session.locationSource = 'ip';
+    save();
   });
 }
 
+/** The place the user shared from this device (more accurate than the IP); null if not found. */
+export async function setDeviceLocation(session, lat, lon) {
+  const place = await placeAt(lat, lon);
+  if (!place) return null;
+  session.location = place;
+  session.locationSource = 'device';
+  save();
+  return place;
+}
+
+/** Start a session for a fully verified sign-in and set its cookie. */
 export function startSession(req, res, { role, email, method }) {
   prune();
   const now = new Date();
@@ -86,6 +97,8 @@ export function currentSession(req) {
     if (ip !== session.ip || (!session.location && !session.locatedAt)) {
       session.ip = ip;
       session.location = null;
+      session.locationSource = null;
+      session.isp = null;
       session.locatedAt = new Date(now).toISOString();
       locateSession(session);
     }

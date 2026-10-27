@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { describeDevice } from '../src/security.js';
-import { createLocator } from '../src/geo.js';
+import { createLocator, createPlaceFinder } from '../src/geo.js';
 
 const UA = {
   androidReduced: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36',
@@ -28,14 +28,28 @@ test('locations are looked up once per IP, never for private addresses, and fail
     fetcher: async (url) => {
       asked.push(url);
       if (url.includes('198.51.100.9')) throw new Error('offline');
-      return { ok: true, json: async () => ({ city: 'Mumbai', region: 'Maharashtra', country_name: 'India' }) };
+      return { ok: true, json: async () => ({ city: 'Mumbai', region: 'Maharashtra', country_name: 'India', org: 'AS133982 Excitel Broadband Private Limited' }) };
     },
   });
-  assert.equal(await locate('203.0.113.7'), 'Mumbai, Maharashtra, India');
-  assert.equal(await locate('203.0.113.7'), 'Mumbai, Maharashtra, India');
+  const mumbai = { place: 'Mumbai, Maharashtra, India', isp: 'Excitel Broadband' };
+  assert.deepEqual(await locate('203.0.113.7'), mumbai);
+  assert.deepEqual(await locate('203.0.113.7'), mumbai);
   assert.equal(asked.length, 1);
   for (const ip of ['127.0.0.1', '10.1.2.3', '192.168.1.5', '172.20.0.1', '::1', 'fd12:3456::1']) assert.equal(await locate(ip), null);
   assert.equal(asked.length, 1);
   assert.equal(await locate('198.51.100.9'), null);
   assert.equal(await createLocator({ enabled: false, fetcher: () => assert.fail('must not call') })('203.0.113.7'), null);
+});
+
+test('a shared device location becomes a town name, sending only rounded coordinates', async () => {
+  let asked = '';
+  const placeAt = createPlaceFinder({
+    fetcher: async (url) => {
+      asked = url;
+      return { ok: true, json: async () => ({ address: { town: 'Ghatkesar', state: 'Telangana', country: 'India' } }) };
+    },
+  });
+  assert.equal(await placeAt(17.45123456, 78.68654321), 'Ghatkesar, Telangana, India');
+  assert.match(asked, /lat=17\.45&lon=78\.69/);
+  assert.doesNotMatch(asked, /17\.451|78\.686/);
 });

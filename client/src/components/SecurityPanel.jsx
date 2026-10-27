@@ -57,6 +57,31 @@ export default function SecurityPanel({ account, owner }) {
   const [passwords, setPasswords] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [locating, setLocating] = useState(false);
+
+  // Locations from the IP can name the internet provider's hub city. With permission, use the
+  // device's own location instead; the server keeps only the town/city name.
+  function shareDeviceLocation() {
+    setLocating(true);
+    setError('');
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        try {
+          await api('/auth/sessions/current/location', { method: 'POST', body: { lat: coords.latitude, lon: coords.longitude } });
+          await load();
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLocating(false);
+        }
+      },
+      (err) => {
+        setLocating(false);
+        setError(err.code === err.PERMISSION_DENIED ? 'Location permission was not given, so the approximate location stays.' : 'Couldn’t get this device’s location. Try again.');
+      },
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 10 * 60e3 },
+    );
+  }
 
   const load = () =>
     Promise.all([api('/auth/mfa'), api('/auth/sessions')])
@@ -224,7 +249,18 @@ export default function SecurityPanel({ account, owner }) {
                 <div className="device-name">
                   <strong>{s.agent}</strong> {s.current && <span className="pill on">This device</span>}
                 </div>
-                <div className="small">{[s.location, s.ip || 'unknown IP'].filter(Boolean).join(' · ')}</div>
+                <div className="small">
+                  {[
+                    s.location && `${s.location} ${s.locationSource === 'device' ? '(from this device)' : '(approximate)'}`,
+                    s.locationSource !== 'device' && s.isp,
+                    s.ip || 'unknown IP',
+                  ].filter(Boolean).join(' · ')}
+                </div>
+                {s.current && s.locationSource !== 'device' && navigator.geolocation && (
+                  <button type="button" className="link small device-locate" disabled={locating} onClick={shareDeviceLocation}>
+                    {locating ? 'Finding your location…' : s.location ? 'Not right? Use this device’s location' : 'Show this device’s location'}
+                  </button>
+                )}
                 <div className="muted small">
                   Signed in {formatDate(s.createdAt, true)} with {METHOD[s.method] || s.method} · active {timeAgo(s.lastSeenAt)}
                 </div>
