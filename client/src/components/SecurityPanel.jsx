@@ -208,7 +208,7 @@ export default function SecurityPanel({ account, owner }) {
       {/* ----- signed-in devices ----- */}
       <section className="sec-card">
         <div className="sec-head">
-          <span className="sec-icon"><Icon name="keyboard" size={22} /></span>
+          <span className="sec-icon"><Icon name="devices" size={22} /></span>
           <div className="grow">
             <h3>Where you’re signed in</h3>
             <p className="muted small">Sign out anything you don’t recognise, then change your password.</p>
@@ -217,10 +217,16 @@ export default function SecurityPanel({ account, owner }) {
         <ul className="session-list">
           {sessions.map((s) => (
             <li key={s.id}>
-              <div className="grow">
-                <strong>{s.agent}</strong> {s.current && <span className="pill on">This device</span>}
+              <span className="device-icon" aria-hidden="true">
+                <Icon name={{ phone: 'phone', tablet: 'tablet' }[s.kind] || 'computer'} size={22} />
+              </span>
+              <div className="grow device-text">
+                <div className="device-name">
+                  <strong>{s.agent}</strong> {s.current && <span className="pill on">This device</span>}
+                </div>
+                <div className="small">{[s.location, s.ip || 'unknown IP'].filter(Boolean).join(' · ')}</div>
                 <div className="muted small">
-                  {s.ip || 'unknown IP'} · signed in {formatDate(s.createdAt, true)} with {METHOD[s.method] || s.method} · active {timeAgo(s.lastSeenAt)}
+                  Signed in {formatDate(s.createdAt, true)} with {METHOD[s.method] || s.method} · active {timeAgo(s.lastSeenAt)}
                 </div>
               </div>
               {!s.current && (

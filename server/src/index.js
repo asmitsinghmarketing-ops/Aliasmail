@@ -25,7 +25,10 @@ const lockFile = path.join(path.dirname(config.dataFile), '.pid');
 
 const app = express();
 app.disable('x-powered-by');
-if (config.trustProxy) app.set('trust proxy', 1); // behind nginx / a load balancer: real client IPs and HTTPS
+// Real client IPs and HTTPS behind a proxy. TRUST_PROXY=true trusts one proxy hop of any kind.
+// Otherwise only a proxy on this same machine (GoDaddy's, Passenger, a local nginx) is trusted:
+// nobody outside can connect from loopback, so they can't forge X-Forwarded-For that way.
+app.set('trust proxy', config.trustProxy ? 1 : 'loopback');
 
 // Security headers. The CSP lets email HTML (shown in a sandboxed srcdoc frame, which inherits it)
 // load images and inline styles, but no scripts other than the app's own.
@@ -65,6 +68,8 @@ app.use((req, res, next) => {
     if (!req.path.startsWith('/api/avatars/')) res.set('Cache-Control', 'no-store');
   } else {
     res.set('Content-Security-Policy', CSP);
+    // Ask Chrome/Edge for the phone model and Windows version, shown in "Where you're signed in".
+    res.set('Accept-CH', 'Sec-CH-UA-Model, Sec-CH-UA-Platform-Version');
   }
   next();
 });
@@ -153,7 +158,7 @@ function checkDeployment() {
   }
   if (process.env.NODE_ENV === 'production') {
     if (!config.cookieSecure) warn('NODE_ENV=production but COOKIE_SECURE is not true. Serve over HTTPS and set COOKIE_SECURE=true.');
-    if (!config.trustProxy) warn('TRUST_PROXY is not true. Behind GoDaddy/cPanel (Apache) every visitor looks like 127.0.0.1, so one attacker can lock everyone out. Set TRUST_PROXY=true.');
+    if (!config.trustProxy) console.warn('[security] TRUST_PROXY is not set: client IPs are taken from a proxy on this machine only. If sign-in activity shows 127.0.0.1 or a private address for everyone, set TRUST_PROXY=true.');
   }
   if (config.forceHttps && !config.trustProxy) warn('FORCE_HTTPS=true without TRUST_PROXY=true can redirect forever behind a proxy.');
   if (config.admin.password && config.admin.password.length < 12) warn('ADMIN_PASSWORD is shorter than 12 characters. Use a long, unique password.');

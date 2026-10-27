@@ -20,7 +20,7 @@ test.before(async () => {
     env: {
       ...process.env, PORT: String(PORT), DATA_FILE: path.join(dir, 'db.json'), DATABASE_URL: '', NODE_ENV: 'test',
       JWT_SECRET: 'roles-test-secret', MAIL_USER: ADMIN.email, MAIL_PASSWORD: '', MAIL_BRIDGE_URL: '', MAIL_BRIDGE_TOKEN: '',
-      ADMIN_EMAIL: ADMIN.email, ADMIN_PASSWORD: ADMIN.password, MAIL_TRANSPORT: 'direct',
+      ADMIN_EMAIL: ADMIN.email, ADMIN_PASSWORD: ADMIN.password, MAIL_TRANSPORT: 'direct', IP_LOCATION: 'off',
     },
     stdio: 'ignore',
   });
@@ -95,6 +95,24 @@ test('group mailboxes are shared only through roles, and only for reading and se
 
   // The admin can open any group mailbox.
   assert.equal((await admin.call('GET', '/mail/messages', { mailbox: 'support@example.com' })).status, 200);
+});
+
+test('sign-in activity shows the real client IP behind a proxy on this machine', async () => {
+  const login = (extra) =>
+    fetch(`${BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail', ...extra },
+      body: JSON.stringify(ADMIN),
+    });
+  const sessionsFor = async (res) => {
+    const cookie = res.headers.get('set-cookie').split(';')[0];
+    const list = await (await fetch(`${BASE}/auth/sessions`, { headers: { Cookie: cookie } })).json();
+    return list.find((s) => s.current);
+  };
+  // GoDaddy's proxy connects from this machine and passes the visitor's address along.
+  assert.equal((await sessionsFor(await login({ 'X-Forwarded-For': '203.0.113.7' }))).ip, '203.0.113.7');
+  // Without a proxy header: plain IPv4, not "::ffff:127.0.0.1".
+  assert.equal((await sessionsFor(await login())).ip, '127.0.0.1');
 });
 
 test('turning a personal mailbox into a group mailbox ends its sign-in', async () => {

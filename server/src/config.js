@@ -122,6 +122,8 @@ const config = {
   cookieSecure: bool('COOKIE_SECURE', false),
   trustProxy: bool('TRUST_PROXY', false),
   forceHttps: bool('FORCE_HTTPS', false),
+  // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.
+  ipLocation: env('IP_LOCATION', 'on').toLowerCase() !== 'off',
   dataFile,
   // mysql://user:pass@host:3306/db or postgres://user:pass@host:5432/db. Unset: use dataFile.
   databaseUrl,

@@ -164,11 +164,42 @@ export const cookieOptions = (req, maxAge) => ({
   maxAge,
 });
 
-export const clientIp = (req) => req.ip || req.socket?.remoteAddress || '';
+// "::ffff:203.0.113.7" is an IPv4 address written the IPv6 way; show it as "203.0.113.7".
+export const clientIp = (req) => String(req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/, '');
 
-/** "Chrome on Windows" from a user-agent string. */
-export function describeAgent(ua = '') {
-  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
-  const os = /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android' : /iPhone|iPad|iOS/.test(ua) ? 'iOS' : /Mac OS X|Macintosh/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'unknown device';
-  return `${browser} on ${os}`;
+const hint = (req, name) => String(req.headers?.[name] ?? '').replace(/^"|"$/g, '').trim();
+
+/**
+ * The device and browser behind a request, e.g. { label: 'Android phone (Samsung SM-S911B) · Chrome',
+ * kind: 'phone' }. Chrome and Edge add the phone model and Windows version through client hints
+ * (the app asks for them with Accept-CH); Safari and iPhones never reveal the exact model.
+ */
+export function describeDevice(req) {
+  const ua = String(req.headers?.['user-agent'] || '');
+  const browser = /Edg[A-Z]?\//.test(ua) ? 'Edge' : /SamsungBrowser\//.test(ua) ? 'Samsung Internet' : /OPR\/|Opera/.test(ua) ? 'Opera'
+    : /Firefox\/|FxiOS/.test(ua) ? 'Firefox' : /Chrome\/|CriOS/.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+
+  // Reduced user agents say "Android 10; K"; a real model comes from the hint or older UAs.
+  let model = hint(req, 'sec-ch-ua-model') || (ua.match(/Android [\d.]+; ([^;)]+?)(?: Build\/[^;)]*)?\)/)?.[1] ?? '');
+  if (model === 'K' || /^(wv|Linux|Mobile)$/i.test(model)) model = '';
+  if (/^SM-/i.test(model)) model = `Samsung ${model}`;
+
+  let kind = 'computer';
+  let device;
+  if (/iPad/.test(ua) || (/Macintosh/.test(ua) && hint(req, 'sec-ch-ua-mobile') === '?1')) [kind, device] = ['tablet', 'iPad'];
+  else if (/iPhone|iPod/.test(ua)) [kind, device] = ['phone', 'iPhone'];
+  else if (/Android/.test(ua)) {
+    kind = /Mobile/.test(ua) || hint(req, 'sec-ch-ua-mobile') === '?1' ? 'phone' : 'tablet';
+    device = `Android ${kind}${model ? ` (${model})` : ''}`;
+  } else if (/Windows/.test(ua)) {
+    // Windows 11 reports platform version 13 or higher; the user agent says "10" for both.
+    const major = Number(hint(req, 'sec-ch-ua-platform-version').split('.')[0]);
+    device = `Windows${major >= 13 ? ' 11' : major > 0 ? ' 10' : ''} computer`;
+  } else if (/CrOS/.test(ua)) device = 'Chromebook';
+  else if (/Mac OS X|Macintosh/.test(ua)) device = 'Mac';
+  else if (/Linux/.test(ua)) device = 'Linux computer';
+  else device = 'Unknown device';
+  return { label: `${device} · ${browser}`, kind };
 }
+
+export const describeAgent = (ua = '') => describeDevice({ headers: { 'user-agent': ua } }).label;

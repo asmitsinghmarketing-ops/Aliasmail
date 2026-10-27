@@ -352,6 +352,7 @@ function ActivityLog() {
                 </td>
                 <td>
                   {e.ip}
+                  {e.location && <div className="small">{e.location}</div>}
                   <div className="muted small">{e.agent}</div>
                 </td>
               </tr>

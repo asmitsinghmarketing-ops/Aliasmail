@@ -344,7 +344,7 @@ router.post('/mfa/forget-devices', requireAuth(), (req, res) => {
 
 router.get('/sessions', requireAuth(), (req, res) => {
   const list = sessionsOf(req.user.role, req.user.email)
-    .map(({ id, agent, ip, createdAt, lastSeenAt, method }) => ({ id, agent, ip, createdAt, lastSeenAt, method, current: id === req.session.id }))
+    .map(({ id, agent, kind, ip, location, createdAt, lastSeenAt, method }) => ({ id, agent, kind, ip, location, createdAt, lastSeenAt, method, current: id === req.session.id }))
     .sort((a, b) => (a.current ? -1 : b.current ? 1 : a.lastSeenAt < b.lastSeenAt ? 1 : -1));
   res.json(list);
 });

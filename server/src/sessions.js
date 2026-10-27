@@ -5,7 +5,8 @@ import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import config from './config.js';
 import { db, save } from './store.js';
-import { clientIp, cookieOptions, describeAgent, randomToken, readCookie, sha256 } from './security.js';
+import { clientIp, cookieOptions, describeDevice, randomToken, readCookie, sha256 } from './security.js';
+import { locate } from './geo.js';
 
 export const SESSION_COOKIE = 'am_session';
 const DAY = 24 * 3600e3;
@@ -19,9 +20,21 @@ function prune() {
 }
 
 /** Start a session for a fully verified sign-in and set its cookie. */
+/** Fill in the session's approximate location in the background; sign-in never waits for it. */
+function locateSession(session) {
+  const ip = session.ip;
+  void locate(ip).then((location) => {
+    if (location && session.ip === ip) {
+      session.location = location;
+      save();
+    }
+  });
+}
+
 export function startSession(req, res, { role, email, method }) {
   prune();
   const now = new Date();
+  const device = describeDevice(req);
   const session = {
     id: crypto.randomUUID(),
     account: accountKey(role, email),
@@ -32,10 +45,13 @@ export function startSession(req, res, { role, email, method }) {
     lastSeenAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + config.sessionDays * DAY).toISOString(),
     ip: clientIp(req),
-    agent: describeAgent(req.headers['user-agent']),
+    agent: device.label,
+    kind: device.kind,
+    location: null,
   };
   db().sessions.push(session);
   save();
+  locateSession(session);
   const token = jwt.sign({ sid: session.id }, config.jwtSecret, { expiresIn: `${config.sessionDays}d`, algorithm: 'HS256' });
   res.cookie(SESSION_COOKIE, token, cookieOptions(req, config.sessionDays * DAY));
   return session;
@@ -61,7 +77,18 @@ export function currentSession(req) {
   }
   if (now - Date.parse(session.lastSeenAt) > 60e3) {
     session.lastSeenAt = new Date(now).toISOString();
-    session.ip = clientIp(req);
+    // Same browser; refreshed so older sign-ins pick up the device model once hints arrive.
+    const device = describeDevice(req);
+    session.agent = device.label;
+    session.kind = device.kind;
+    const ip = clientIp(req);
+    // A phone moving from Wi-Fi to mobile data gets a new IP, and maybe a new location.
+    if (ip !== session.ip || (!session.location && !session.locatedAt)) {
+      session.ip = ip;
+      session.location = null;
+      session.locatedAt = new Date(now).toISOString();
+      locateSession(session);
+    }
     save();
   }
   return session;
@@ -92,7 +119,7 @@ export function trustDevice(req, res, role, email) {
     id: crypto.randomUUID(),
     account: accountKey(role, email),
     tokenHash: sha256(token),
-    agent: describeAgent(req.headers['user-agent']),
+    agent: describeDevice(req).label,
     createdAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + ttl).toISOString(),
   });

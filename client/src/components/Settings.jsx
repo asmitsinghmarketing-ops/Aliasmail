@@ -189,7 +189,8 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
                 onClick={(e) => {
                   // On a phone, suggest a private tab so it doesn't mix with a Google account
                   // already signed in there. A website can't open a private tab itself.
-                  if (window.matchMedia('(max-width: 800px)').matches) {
+                  // Touch screens too: a phone in landscape or in "Desktop site" mode is wider than 800px.
+                  if (window.matchMedia('(max-width: 800px), (pointer: coarse)').matches) {
                     e.preventDefault();
                     setPrivateHelp(true);
                   }

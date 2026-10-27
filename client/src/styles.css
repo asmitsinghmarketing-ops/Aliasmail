@@ -1321,3 +1321,21 @@ a.btn { color: inherit; text-decoration: none; }
 .private-steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; line-height: 1.5; color: var(--text); }
 .private-help input[type='text'] { font-size: 14px; color: var(--muted); }
 .private-help .dialog-actions .btn { text-decoration: none; }
+
+/* "A new version is ready" after a deployment */
+.update-notice {
+  position: fixed; z-index: 70; left: 50%; bottom: 24px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 16px; max-width: calc(100vw - 24px); padding: 10px 10px 10px 20px;
+  border-radius: 14px; background: #2b2825; color: #fff; box-shadow: 0 6px 24px rgb(0 0 0 / 25%);
+  animation: toast-in 0.26s var(--ease-out);
+}
+.update-notice .btn { padding: 7px 16px; }
+@media (max-width: 800px) {
+  .update-notice { left: 12px; right: 12px; transform: none; justify-content: space-between; bottom: calc(80px + env(safe-area-inset-bottom)); }
+}
+
+/* "Where you're signed in": device icon, name, location */
+.session-list li { align-items: flex-start; }
+.device-icon { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--hover); color: #444746; }
+.device-text { display: grid; gap: 2px; min-width: 0; }
+.device-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
