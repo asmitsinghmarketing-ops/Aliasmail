@@ -131,6 +131,12 @@ const config = {
     clientSecret: env('GOOGLE_CLIENT_SECRET'),
     authUrl: env('GOOGLE_AUTH_URL', 'https://accounts.google.com/o/oauth2/v2/auth'),
     tokenUrl: env('GOOGLE_TOKEN_URL', 'https://oauth2.googleapis.com/token'),
+    revokeUrl: env('GOOGLE_REVOKE_URL', 'https://oauth2.googleapis.com/revoke'),
+    // Google Drive (Insert from Drive): a browser API key restricted to this site, and the
+    // Cloud project number, both used by Google's file picker. Unset = Drive is hidden.
+    apiKey: env('GOOGLE_API_KEY'),
+    appId: env('GOOGLE_PROJECT_NUMBER'),
+    driveApiUrl: env('GOOGLE_DRIVE_API_URL', 'https://www.googleapis.com/drive/v3'),
   },
   appUrl: env('APP_URL').replace(/\/$/, ''),
   // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.

@@ -17,7 +17,8 @@ import { requireAuth, safeEqual } from '../auth.js';
 import { avatarUrl } from '../avatars.js';
 import { HttpError } from '../errors.js';
 import { clientIp, cookieOptions, hashBackupCode, limiter, newBackupCodes, newTotpSecret, otpauthUrl, readCookie, seal, unseal, verifyTotp } from '../security.js';
-import { authorizationUrl, exchangeCode, googleEnabled, newAttempt } from '../google-auth.js';
+import { DRIVE_SCOPE, authorizationUrl, driveEnabled, exchangeCode, googleEnabled, newAttempt, revokeToken } from '../google-auth.js';
+import { driveAccess } from '../google-drive.js';
 import {
   SESSION_COOKIE,
   currentSession,
@@ -168,7 +169,7 @@ function finishSignIn(req, res, account, method) {
 /* ---------------------------------- sign in ---------------------------------- */
 
 // Public: lets the sign-in page show "Use your @domain account". Reveals only the domain.
-router.get('/info', (req, res) => res.json({ domain: config.mailbox.split('@')[1] || '', google: googleEnabled() }));
+router.get('/info', (req, res) => res.json({ domain: config.mailbox.split('@')[1] || '', google: googleEnabled(), drive: driveEnabled() }));
 
 router.post('/login', async (req, res) => {
   const email = normalize(req.body?.email).slice(0, 254);
@@ -245,11 +246,14 @@ function accountForGoogle(sub) {
 const redirectUriFor = (req) => `${config.appUrl || `${req.protocol}://${req.get('host')}`}/api/auth/google/callback`;
 const backTo = (res, outcome) => res.redirect(303, `/?google=${outcome}`);
 
+// mode=drive connects Google Drive (files picked with AliasMail only) for the signed-in account,
+// connecting the Google account too if it isn't yet.
 router.get('/google/start', (req, res) => {
   if (!googleEnabled()) throw new HttpError(404, 'Google sign-in is not set up');
-  const mode = req.query.mode === 'link' ? 'link' : 'login';
-  const session = mode === 'link' ? currentSession(req) : null;
-  if (mode === 'link' && !session) return backTo(res, 'signin-first');
+  const mode = ['link', 'drive'].includes(req.query.mode) ? req.query.mode : 'login';
+  if (mode === 'drive' && !driveEnabled()) throw new HttpError(404, 'Google Drive is not set up');
+  const session = mode === 'login' ? null : currentSession(req);
+  if (mode !== 'login' && !session) return backTo(res, 'signin-first');
   const attempt = newAttempt();
   const redirectUri = redirectUriFor(req);
   const pending = jwt.sign(
@@ -257,8 +261,9 @@ router.get('/google/start', (req, res) => {
     config.jwtSecret,
     { expiresIn: '10m', algorithm: 'HS256' },
   );
+  const loginHint = session ? holderOf(session.role, session.email)?.google?.email || '' : '';
   res.cookie(GOOGLE_COOKIE, pending, googleCookie(req, 10 * 60e3));
-  res.redirect(303, authorizationUrl({ ...attempt, redirectUri }));
+  res.redirect(303, authorizationUrl({ ...attempt, redirectUri, drive: mode === 'drive', loginHint }));
 });
 
 router.get('/google/callback', async (req, res) => {
@@ -280,7 +285,7 @@ router.get('/google/callback', async (req, res) => {
     return backTo(res, 'error');
   }
 
-  if (pending.mode === 'link') {
+  if (pending.mode === 'link' || pending.mode === 'drive') {
     const session = db().sessions.find((s) => s.id === pending.sid && Date.parse(s.expiresAt) > Date.now());
     if (!session) return backTo(res, 'signin-first');
     const other = accountForGoogle(google.sub);
@@ -290,10 +295,22 @@ router.get('/google/callback', async (req, res) => {
     }
     const holder = holderOf(session.role, session.email);
     if (!holder) return backTo(res, 'error');
-    holder.google = { sub: google.sub, email: google.email, name: google.name, linkedAt: new Date().toISOString() };
+    const same = holder.google?.sub === google.sub;
+    if (pending.mode === 'drive' && holder.google && !same) return backTo(res, 'drive-other-account');
+    if (pending.mode === 'drive' && (!google.refreshToken || !google.scope.split(' ').includes(DRIVE_SCOPE))) return backTo(res, 'drive-denied');
+
+    const previousDrive = same ? holder.google.drive : null;
+    holder.google = {
+      sub: google.sub, email: google.email, name: google.name,
+      linkedAt: same ? holder.google.linkedAt : new Date().toISOString(),
+      ...(pending.mode === 'drive'
+        ? { drive: { refresh: seal(google.refreshToken), connectedAt: new Date().toISOString() } }
+        : previousDrive && { drive: previousDrive }),
+    };
+    driveAccess.delete(`${session.role}:${session.email}`);
     save();
-    audit(req, 'google-connected', session.email, google.email);
-    return backTo(res, 'linked');
+    audit(req, pending.mode === 'drive' ? 'google-drive-connected' : 'google-connected', session.email, google.email);
+    return backTo(res, pending.mode === 'drive' ? 'drive-linked' : 'linked');
   }
 
   const found = accountForGoogle(google.sub);
@@ -334,12 +351,35 @@ router.post('/google/finish', (req, res) => {
   finishSignIn(req, res, account, 'google');
 });
 
+/** Stop AliasMail's Drive access: tell Google to forget the token, then drop it. */
+function dropDrive(req, holder) {
+  if (!holder?.google?.drive) return;
+  try {
+    void revokeToken(unseal(holder.google.drive.refresh));
+  } catch {
+    /* unreadable token: nothing to revoke */
+  }
+  delete holder.google.drive;
+  driveAccess.delete(`${req.user.role}:${req.user.email}`);
+}
+
 router.post('/google/disconnect', requireAuth(), (req, res) => {
   const holder = holderOf(req.user.role, req.user.email);
   if (holder?.google) {
     audit(req, 'google-disconnected', req.user.email, holder.google.email);
+    dropDrive(req, holder);
     delete holder.google;
     save();
+  }
+  res.json({ ok: true });
+});
+
+router.post('/google/drive/disconnect', requireAuth(), (req, res) => {
+  const holder = holderOf(req.user.role, req.user.email);
+  if (holder?.google?.drive) {
+    dropDrive(req, holder);
+    save();
+    audit(req, 'google-drive-disconnected', req.user.email);
   }
   res.json({ ok: true });
 });
@@ -422,7 +462,10 @@ router.get('/mfa', requireAuth(), (req, res) => {
     trustedDevices: trustedDevicesOf(role, email).map(({ id, agent, createdAt, expiresAt }) => ({ id, agent, createdAt, expiresAt })),
     thisDeviceTrusted: isTrustedDevice(req, role, email),
     googleEnabled: googleEnabled(),
-    google: holder?.google ? { email: holder.google.email, name: holder.google.name, linkedAt: holder.google.linkedAt } : null,
+    driveEnabled: driveEnabled(),
+    google: holder?.google
+      ? { email: holder.google.email, name: holder.google.name, linkedAt: holder.google.linkedAt, drive: Boolean(holder.google.drive), driveConnectedAt: holder.google.drive?.connectedAt || null }
+      : null,
   });
 });
 

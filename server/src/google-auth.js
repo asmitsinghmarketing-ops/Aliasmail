@@ -22,23 +22,75 @@ export function newAttempt() {
   };
 }
 
-export function authorizationUrl({ state, nonce, challenge, redirectUri }) {
+// Drive access is limited to files the person picks with this app (non-sensitive scope, no review).
+export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+export const driveEnabled = () => googleEnabled() && Boolean(config.google.apiKey && config.google.appId);
+
+/** `drive: true` also asks for Drive (picked files only) and a refresh token to use it later. */
+export function authorizationUrl({ state, nonce, challenge, redirectUri, drive = false, loginHint = '' }) {
   const url = new URL(config.google.authUrl);
   url.search = new URLSearchParams({
     response_type: 'code',
     client_id: config.google.clientId,
     redirect_uri: redirectUri,
-    scope: 'openid email profile',
+    scope: drive ? `openid email profile ${DRIVE_SCOPE}` : 'openid email profile',
     state,
     nonce,
     code_challenge: challenge,
     code_challenge_method: 'S256',
-    prompt: 'select_account',
+    ...(drive
+      ? { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', ...(loginHint && { login_hint: loginHint }) }
+      : { prompt: 'select_account' }),
   });
   return url.toString();
 }
 
-/** Trade the code for the ID token and return its checked claims: { sub, email, name }. */
+async function tokenRequest(params, fetcher) {
+  const res = await fetcher(config.google.tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: new URLSearchParams({ ...params, client_id: config.google.clientId, client_secret: config.google.clientSecret }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+/** A fresh access token from a stored refresh token: { accessToken, expiresAt }. */
+export async function refreshAccess(refreshToken, fetcher = (...args) => fetch(...args)) {
+  const { ok, status, data } = await tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken }, fetcher);
+  if (!ok || !data.access_token) {
+    const error = new HttpError(data.error === 'invalid_grant' ? 409 : 502, data.error === 'invalid_grant' ? 'Google Drive access was removed. Connect Drive again in Settings → Security.' : `Google Drive is unavailable (${data.error || status})`);
+    error.revoked = data.error === 'invalid_grant';
+    throw error;
+  }
+  return { accessToken: data.access_token, expiresAt: Date.now() + (Number(data.expires_in) || 3600) * 1000 };
+}
+
+/** Ask Google to forget a refresh token (best effort). */
+export async function revokeToken(token, fetcher = (...args) => fetch(...args)) {
+  await fetcher(`${config.google.revokeUrl}?token=${encodeURIComponent(token)}`, { method: 'POST', signal: AbortSignal.timeout(5000) }).catch(() => {});
+}
+
+/** Share a Drive file with someone; quiet (Google sends no email of its own). */
+export async function shareDriveFile(accessToken, fileId, email, role, fetcher = (...args) => fetch(...args)) {
+  const url = `${config.google.driveApiUrl}/files/${encodeURIComponent(fileId)}/permissions?sendNotificationEmail=false&supportsAllDrives=true`;
+  const res = await fetcher(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'user', role, emailAddress: email }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error?.message || `Drive answered ${res.status}`);
+  }
+}
+
+/**
+ * Trade the code for the ID token and return its checked claims: { sub, email, name }, plus
+ * `refreshToken` and `scope` when Drive was asked for.
+ */
 export async function exchangeCode({ code, verifier, redirectUri, nonce }, fetcher = (...args) => fetch(...args)) {
   const res = await fetcher(config.google.tokenUrl, {
     method: 'POST',
@@ -55,7 +107,7 @@ export async function exchangeCode({ code, verifier, redirectUri, nonce }, fetch
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.id_token) throw new HttpError(502, `Google sign-in failed: ${data.error_description || data.error || res.status}`);
-  return checkIdToken(data.id_token, nonce);
+  return { ...checkIdToken(data.id_token, nonce), refreshToken: data.refresh_token || '', scope: String(data.scope || '') };
 }
 
 export function checkIdToken(idToken, nonce) {

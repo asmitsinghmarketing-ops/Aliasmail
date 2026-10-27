@@ -8,6 +8,7 @@ import { liveSync } from './live-sync.js';
 import { runScheduled } from './outbox.js';
 import { readAvatar } from './avatars.js';
 import { HttpError } from './errors.js';
+import { driveEnabled } from './google-auth.js';
 import authRoutes from './routes/auth.js';
 import mailRoutes from './routes/mail.js';
 import adminRoutes from './routes/admin.js';
@@ -33,14 +34,18 @@ app.set('trust proxy', config.trustProxy ? 1 : 'loopback');
 
 // Security headers. The CSP lets email HTML (shown in a sandboxed srcdoc frame, which inherits it)
 // load images and inline styles, but no scripts other than the app's own.
+// Google's Drive file picker (Insert from Drive) needs its loader script and its frames; only
+// allowed when Drive is set up. Email bodies stay sandboxed without scripts either way.
+const PICKER = driveEnabled() ? ' https://apis.google.com' : '';
+const PICKER_FRAMES = driveEnabled() ? ' https://docs.google.com https://drive.google.com https://content.googleapis.com' : '';
 const CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  `script-src 'self'${PICKER}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https: http:",
   "font-src 'self' data: https:",
-  "connect-src 'self'",
-  "frame-src 'self' about:",
+  `connect-src 'self'${PICKER}`,
+  `frame-src 'self' about:${PICKER_FRAMES}`,
   "frame-ancestors 'none'",
   "form-action 'self'",
   "base-uri 'self'",

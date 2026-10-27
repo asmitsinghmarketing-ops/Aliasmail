@@ -10,6 +10,9 @@ import { cacheOf, deleteFromServer, fetchParsed, prefetch, syncInbox, testConnec
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
 import { liveSync } from '../live-sync.js';
+import { revokeToken } from '../google-auth.js';
+import { driveAccess } from '../google-drive.js';
+import { unseal } from '../security.js';
 
 const router = Router();
 router.use(requireAuth('admin'));
@@ -99,6 +102,14 @@ router.patch('/aliases/:id', async (req, res) => {
   // A new password from the admin is a lock-out: the old Google sign-in goes too.
   if (req.body?.password && alias.google) {
     audit(req, 'google-disconnected', alias.address, `by ${req.user.email} (new password)`);
+    if (alias.google.drive) {
+      try {
+        void revokeToken(unseal(alias.google.drive.refresh));
+      } catch {
+        /* unreadable token: nothing to revoke */
+      }
+      driveAccess.delete(`user:${alias.address}`);
+    }
     delete alias.google;
     save();
   }

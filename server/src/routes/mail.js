@@ -21,6 +21,8 @@ import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList }
 import { HttpError, describeError } from '../errors.js';
 import { announceChange, mailEvents } from '../mail-events.js';
 import { liveSync, noteActivity } from '../live-sync.js';
+import { driveEnabled } from '../google-auth.js';
+import { driveTokenFor, readDriveRequest, shareWithRecipients } from '../google-drive.js';
 
 const router = Router();
 
@@ -614,11 +616,15 @@ router.post('/send', async (req, res) => {
   const removeDraft = () => {
     if (body.draftId) db().drafts = db().drafts.filter((d) => !(d.id === body.draftId && d.alias === me));
   };
+  // Drive files picked in Compose are shared from the sender's own Drive (not the mailbox's)
+  // once the message has actually gone out.
+  const drive = readDriveRequest(body.drive);
+  const driveFrom = drive && { ...drive, by: { role: req.user.role, email: req.user.email } };
 
   if (body.sendAt) {
     const sendAt = Date.parse(body.sendAt);
     if (!sendAt || sendAt <= Date.now()) throw new HttpError(400, 'Pick a time in the future');
-    const item = { id: crypto.randomUUID(), alias: me, sendAt: new Date(sendAt).toISOString(), createdAt: new Date().toISOString(), mail };
+    const item = { id: crypto.randomUUID(), alias: me, sendAt: new Date(sendAt).toISOString(), createdAt: new Date().toISOString(), mail, ...(driveFrom && { drive: driveFrom }) };
     db().scheduled.push(item);
     removeDraft();
     save();
@@ -636,7 +642,17 @@ router.post('/send', async (req, res) => {
   }
   removeDraft();
   save();
-  res.status(201).json({ ok: true });
+  const shared = driveFrom ? await shareWithRecipients(driveFrom.by.role, driveFrom.by.email, driveFrom, [...to, ...cc, ...bcc]) : null;
+  res.status(201).json({ ok: true, ...(shared && { drive: shared }) });
+});
+
+/* ---------------------------------- Google Drive ---------------------------------- */
+
+/** A short-lived token for Google's file picker, for the signed-in person's own Drive. */
+router.post('/drive/token', async (req, res) => {
+  if (!driveEnabled()) throw new HttpError(404, 'Google Drive is not set up');
+  const { accessToken, expiresAt } = await driveTokenFor(req.user.role, req.user.email);
+  res.json({ accessToken, expiresAt, apiKey: config.google.apiKey, appId: config.google.appId });
 });
 
 /* ---------------------------------- settings ---------------------------------- */

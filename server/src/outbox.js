@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { db, save } from './store.js';
 import { accountOf } from './aliases.js';
 import { sendMail } from './mailbox.js';
+import { shareWithRecipients } from './google-drive.js';
 
 const asAddresses = (list) => list.map((address) => ({ name: '', address }));
 
@@ -45,6 +46,10 @@ export async function runScheduled() {
       try {
         await deliver(item.alias, item.mail);
         db().scheduled = db().scheduled.filter((s) => s.id !== item.id);
+        if (item.drive) {
+          const { mail, drive } = item;
+          void shareWithRecipients(drive.by.role, drive.by.email, drive, [...mail.to, ...mail.cc, ...mail.bcc]);
+        }
       } catch (err) {
         item.attempts = (item.attempts || 0) + 1;
         item.error = err.message;

@@ -5,6 +5,7 @@ import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { Popover, TimeMenu, scheduleOptions } from './Menus.jsx';
 import RichEditor, { htmlFromText, sanitizeHtml } from './RichEditor.jsx';
+import { pickDriveFiles } from '../drivePicker.js';
 
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
@@ -29,12 +30,24 @@ const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `d${Date.now()}${
 // The removal waits a tick so React's development double-mount doesn't undo its own entry.
 let pendingHistoryBack = null;
 
-/** The ⋮ menu of the phone compose screen: schedule send, or discard. */
-function MoreMenu({ close, onSchedule, onDiscard }) {
+/** The ⋮ menu of the phone compose screen: Drive, schedule send, or discard. */
+function MoreMenu({ close, onSchedule, onDiscard, onDrive }) {
   const [scheduling, setScheduling] = useState(false);
   if (scheduling) return <TimeMenu title="Schedule send" options={scheduleOptions()} close={close} onPick={onSchedule} />;
   return (
     <div className="menu">
+      {onDrive && (
+        <button
+          type="button"
+          className="menu-item check-item"
+          onClick={() => {
+            close();
+            onDrive();
+          }}
+        >
+          <Icon name="drive" size={20} /> Insert from Drive
+        </button>
+      )}
       <button type="button" className="menu-item check-item" onClick={() => setScheduling(true)}>
         <Icon name="scheduleSend" size={20} /> Schedule send
       </button>
@@ -52,12 +65,22 @@ function MoreMenu({ close, onSchedule, onDiscard }) {
   );
 }
 
+// What recipients get on the Drive files in an email (shared when it is sent).
+const DRIVE_ACCESS = [
+  ['view', 'Recipients can view'],
+  ['comment', 'Recipients can comment'],
+  ['edit', 'Recipients can edit'],
+  ['none', 'Don’t change sharing'],
+];
+
 /**
  * Compose window. Sending is handed to `onSend(payload)` so the mailbox can offer "Undo send";
  * `payload.sendAt` is set for a scheduled send. `draft.unsaved` marks content (e.g. an undone
- * send) that must be kept as a draft on close even if untouched.
+ * send) that must be kept as a draft on close even if untouched. `payload.drive` lists Drive
+ * files to share with the recipients.
  */
-export default function Compose({ from, draft, onClose, onSend }) {
+
+export default function Compose({ from, draft, onClose, onSend, driveOn = false }) {
   const initial = {
     to: draft.to || '', cc: draft.cc || '', bcc: draft.bcc || '', subject: draft.subject || '', text: draft.text || '',
     html: draft.html || htmlFromText(draft.text || ''),
@@ -72,6 +95,10 @@ export default function Compose({ from, draft, onClose, onSend }) {
   const saveTimer = useRef(null);
   const sending = useRef(false);
   const [files, setFiles] = useState(draft.files || []);
+  // Drive files picked with Google's picker: linked in the message and shared with recipients on send.
+  const [driveFiles, setDriveFiles] = useState(draft.driveFiles || []);
+  const [driveAccess, setDriveAccess] = useState(draft.driveAccess || 'view');
+  const [drivePicking, setDrivePicking] = useState(false);
   // Phones get a full-screen compose screen like the Gmail app; larger screens a floating window.
   const [phone] = useState(() => window.matchMedia('(max-width: 800px)').matches);
   const [mode, setMode] = useState('normal'); // normal | min | full
@@ -134,7 +161,7 @@ export default function Compose({ from, draft, onClose, onSend }) {
     />
   );
   const textChanged = Boolean(draft.unsaved) || Object.keys(initial).some((k) => form[k] !== initial[k]);
-  const changed = files.length > 0 || textChanged;
+  const changed = files.length > 0 || driveFiles.length > 0 || textChanged;
 
   async function saveDraft() {
     clearTimeout(saveTimer.current);
@@ -168,11 +195,42 @@ export default function Compose({ from, draft, onClose, onSend }) {
     }
   }
 
+  // Insert from Drive: Google's picker on the person's own Drive. The first time, Drive has to be
+  // connected (a Google screen), so the draft is saved before leaving the page.
+  async function insertFromDrive() {
+    if (drivePicking) return;
+    setError('');
+    let access;
+    try {
+      access = await api('/mail/drive/token', { method: 'POST' });
+    } catch (err) {
+      if (err.status !== 409) return setError(err.message);
+      const go = await ask({
+        title: 'Connect Google Drive?',
+        message: 'To insert Drive files, connect your Google Drive once. Your draft is saved first; open it again from Drafts afterwards.',
+        confirmLabel: 'Connect Drive',
+      });
+      if (!go) return;
+      await saveDraft();
+      window.location.href = '/api/auth/google/start?mode=drive';
+      return;
+    }
+    setDrivePicking(true);
+    try {
+      const picked = await pickDriveFiles(access);
+      setDriveFiles((current) => [...current, ...picked.filter((f) => !current.some((c) => c.id === f.id))]);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDrivePicking(false);
+    }
+  }
+
   // Closing keeps the draft (like Gmail); the trash button throws it away.
   async function close() {
     if (textChanged) {
       await saveDraft();
-      onClose(files.length ? 'Draft saved (attachments are not kept in drafts).' : 'Draft saved.');
+      onClose(files.length || driveFiles.length ? 'Draft saved (attachments and Drive files are not kept in drafts).' : 'Draft saved.');
     } else {
       onClose();
     }
@@ -223,6 +281,8 @@ export default function Compose({ from, draft, onClose, onSend }) {
 
     clearTimeout(saveTimer.current);
     sending.current = true;
+    // The Drive links are added to the body by the mailbox (see driveLinks) so an undone send
+    // reopens without them doubled.
     onSend({
       ...form,
       html: sanitizeHtml(form.html),
@@ -230,11 +290,14 @@ export default function Compose({ from, draft, onClose, onSend }) {
       inReplyTo: draft.inReplyTo || undefined,
       references: draft.references,
       files,
+      driveFiles,
+      driveAccess,
+      drive: driveFiles.length ? { files: driveFiles.map(({ id: fileId, name }) => ({ id: fileId, name })), access: driveAccess } : undefined,
       sendAt: sendAt?.toISOString(),
     });
   }
 
-  const attachments = files.length > 0 && (
+  const attachments = (files.length > 0 || driveFiles.length > 0) && (
     <div className="compose-files">
       {files.map((f, i) => (
         <span key={i} className="file-pill">
@@ -244,6 +307,26 @@ export default function Compose({ from, draft, onClose, onSend }) {
           </button>
         </span>
       ))}
+      {driveFiles.map((f) => (
+        <span key={f.id} className="file-pill drive-pill">
+          <Icon name="drive" size={16} />
+          <a href={f.url} target="_blank" rel="noreferrer">
+            {f.name}
+          </a>
+          <button type="button" onClick={() => setDriveFiles(driveFiles.filter((d) => d.id !== f.id))} aria-label={`Remove ${f.name}`}>
+            <Icon name="close" size={14} />
+          </button>
+        </span>
+      ))}
+      {driveFiles.length > 0 && (
+        <select className="drive-access" aria-label="Drive sharing" value={driveAccess} onChange={(e) => setDriveAccess(e.target.value)}>
+          {DRIVE_ACCESS.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 
@@ -263,7 +346,9 @@ export default function Compose({ from, draft, onClose, onSend }) {
             <Icon name="send" />
           </button>
           <Popover icon="moreVert" title="More options" align="right">
-            {(closeMenu) => <MoreMenu close={closeMenu} onSchedule={(date) => send(null, date)} onDiscard={discard} />}
+            {(closeMenu) => (
+              <MoreMenu close={closeMenu} onSchedule={(date) => send(null, date)} onDiscard={discard} onDrive={driveOn ? insertFromDrive : undefined} />
+            )}
           </Popover>
         </div>
 
@@ -420,6 +505,11 @@ export default function Compose({ from, draft, onClose, onSend }) {
               <Icon name="attach" />
               <input type="file" multiple hidden onChange={(e) => addFiles(e.target.files)} />
             </label>
+            {driveOn && (
+              <button type="button" className="icon-btn" title="Insert files using Drive" disabled={drivePicking} onClick={insertFromDrive}>
+                <Icon name="drive" />
+              </button>
+            )}
             <span className="muted small hide-sm save-state">{saveState || 'Ctrl+Enter to send'}</span>
             <button type="button" className="icon-btn push-right" title="Discard draft" onClick={discard}>
               <Icon name="trash" />

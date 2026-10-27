@@ -1349,3 +1349,9 @@ a.btn { color: inherit; text-decoration: none; }
 }
 .google-btn:hover { background: #f8f9fa; border-color: #c6c9cc; }
 .device-text .device-locate { justify-self: start; padding: 0; text-align: left; }
+
+/* ---------- Google Drive files in compose ---------- */
+.drive-pill a { color: inherit; text-decoration: none; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drive-pill a:hover { text-decoration: underline; }
+.drive-pill svg { color: #1a73e8; flex: none; }
+.drive-access { width: auto; flex: none; margin: 0; font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: inherit; }

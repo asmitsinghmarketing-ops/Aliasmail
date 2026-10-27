@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, cachedMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
+import { withDriveLinks } from '../drivePicker.js';
 import { ask } from './Dialog.jsx';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
@@ -302,6 +303,9 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       linked: 'Google account connected. You can now sign in with Google.',
       'in-use': 'That Google account is already connected to another AliasMail account.',
       cancelled: 'Connecting Google was cancelled.',
+      'drive-linked': 'Google Drive connected. Open your draft and choose Insert from Drive.',
+      'drive-denied': 'Drive wasn’t connected: allow access to the files you pick, then try again.',
+      'drive-other-account': 'Use the same Google account that is connected to AliasMail for Drive.',
     };
     if (outcome === 'continue' || outcome === 'not-linked') return;
     setSettingsTab('security');
@@ -309,8 +313,12 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     flash(said[outcome] || 'Couldn’t connect Google. Try again.', null, 8000);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [driveOn, setDriveOn] = useState(false);
   useEffect(() => {
     loadLabels();
+    api('/auth/info')
+      .then((info) => setDriveOn(Boolean(info.drive)))
+      .catch(() => {});
     api('/mail/people').then(setPeople).catch(() => {});
     api('/mail/settings')
       .then((s) => setSignature(s.signature))
@@ -620,8 +628,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   function handleSend(payload) {
     setDraft(null);
-    const body = { ...payload, attachments: payload.files.map(({ size, ...f }) => f) };
-    delete body.files;
+    const { files, driveFiles, driveAccess, ...rest } = payload;
+    const body = { ...rest, ...withDriveLinks(payload, driveFiles), attachments: files.map(({ size, ...f }) => f) };
+    // Sharing Drive files with the recipients happens after sending; say if any couldn't be shared.
+    const sharedNote = (result) => {
+      const failed = result?.drive?.failed || [];
+      if (failed.length) flash(`Sent, but ${failed.length === 1 ? `“${failed[0]}” couldn’t be shared` : `${failed.length} Drive files couldn’t be shared`}. Share it from Google Drive.`, null, 12000);
+    };
 
     if (payload.sendAt) {
       api('/mail/send', { method: 'POST', body })
@@ -643,7 +656,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     const timer = setTimeout(async () => {
       if (cancelled) return;
       try {
-        await api('/mail/send', { method: 'POST', body });
+        sharedNote(await api('/mail/send', { method: 'POST', body }));
         load();
       } catch (err) {
         flash(`Couldn’t send “${payload.subject || '(no subject)'}”: ${err.message.replace(/[.\s]*$/, '.')} It’s open again so you can retry.`, null, 12000);
@@ -1302,6 +1315,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             load();
           }}
           onSend={handleSend}
+          driveOn={driveOn}
         />
       )}
 

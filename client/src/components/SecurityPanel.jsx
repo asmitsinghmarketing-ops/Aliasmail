@@ -265,6 +265,38 @@ export default function SecurityPanel({ account, owner }) {
               </a>
             )}
           </div>
+
+          {status.google && status.driveEnabled && (
+            <div className="sec-sub">
+              <div className="sec-sub-head">
+                <span>
+                  <strong>Google Drive</strong>
+                  <span className="muted small">
+                    {status.google.drive
+                      ? ` · connected ${formatDate(status.google.driveConnectedAt)}. Insert Drive files in Compose; they’re shared with the recipients when you send.`
+                      : ' · insert Drive files in your emails. AliasMail only sees the files you pick.'}
+                  </span>
+                </span>
+                {status.google.drive ? (
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={async () => {
+                      if (!(await ask({ title: 'Disconnect Google Drive?', message: 'Files you already shared stay shared. You can reconnect any time.', confirmLabel: 'Disconnect' }))) return;
+                      await api('/auth/google/drive/disconnect', { method: 'POST' });
+                      load();
+                    }}
+                  >
+                    Disconnect
+                  </button>
+                ) : (
+                  <a className="link" href="/api/auth/google/start?mode=drive">
+                    Connect Drive
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
         </section>
       )}
 
