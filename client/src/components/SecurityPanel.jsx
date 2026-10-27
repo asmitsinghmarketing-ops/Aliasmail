@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { formatDate, timeAgo } from '../format.js';
+import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { AuthenticatorSetup, BackupCodes, CodeField } from './TwoStep.jsx';
 
@@ -229,6 +230,43 @@ export default function SecurityPanel({ account, owner }) {
           </div>
         )}
       </section>
+
+      {/* ----- sign in with Google ----- */}
+      {status.googleEnabled && (
+        <section className="sec-card">
+          <div className="sec-head">
+            <span className={`sec-icon ${status.google ? 'on' : ''}`}><Icon name="people" size={22} /></span>
+            <div className="grow">
+              <h3>Sign in with Google</h3>
+              <p className="muted small">
+                {status.google
+                  ? <>Connected to <strong>{status.google.email || 'your Google account'}</strong> since {formatDate(status.google.linkedAt)}. You can sign in with Google instead of your password{status.enabled ? ' (2-Step Verification still applies)' : ''}.</>
+                  : 'Connect your Google account to sign in with it instead of typing your password. Only the Google account you connect here can sign in.'}
+              </p>
+            </div>
+            {status.google && <span className="pill on">On</span>}
+          </div>
+          <div className="sec-actions">
+            {status.google ? (
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={async () => {
+                  if (!(await ask({ title: 'Disconnect Google?', message: 'You’ll sign in with your password again. You can reconnect any time.', confirmLabel: 'Disconnect' }))) return;
+                  await api('/auth/google/disconnect', { method: 'POST' });
+                  load();
+                }}
+              >
+                Disconnect
+              </button>
+            ) : (
+              <a className="btn btn-outline" href="/api/auth/google/start?mode=link">
+                Connect Google account
+              </a>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* ----- signed-in devices ----- */}
       <section className="sec-card">

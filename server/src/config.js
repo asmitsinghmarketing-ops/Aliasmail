@@ -124,6 +124,15 @@ const config = {
   cookieSecure: bool('COOKIE_SECURE', false),
   trustProxy: bool('TRUST_PROXY', false),
   forceHttps: bool('FORCE_HTTPS', false),
+  // "Sign in with Google": an OAuth client from Google Cloud. Unset = the button is hidden.
+  // APP_URL (e.g. https://mail.example.com) builds the redirect URI; otherwise the request's own.
+  google: {
+    clientId: env('GOOGLE_CLIENT_ID'),
+    clientSecret: env('GOOGLE_CLIENT_SECRET'),
+    authUrl: env('GOOGLE_AUTH_URL', 'https://accounts.google.com/o/oauth2/v2/auth'),
+    tokenUrl: env('GOOGLE_TOKEN_URL', 'https://oauth2.googleapis.com/token'),
+  },
+  appUrl: env('APP_URL').replace(/\/$/, ''),
   // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.
   ipLocation: env('IP_LOCATION', 'on').toLowerCase() !== 'off',
   dataFile,

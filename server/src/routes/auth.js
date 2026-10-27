@@ -16,7 +16,8 @@ import { findAlias, normalize, sharedMailboxesFor, typeOf } from '../aliases.js'
 import { requireAuth, safeEqual } from '../auth.js';
 import { avatarUrl } from '../avatars.js';
 import { HttpError } from '../errors.js';
-import { clientIp, hashBackupCode, limiter, newBackupCodes, newTotpSecret, otpauthUrl, seal, unseal, verifyTotp } from '../security.js';
+import { clientIp, cookieOptions, hashBackupCode, limiter, newBackupCodes, newTotpSecret, otpauthUrl, readCookie, seal, unseal, verifyTotp } from '../security.js';
+import { authorizationUrl, exchangeCode, googleEnabled, newAttempt } from '../google-auth.js';
 import {
   SESSION_COOKIE,
   currentSession,
@@ -167,7 +168,7 @@ function finishSignIn(req, res, account, method) {
 /* ---------------------------------- sign in ---------------------------------- */
 
 // Public: lets the sign-in page show "Use your @domain account". Reveals only the domain.
-router.get('/info', (req, res) => res.json({ domain: config.mailbox.split('@')[1] || '' }));
+router.get('/info', (req, res) => res.json({ domain: config.mailbox.split('@')[1] || '', google: googleEnabled() }));
 
 router.post('/login', async (req, res) => {
   const email = normalize(req.body?.email).slice(0, 254);
@@ -217,6 +218,130 @@ router.post('/mfa/verify', (req, res) => {
     audit(req, 'device-trusted', account.email);
   }
   finishSignIn(req, res, account, method);
+});
+
+/* ---------------------------------- sign in with Google ---------------------------------- */
+//
+// /google/start?mode=link (signed in, Settings) connects a Google account to the account;
+// /google/start?mode=login signs in with a connected one. Only a Google account connected from
+// inside AliasMail can sign in: matching on the email address alone would let someone who left
+// keep signing in with a personal Google account that uses their old company address.
+//
+// After Google, the browser lands on the sign-in page, which POSTs /google/finish. That request
+// comes from this site, so it carries the strict session and trusted-device cookies, and 2-step
+// verification works exactly as after a password.
+
+const GOOGLE_COOKIE = 'am_google';
+const GOOGLE_RESULT_COOKIE = 'am_google_result';
+const googleCookie = (req, maxAge) => ({ ...cookieOptions(req, maxAge), sameSite: 'lax', path: '/api/auth/google' });
+
+/** Where a Google account is connected: { role, email, holder }, or null. */
+function accountForGoogle(sub) {
+  if (db().owner.google?.sub === sub && config.admin.email) return { role: 'admin', email: config.admin.email, holder: db().owner };
+  const alias = db().aliases.find((a) => a.google?.sub === sub);
+  return alias ? { role: 'user', email: alias.address, holder: alias } : null;
+}
+
+const redirectUriFor = (req) => `${config.appUrl || `${req.protocol}://${req.get('host')}`}/api/auth/google/callback`;
+const backTo = (res, outcome) => res.redirect(303, `/?google=${outcome}`);
+
+router.get('/google/start', (req, res) => {
+  if (!googleEnabled()) throw new HttpError(404, 'Google sign-in is not set up');
+  const mode = req.query.mode === 'link' ? 'link' : 'login';
+  const session = mode === 'link' ? currentSession(req) : null;
+  if (mode === 'link' && !session) return backTo(res, 'signin-first');
+  const attempt = newAttempt();
+  const redirectUri = redirectUriFor(req);
+  const pending = jwt.sign(
+    { purpose: 'google', mode, state: attempt.state, nonce: attempt.nonce, verifier: attempt.verifier, sid: session?.id || null, redirectUri },
+    config.jwtSecret,
+    { expiresIn: '10m', algorithm: 'HS256' },
+  );
+  res.cookie(GOOGLE_COOKIE, pending, googleCookie(req, 10 * 60e3));
+  res.redirect(303, authorizationUrl({ ...attempt, redirectUri }));
+});
+
+router.get('/google/callback', async (req, res) => {
+  res.clearCookie(GOOGLE_COOKIE, { path: '/api/auth/google' });
+  let pending;
+  try {
+    pending = jwt.verify(readCookie(req, GOOGLE_COOKIE) || '', config.jwtSecret, JWT_OPTIONS);
+  } catch {
+    return backTo(res, 'expired');
+  }
+  if (pending.purpose !== 'google' || !req.query.state || req.query.state !== pending.state) return backTo(res, 'error');
+  if (req.query.error) return backTo(res, 'cancelled');
+
+  let google;
+  try {
+    google = await exchangeCode({ code: String(req.query.code || ''), verifier: pending.verifier, redirectUri: pending.redirectUri, nonce: pending.nonce });
+  } catch (err) {
+    console.warn('[google] sign-in failed:', err.message);
+    return backTo(res, 'error');
+  }
+
+  if (pending.mode === 'link') {
+    const session = db().sessions.find((s) => s.id === pending.sid && Date.parse(s.expiresAt) > Date.now());
+    if (!session) return backTo(res, 'signin-first');
+    const other = accountForGoogle(google.sub);
+    if (other && !(other.role === session.role && other.email === session.email)) {
+      audit(req, 'google-link-refused', session.email, `already connected to ${other.email}`);
+      return backTo(res, 'in-use');
+    }
+    const holder = holderOf(session.role, session.email);
+    if (!holder) return backTo(res, 'error');
+    holder.google = { sub: google.sub, email: google.email, name: google.name, linkedAt: new Date().toISOString() };
+    save();
+    audit(req, 'google-connected', session.email, google.email);
+    return backTo(res, 'linked');
+  }
+
+  const found = accountForGoogle(google.sub);
+  if (!found) {
+    audit(req, 'sign-in-failed', google.email, 'Google account not connected');
+    return backTo(res, 'not-linked');
+  }
+  if (found.role === 'user' && (!found.holder.active || typeOf(found.holder) === 'group')) {
+    audit(req, 'sign-in-failed', found.email, 'alias disabled (Google)');
+    return backTo(res, 'disabled');
+  }
+  const result = jwt.sign({ purpose: 'google-result', role: found.role, email: found.email, jti: crypto.randomUUID() }, config.jwtSecret, { expiresIn: '5m', algorithm: 'HS256' });
+  res.cookie(GOOGLE_RESULT_COOKIE, result, googleCookie(req, 5 * 60e3));
+  backTo(res, 'continue');
+});
+
+/** Called by the sign-in page after Google: same answers as POST /login. */
+router.post('/google/finish', (req, res) => {
+  res.clearCookie(GOOGLE_RESULT_COOKIE, { path: '/api/auth/google' });
+  let result;
+  try {
+    result = jwt.verify(readCookie(req, GOOGLE_RESULT_COOKIE) || '', config.jwtSecret, JWT_OPTIONS);
+  } catch {
+    throw new HttpError(401, 'Your Google sign-in expired. Try again.');
+  }
+  if (result.purpose !== 'google-result' || usedTickets.has(result.jti)) throw new HttpError(401, 'Your Google sign-in expired. Try again.');
+  consumeTicket(result);
+  const account = { role: result.role, email: result.email };
+  const holder = holderOf(account.role, account.email);
+  if (!holder || (account.role === 'user' && (!holder.active || typeOf(holder) === 'group' || !holder.google))) {
+    throw new HttpError(403, 'This account can’t sign in with Google any more');
+  }
+  if (mfaEnabled(holder)) {
+    if (isTrustedDevice(req, account.role, account.email)) return finishSignIn(req, res, account, 'google + trusted device');
+    return res.json({ mfa: 'verify', ticket: issueTicket(account, 'verify'), email: account.email });
+  }
+  if (db().security.requireMfa) return res.json({ mfa: 'setup', ticket: issueTicket(account, 'setup'), email: account.email });
+  finishSignIn(req, res, account, 'google');
+});
+
+router.post('/google/disconnect', requireAuth(), (req, res) => {
+  const holder = holderOf(req.user.role, req.user.email);
+  if (holder?.google) {
+    audit(req, 'google-disconnected', req.user.email, holder.google.email);
+    delete holder.google;
+    save();
+  }
+  res.json({ ok: true });
 });
 
 /* ----- enrolling an authenticator: during a required sign-in (ticket) or from Settings (session) ----- */
@@ -296,6 +421,8 @@ router.get('/mfa', requireAuth(), (req, res) => {
     required: Boolean(db().security.requireMfa) && role === 'user',
     trustedDevices: trustedDevicesOf(role, email).map(({ id, agent, createdAt, expiresAt }) => ({ id, agent, createdAt, expiresAt })),
     thisDeviceTrusted: isTrustedDevice(req, role, email),
+    googleEnabled: googleEnabled(),
+    google: holder?.google ? { email: holder.google.email, name: holder.google.name, linkedAt: holder.google.linkedAt } : null,
   });
 });
 

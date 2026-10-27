@@ -14,8 +14,8 @@ export const findAlias = (address) => db().aliases.find((a) => a.address === nor
 export const findAliasById = (id) => db().aliases.find((a) => a.id === id);
 
 /** An alias without its password hash or authenticator secrets. */
-export function publicAlias({ passwordHash, mfa, mfaPending, ...rest }) {
-  return { ...rest, mfaEnabled: Boolean(mfa?.enabled) };
+export function publicAlias({ passwordHash, mfa, mfaPending, google, ...rest }) {
+  return { ...rest, mfaEnabled: Boolean(mfa?.enabled), googleEmail: google ? google.email || 'connected' : null };
 }
 
 const BCRYPT_ROUNDS = 12;
@@ -122,6 +122,7 @@ export async function updateAlias(alias, changes) {
     alias.passwordHash = null;
     delete alias.mfa;
     delete alias.mfaPending;
+    delete alias.google;
     for (const role of db().roles) role.members = role.members.filter((id) => id !== alias.id);
   } else {
     for (const role of db().roles) role.mailboxes = role.mailboxes.filter((id) => id !== alias.id);

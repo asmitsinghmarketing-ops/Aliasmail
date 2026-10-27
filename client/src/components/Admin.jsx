@@ -472,6 +472,7 @@ function Aliases({ overview, onChanged }) {
                 <td>
                   <span className={`pill ${a.type === 'group' ? 'group' : ''}`}>{a.type === 'group' ? 'Group' : 'Personal'}</span>
                   {a.roles?.length > 0 && <div className="muted small role-names">{a.roles.join(', ')}</div>}
+                  {a.googleEmail && <div className="muted small" title="Can sign in with this Google account">Google: {a.googleEmail}</div>}
                 </td>
                 <td>{a.ownerName || <span className="muted">—</span>}</td>
                 <td className="num">{a.total}</td>

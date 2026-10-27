@@ -292,6 +292,23 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     return () => { clearTimeout(timer); events.close(); };
   }, [load]);
 
+  // Back from connecting Google in Settings → Security: reopen it and say how it went.
+  const [settingsTab, setSettingsTab] = useState('profile');
+  useEffect(() => {
+    const outcome = new URLSearchParams(window.location.search).get('google');
+    if (!outcome) return;
+    window.history.replaceState(null, '', window.location.pathname);
+    const said = {
+      linked: 'Google account connected. You can now sign in with Google.',
+      'in-use': 'That Google account is already connected to another AliasMail account.',
+      cancelled: 'Connecting Google was cancelled.',
+    };
+    if (outcome === 'continue' || outcome === 'not-linked') return;
+    setSettingsTab('security');
+    setModal('settings');
+    flash(said[outcome] || 'Couldn’t connect Google. Try again.', null, 8000);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     loadLabels();
     api('/mail/people').then(setPeople).catch(() => {});
@@ -1071,6 +1088,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         <main className="content">
           {modal === 'settings' && !shared ? (
             <Settings
+              initialTab={settingsTab}
               color={user.color}
               onAvatarChange={(avatarUrl) => {
                 onUserChange({ ...user, avatarUrl });

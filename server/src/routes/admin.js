@@ -96,6 +96,12 @@ router.post('/aliases', async (req, res) => res.status(201).json(withCounts(awai
 
 router.patch('/aliases/:id', async (req, res) => {
   const alias = await updateAlias(getAlias(req), req.body ?? {});
+  // A new password from the admin is a lock-out: the old Google sign-in goes too.
+  if (req.body?.password && alias.google) {
+    audit(req, 'google-disconnected', alias.address, `by ${req.user.email} (new password)`);
+    delete alias.google;
+    save();
+  }
   // A new password, disabling the alias or making it a shared (sign-in-less) group mailbox
   // signs that person out everywhere.
   if (req.body?.password || req.body?.active === false || typeOf(alias) === 'group') signOutAccount('user', alias.address);
