@@ -9,6 +9,7 @@ import { requireAuth } from '../auth.js';
 import { cacheOf, deleteFromServer, fetchParsed, prefetch, syncInbox, testConnection } from '../mailbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
+import { liveSync } from '../live-sync.js';
 
 const router = Router();
 router.use(requireAuth('admin'));
@@ -41,7 +42,7 @@ router.get('/overview', (req, res) => {
   res.json({
     mailbox: config.mailbox,
     configured: config.configured,
-    sync: db().sync,
+    sync: { ...db().sync, checking: liveSync.status() },
     palette: PALETTE,
     totals: {
       messages: msgs.length,

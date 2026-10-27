@@ -20,11 +20,13 @@ import { deliver } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
 import { announceChange, mailEvents } from '../mail-events.js';
-import { liveSync } from '../live-sync.js';
+import { liveSync, noteActivity } from '../live-sync.js';
 
 const router = Router();
 
 router.use(requireAuth(), (req, res, next) => {
+  noteActivity();
+  liveSync.nudge();
   req.me = req.user.role === 'admin' ? config.mailbox : req.user.email;
   if (!req.me) throw new HttpError(503, 'Mailbox is not configured');
   // A group mailbox opened through the mailbox switcher. Checked on every request, so a
@@ -51,10 +53,14 @@ function ownMailboxOnly(req) {
 
 // Push invalidation only; lists and bodies still authorize the current session.
 router.get('/events', (req, res) => {
-  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store, no-transform', 'X-Accel-Buffering': 'no' });
   res.flushHeaders();
-  res.write('retry: 3000\n\n');
-  const changed = () => { if (!res.writableEnded) res.write('event: mail\ndata: {}\n\n'); };
+  res.socket?.setNoDelay(true);
+  // Some hosting proxies hold small writes until a few KB pile up; a padding comment pushes
+  // each event through at once. Polling covers proxies that still hold it back.
+  const pad = `:${' '.repeat(2048)}\n\n`;
+  res.write(`retry: 3000\n\n${pad}`);
+  const changed = () => { if (!res.writableEnded) res.write(`event: mail\ndata: {}\n\n${pad}`); };
   mailEvents.on('changed', changed);
   liveSync.nudge();
   const heartbeat = setInterval(() => res.write(': keepalive\n\n'), 15_000);

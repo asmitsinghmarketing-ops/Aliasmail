@@ -267,7 +267,9 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     // Poll only while the page is on screen; catch up at once when it comes back (a phone
     // waking up, a tab brought to the front, the network returning).
     const visible = () => document.visibilityState === 'visible';
-    const timer = setInterval(() => visible() && load(), 30000);
+    // 10s: answered from the server's copy (no mailbox access), and the fallback for hosting
+    // proxies that hold back live updates.
+    const timer = setInterval(() => visible() && load(), 10000);
     const wake = () => visible() && load();
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('online', wake);

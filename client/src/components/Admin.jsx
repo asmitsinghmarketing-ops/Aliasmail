@@ -163,6 +163,13 @@ function Overview({ overview, onReload }) {
                 ? `Last sync failed: ${sync.lastError}`
                 : `Last synced ${timeAgo(sync.lastSyncAt)}`}
           </div>
+          {overview.configured && sync.checking?.running && (
+            <div className="muted small">
+              New mail is checked every {sync.checking.everySeconds}s
+              {sync.checking.live ? ' (someone is using AliasMail)' : ' (nobody is using AliasMail right now)'}
+              {sync.checking.lastCheckAt && ` · last check ${timeAgo(sync.checking.lastCheckAt)}`}
+            </div>
+          )}
         </div>
         <div className="actions">
           <button className="btn btn-outline" disabled={!!busy} onClick={() => run('test')}>

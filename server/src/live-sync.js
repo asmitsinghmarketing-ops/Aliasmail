@@ -8,11 +8,21 @@ import { mailEvents } from './mail-events.js';
 import { keepWarm, syncInbox } from './mailbox.js';
 
 const MAX_BACKOFF_MS = 5 * 60_000;
+const ACTIVE_FOR_MS = 2 * 60_000;
 
-export function createLiveSync({ sync = syncInbox, warm = keepWarm, watching = () => mailEvents.listenerCount('changed') > 0, liveMs, fullMs, log = console.warn }) {
+// Someone counts as "here" while a live-update stream is open, or for two minutes after any
+// mailbox request. Some hosting proxies hold the stream back, so requests alone also count.
+let lastActivity = 0;
+export const noteActivity = () => {
+  lastActivity = Date.now();
+};
+const someoneHere = () => mailEvents.listenerCount('changed') > 0 || Date.now() - lastActivity < ACTIVE_FOR_MS;
+
+export function createLiveSync({ sync = syncInbox, warm = keepWarm, watching = someoneHere, liveMs, fullMs, log = console.warn }) {
   let timer = null;
   let dueAt = 0;
   let lastFull = 0;
+  let lastCheck = 0;
   let failures = 0;
   let stopped = false;
 
@@ -27,7 +37,8 @@ export function createLiveSync({ sync = syncInbox, warm = keepWarm, watching = (
     try {
       warm();
       await sync(full ? {} : { inboxOnly: true });
-      if (full) lastFull = Date.now();
+      lastCheck = Date.now();
+      if (full) lastFull = lastCheck;
       if (failures) log('[sync] working again');
       failures = 0;
     } catch (err) {
@@ -61,6 +72,16 @@ export function createLiveSync({ sync = syncInbox, warm = keepWarm, watching = (
     stop() {
       stopped = true;
       clearTimeout(timer);
+    },
+    /** For the admin overview: how fresh the mailbox copy is and how often it's checked. */
+    status() {
+      return {
+        running: Boolean(timer) && !stopped,
+        live: watching(),
+        everySeconds: Math.round(delay() / 1000),
+        lastCheckAt: lastCheck ? new Date(lastCheck).toISOString() : null,
+        failing: failures > 0,
+      };
     },
   };
 }

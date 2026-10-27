@@ -56,6 +56,18 @@ test('nudges from reconnecting screens never make it check faster than the live 
   assert.ok(calls.length <= 12, `checks in 200ms at a 20ms pace: ${calls.length}`);
 });
 
+test('status reports how often mail is checked and when it last was', async (t) => {
+  const { live } = harness({ watching: true });
+  t.after(() => live.stop());
+  live.start();
+  await wait(60);
+  const s = live.status();
+  assert.equal(s.running, true);
+  assert.equal(s.live, true);
+  assert.equal(s.failing, false);
+  assert.ok(Date.now() - Date.parse(s.lastCheckAt) < 1000);
+});
+
 test('a failing mailbox backs off and logs once instead of every few seconds', async (t) => {
   const { live, calls, logs } = harness({ watching: true, fail: true });
   t.after(() => live.stop());
