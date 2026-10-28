@@ -3,6 +3,7 @@ import { api, cachedMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
 import { withDriveLinks } from '../drivePicker.js';
+import LoginCodes from './LoginCodes.jsx';
 import { ask } from './Dialog.jsx';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
@@ -1210,6 +1211,18 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               )}
               {folder === 'scheduled' && list.total > 0 && <div className="banner">These messages will be sent at the time shown. Cancel one to move it back to Drafts.</div>}
               {error && <div className="alert m">{error}</div>}
+              {folder === 'inbox' && !search && (
+                <LoginCodes
+                  reloadKey={list}
+                  onOpen={({ id, subject, from, date }) => {
+                    const index = list.items.findIndex((i) => i.kind === 'inbox' && i.id === id);
+                    if (index >= 0) return openAt(index);
+                    // In another inbox tab (codes usually land in Updates): open it from here.
+                    setOpen({ id, kind: 'inbox', subject, from, date, to: [], cc: [], labels: [], read: true });
+                    setOpenMsg(null);
+                  }}
+                />
+              )}
               {search && (
                 <div className="search-note">
                   Results for “{search}” <button className="link" onClick={() => { setQuery(''); setSearch(''); }}>Clear</button>

@@ -1355,3 +1355,22 @@ a.btn { color: inherit; text-decoration: none; }
 .drive-pill a:hover { text-decoration: underline; }
 .drive-pill svg { color: #1a73e8; flex: none; }
 .drive-access { width: auto; flex: none; margin: 0; font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: inherit; }
+
+/* ---------- recent login codes above the inbox ---------- */
+.login-codes { display: grid; gap: 8px; padding: 10px 16px 4px; }
+.login-code {
+  display: flex; align-items: center; gap: 12px; padding: 10px 8px 10px 14px; border-radius: 12px;
+  background: var(--hover); border: 1px solid var(--border);
+}
+.login-code-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--surface); color: var(--brand); flex: none; }
+.login-code-text { flex: 1; min-width: 0; text-align: left; border: 0; background: none; padding: 0; color: inherit; font: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.login-code-service { font-weight: 600; }
+.login-code-value { font: 600 20px/1 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: 1px; white-space: nowrap; }
+.login-code-copy { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; flex: none; }
+@media (max-width: 600px) {
+  .login-codes { padding: 8px 12px 0; }
+  .login-code { flex-wrap: wrap; gap: 8px 10px; }
+  .login-code-text { flex-basis: calc(100% - 100px); }
+  .login-code-value { order: 5; flex: 1; font-size: 22px; padding-left: 46px; }
+  .login-code-copy { order: 6; }
+}

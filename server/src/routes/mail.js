@@ -23,6 +23,7 @@ import { announceChange, mailEvents } from '../mail-events.js';
 import { liveSync, noteActivity } from '../live-sync.js';
 import { driveEnabled } from '../google-auth.js';
 import { driveTokenFor, readDriveRequest, shareWithRecipients } from '../google-drive.js';
+import { findLoginCode, mightHaveCode, serviceName } from '../login-codes.js';
 
 const router = Router();
 
@@ -321,6 +322,35 @@ router.get('/messages', (req, res) => {
   const top = result.items.slice(0, 20);
   prefetch(top.filter((i) => i.kind === 'inbox').map((i) => i.id), 'inbox');
   prefetch(top.map((i) => SENT_ID.exec(String(i.id))?.[1]).filter(Boolean), 'sent');
+});
+
+// Login codes from the last 15 minutes, newest first, shown above the inbox (handy in a shared
+// mailbox such as access@ where everyone with the role signs in to the same service).
+const LOGIN_CODE_MS = 15 * 60e3;
+router.get('/login-codes', async (req, res) => {
+  const me = req.me;
+  const since = new Date(Date.now() - LOGIN_CODE_MS).toISOString();
+  const recent = messagesFor(me)
+    .filter((m) => m.date >= since && FOLDERS.inbox(stateOf(m, me)) && mightHaveCode(m))
+    .sort(byDateDesc)
+    .slice(0, 5);
+  const items = [];
+  for (const m of recent) {
+    let parsed = null;
+    try {
+      parsed = await fetchParsed(m.uid, 'inbox');
+    } catch {
+      // The preview is still worth a try.
+    }
+    const code = findLoginCode(m.subject, parsed ? parsed.text : m.snippet, parsed?.html);
+    if (code) {
+      items.push({
+        id: m.uid, code, service: serviceName(m.from), from: m.from, subject: m.subject, date: m.date,
+        expiresAt: new Date(Date.parse(m.date) + LOGIN_CODE_MS).toISOString(),
+      });
+    }
+  }
+  res.json({ items });
 });
 
 /* ---------------------------------- inbox messages ---------------------------------- */
