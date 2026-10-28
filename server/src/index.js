@@ -65,7 +65,9 @@ app.use((req, res, next) => {
   res.set({
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
-    'Referrer-Policy': 'no-referrer',
+    // Only the site name, never a path, so a website-restricted Google API key (Drive picker)
+    // recognises AliasMail. Email bodies are stricter: their frame sends no referrer at all.
+    'Referrer-Policy': 'strict-origin',
     'Cross-Origin-Opener-Policy': 'same-origin',
     // Location only for this site, and only when the user asks to share it (Security settings).
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self), payment=()',

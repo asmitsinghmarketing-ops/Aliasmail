@@ -4,12 +4,19 @@ import { displayName, formatDate, formatSize, personLabel, timeAgo } from '../fo
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 
+// A sender can't loosen that with their own <meta name="referrer"> or referrerpolicy="unsafe-url".
+const noReferrerOverrides = (html) =>
+  String(html || '')
+    .replace(/<meta\b[^>]*\bname\s*=\s*["']?referrer\b[^>]*>/gi, '')
+    .replace(/\sreferrerpolicy\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+
 function HtmlBody({ html }) {
   const frame = useRef(null);
   // No allow-scripts: the email's own JavaScript never runs.
-  const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">
+  // No referrer either: images and links in an email never learn where it was read.
+  const doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><base target="_blank">
 <style>html{overflow:hidden}html,body{margin:0;padding:0}body{display:flow-root;font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#202124;overflow-wrap:break-word}img{max-width:100%;height:auto}a{color:#1a73e8}</style>
-</head><body>${html}</body></html>`;
+</head><body>${noReferrerOverrides(html)}</body></html>`;
 
   useEffect(() => () => frame.current?._observers?.forEach((o) => o.disconnect()), []);
 
@@ -57,6 +64,7 @@ function HtmlBody({ html }) {
       title="Message body"
       className="mail-frame"
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      referrerPolicy="no-referrer"
       srcDoc={doc}
       onLoad={onLoad}
     />
