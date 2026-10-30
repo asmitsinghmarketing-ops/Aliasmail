@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { formatSize } from '../format.js';
 import { ask } from './Dialog.jsx';
@@ -6,11 +6,41 @@ import Icon from './Icon.jsx';
 import { Popover, TimeMenu, scheduleOptions } from './Menus.jsx';
 import RichEditor, { htmlFromText, sanitizeHtml } from './RichEditor.jsx';
 import { pickDriveFiles } from '../drivePicker.js';
-import { preuploadAttachment, uploadAttachments } from '../attachmentUpload.js';
+import RecipientField, { parseAddresses } from './RecipientField.jsx';
+
+// Address suggestions, loaded once per page and shared by every compose window.
+let contactsCache = null;
+const VALID_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { preuploadAttachment } from '../attachmentUpload.js';
 
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
 const readFile = (file) => ({ filename: file.name, contentType: file.type || 'application/octet-stream', size: file.size, _file: file });
+
+/**
+ * The subject wraps onto more lines instead of being cut off; it stays one paragraph (Enter
+ * doesn't add a line break, Ctrl+Enter still sends).
+ */
+function SubjectField({ value, onChange, ...props }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      className="subject-field"
+      value={value}
+      onChange={(e) => onChange({ target: { value: e.target.value.replace(/\s*\n\s*/g, ' ') } })}
+      onKeyDown={(e) => e.key === 'Enter' && !e.ctrlKey && !e.metaKey && e.preventDefault()}
+      {...props}
+    />
+  );
+}
 
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `d${Date.now()}${Math.random().toString(36).slice(2)}`);
 
@@ -136,6 +166,26 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
   const floating = pos && mode !== 'full';
 
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
+  const [contacts, setContacts] = useState(contactsCache || []);
+  useEffect(() => {
+    if (contactsCache) return;
+    api('/mail/contacts')
+      .then((list) => {
+        contactsCache = list;
+        setContacts(list);
+      })
+      .catch(() => {});
+  }, []);
+  const recipients = (key, label, props = {}) => (
+    <RecipientField
+      fieldKey={key}
+      label={label}
+      value={form[key]}
+      onChange={(v) => setForm((f) => ({ ...f, [key]: v }))}
+      contacts={contacts}
+      {...props}
+    />
+  );
   const onBody = ({ html, text }) => setForm((f) => ({ ...f, html, text }));
   // Replies and forwards open with the cursor above the quoted text and signature.
   const editor = (props) => (
@@ -263,6 +313,11 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
       setError('Add at least one recipient');
       return;
     }
+    const bad = ['to', 'cc', 'bcc'].flatMap((k) => parseAddresses(form[k])).find((r) => !VALID_EMAIL.test(r.address));
+    if (bad) {
+      setError(`“${bad.address}” isn’t a valid email address. Click it to fix it, or remove it.`);
+      return;
+    }
     if (files.reduce((sum, f) => sum + f.size, 0) > MAX_TOTAL_BYTES) {
       setError('Attachments are larger than 20 MB in total');
       return;
@@ -271,16 +326,8 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
 
     clearTimeout(saveTimer.current);
     sending.current = true;
-    let uploaded;
-    try {
-      setSaveState(files.length ? 'Uploading attachments…' : saveState);
-      uploaded = await uploadAttachments(files);
-    } catch (err) {
-      sending.current = false;
-      setSaveState('');
-      setError(err.message);
-      return;
-    }
+    // Attachments still uploading finish in the background (the mailbox waits for them before
+    // sending), so the window closes at once, like Gmail.
     // The Drive links are added to the body by the mailbox (see driveLinks) so an undone send
     // reopens without them doubled.
     onSend({
@@ -289,7 +336,7 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
       draftId: id,
       inReplyTo: draft.inReplyTo || undefined,
       references: draft.references,
-      files: uploaded,
+      files,
       driveFiles,
       driveAccess,
       drive: driveFiles.length ? { files: driveFiles.map(({ id: fileId, name }) => ({ id: fileId, name })), access: driveAccess } : undefined,
@@ -357,19 +404,10 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
             <span className="cm-label">From</span>
             <span className="cm-from">{from}</span>
           </div>
-          <div className="cm-row">
-            <span className="cm-label">To</span>
-            <input
-              type="text"
-              inputMode="email"
-              autoComplete="email"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              aria-label="To"
-              autoFocus={!draft.to}
-              {...field('to')}
-            />
+          {recipients('to', 'To', {
+            className: 'cm-row',
+            autoFocus: !draft.to,
+            after: (
             <button
               type="button"
               className="icon-btn cm-expand"
@@ -382,21 +420,12 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
             >
               <Icon name="expandMore" />
             </button>
-          </div>
-          {showCc && (
-            <div className="cm-row">
-              <span className="cm-label">Cc</span>
-              <input type="text" inputMode="email" autoCapitalize="off" autoCorrect="off" spellCheck={false} aria-label="Cc" {...field('cc')} />
-            </div>
-          )}
-          {(showCc || showBcc) && (
-            <div className="cm-row">
-              <span className="cm-label">Bcc</span>
-              <input type="text" inputMode="email" autoCapitalize="off" autoCorrect="off" spellCheck={false} aria-label="Bcc" {...field('bcc')} />
-            </div>
-          )}
+            ),
+          })}
+          {showCc && recipients('cc', 'Cc', { className: 'cm-row' })}
+          {(showCc || showBcc) && recipients('bcc', 'Bcc', { className: 'cm-row' })}
           <div className="cm-row">
-            <input type="text" placeholder="Subject" aria-label="Subject" autoCapitalize="sentences" {...field('subject')} />
+            <SubjectField placeholder="Subject" aria-label="Subject" autoCapitalize="sentences" {...field('subject')} />
           </div>
           {error && <div className="alert m">{error}</div>}
           {editor({ className: 'cm-body', toolbarClassName: 'cm-format' })}
@@ -457,34 +486,29 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
       {mode !== 'min' && (
         <>
           <div className="compose-line muted">From: {from}</div>
+          {recipients('to', 'To', {
+            className: 'compose-line',
+            placeholder: 'Recipients',
+            autoFocus: !draft.to,
+            after: (!showCc || !showBcc) && (
+              <span className="cc-links">
+                {!showCc && (
+                  <button type="button" className="link" onClick={() => setShowCc(true)}>
+                    Cc
+                  </button>
+                )}
+                {!showBcc && (
+                  <button type="button" className="link" onClick={() => setShowBcc(true)}>
+                    Bcc
+                  </button>
+                )}
+              </span>
+            ),
+          })}
+          {showCc && recipients('cc', 'Cc', { className: 'compose-line', autoFocus: !draft.cc })}
+          {showBcc && recipients('bcc', 'Bcc', { className: 'compose-line', autoFocus: !draft.bcc })}
           <div className="compose-line">
-            <span className="compose-label">To</span>
-            <input placeholder="Recipients (separate with commas)" autoFocus={!draft.to} {...field('to')} />
-            {!showCc && (
-              <button type="button" className="link" onClick={() => setShowCc(true)}>
-                Cc
-              </button>
-            )}
-            {!showBcc && (
-              <button type="button" className="link" onClick={() => setShowBcc(true)}>
-                Bcc
-              </button>
-            )}
-          </div>
-          {showCc && (
-            <div className="compose-line">
-              <span className="compose-label">Cc</span>
-              <input {...field('cc')} />
-            </div>
-          )}
-          {showBcc && (
-            <div className="compose-line">
-              <span className="compose-label">Bcc</span>
-              <input {...field('bcc')} />
-            </div>
-          )}
-          <div className="compose-line">
-            <input placeholder="Subject" {...field('subject')} />
+            <SubjectField placeholder="Subject" aria-label="Subject" {...field('subject')} />
           </div>
           {editor({ className: 'compose-body' })}
 

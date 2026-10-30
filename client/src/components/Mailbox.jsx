@@ -3,6 +3,7 @@ import { api, cachedMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
 import { withDriveLinks } from '../drivePicker.js';
+import { uploadAttachments } from '../attachmentUpload.js';
 import LoginCodes from './LoginCodes.jsx';
 import { ask } from './Dialog.jsx';
 import Avatar from './Avatar.jsx';
@@ -650,11 +651,16 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   function handleSend(payload) {
     setDraft(null);
     const { files, driveFiles, driveAccess, ...rest } = payload;
-    const body = {
+    // Attachments keep uploading in the background (started when they were attached); the
+    // message goes out once they're done.
+    const uploading = uploadAttachments(files);
+    uploading.catch(() => {});
+    const stillUploading = files.some((f) => f._file && !f.uploadId);
+    const bodyWith = (uploaded) => ({
       ...rest,
       ...withDriveLinks(payload, driveFiles),
-      attachments: files.map(({ uploadId, filename, contentType, size, forward }) => ({ uploadId, filename, contentType, size, forward })),
-    };
+      attachments: uploaded.map(({ uploadId, filename, contentType, size, forward }) => ({ uploadId, filename, contentType, size, forward })),
+    });
     // Sharing Drive files with the recipients happens after sending; say if any couldn't be shared.
     const sharedNote = (result) => {
       const failed = result?.drive?.failed || [];
@@ -662,7 +668,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     };
 
     if (payload.sendAt) {
-      api('/mail/send', { method: 'POST', body })
+      uploading
+        .then((uploaded) => api('/mail/send', { method: 'POST', body: bodyWith(uploaded) }))
         .then(() => {
           flash(`Send scheduled for ${shortTime(payload.sendAt)}.`);
           load();
@@ -682,7 +689,15 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       if (cancelled) return;
       const subject = payload.subject || '(no subject)';
       try {
-        const result = await api('/mail/send', { method: 'POST', body });
+        let uploaded;
+        try {
+          uploaded = await uploading;
+        } catch (err) {
+          throw new Error(`An attachment didn’t upload (${err.message.replace(/[.\s]*$/, '')})`);
+        }
+        if (cancelled) return;
+        const result = await api('/mail/send', { method: 'POST', body: bodyWith(uploaded) });
+        if (stillUploading && !result.queued) flash('Message sent.', null, 4000, { tone: 'success', title: `“${subject}” was sent` });
         if (result.queued) {
           // Not sent, but not lost: it waits in the Outbox (retried by itself unless refused).
           flash(
@@ -711,7 +726,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       }
     }, UNDO_SEND_MS);
     flash(
-      'Message sent.',
+      stillUploading ? 'Sending… attachments are uploading in the background.' : 'Message sent.',
       () => {
         cancelled = true;
         pendingSends.current -= 1;

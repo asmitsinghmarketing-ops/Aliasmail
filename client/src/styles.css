@@ -1451,3 +1451,70 @@ a.btn { color: inherit; text-decoration: none; }
     background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(8px); border-top: 1px solid var(--border);
   }
 }
+
+/* ---------- recipients as chips (To / Cc / Bcc) ---------- */
+.recipient-field { position: relative; display: flex; align-items: flex-start; gap: 8px; }
+.compose-line.recipient-field { padding: 5px 0; }
+.recipient-label { flex: none; width: 28px; padding-top: 5px; color: var(--muted); }
+.cm-row.recipient-field { align-items: flex-start; padding-top: 8px; padding-bottom: 8px; }
+.cm-row .recipient-label { width: 44px; padding-top: 7px; font-size: 16px; color: #5f6368; }
+.recipient-box { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.recipient-field input.recipient-input {
+  flex: 1 1 120px; min-width: 120px; width: auto; padding: 4px 0; border: 0; border-radius: 0; background: none; outline: none;
+}
+.cm-row input.recipient-input { padding: 7px 0; font-size: 16px; }
+.recipient-field.drag-over .recipient-box { outline: 2px dashed color-mix(in srgb, var(--brand) 55%, transparent); outline-offset: 2px; border-radius: 8px; }
+.cc-links { flex: none; display: flex; gap: 10px; padding-top: 4px; }
+.cm-row .cm-expand { flex: none; margin-top: -2px; }
+
+.recipient-chip {
+  display: inline-flex; align-items: center; gap: 2px; max-width: 100%; height: 28px; padding: 0 2px 0 2px;
+  border-radius: 999px; background: var(--hover); border: 1px solid transparent; font-size: 13px;
+  cursor: grab; animation: chip-in 0.15s var(--ease-out);
+}
+.recipient-chip:hover { border-color: var(--border); background: color-mix(in srgb, var(--hover) 60%, var(--surface)); }
+.recipient-chip.invalid { background: #fff5f5; border-color: #ffa8a8; color: #c92a2a; }
+.recipient-avatar {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  color: #fff; font-size: 11px; font-weight: 700;
+}
+.recipient-chip.invalid .recipient-avatar { background: #e03131 !important; }
+.recipient-avatar.big { width: 34px; height: 34px; font-size: 14px; }
+.recipient-text {
+  min-width: 0; max-width: 260px; padding: 0 2px 0 6px; border: 0; background: none; color: inherit; font: inherit;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text;
+}
+.recipient-remove { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 50%; background: none; color: var(--muted); }
+.recipient-remove:hover { background: rgb(0 0 0 / 8%); color: var(--text); }
+@keyframes chip-in { from { opacity: 0; transform: scale(0.9); } }
+
+.recipient-suggestions {
+  position: absolute; z-index: 40; top: 100%; left: 36px; right: 0; max-width: 420px; margin: 4px 0 0; padding: 6px;
+  list-style: none; background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 14px 40px rgb(0 0 0 / 16%); animation: rise-in 0.15s var(--ease-out);
+}
+.cm-row .recipient-suggestions { left: 8px; right: 8px; max-width: none; }
+.recipient-suggestions button {
+  width: 100%; display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 0; border-radius: 10px;
+  background: none; color: inherit; text-align: left;
+}
+.recipient-suggestions button.active { background: var(--hover); }
+.suggestion-text { flex: 1; min-width: 0; display: grid; }
+.suggestion-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggestion-address { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggestion-team { flex: none; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--brand) 12%, var(--surface)); color: var(--brand); }
+
+@media (max-width: 800px) {
+  .recipient-chip { height: 32px; font-size: 14px; }
+  .recipient-avatar { width: 26px; height: 26px; }
+  .recipient-text { max-width: 200px; }
+  .recipient-remove { width: 28px; height: 28px; }
+}
+
+/* ---------- subject wraps instead of being cut off ---------- */
+.subject-field { display: block; width: 100%; min-height: 0; padding: 2px 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; line-height: 1.4; resize: none; overflow: hidden; outline: none; }
+.cm-row .subject-field { padding: 14px 0; font-size: 16px; }
+
+/* A long subject in the title bar shortens with … instead of pushing the buttons out. */
+.compose-head > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compose-head-actions { flex: none; overflow: visible !important; }

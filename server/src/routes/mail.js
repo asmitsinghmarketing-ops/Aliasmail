@@ -783,6 +783,39 @@ router.delete('/settings/avatar', (req, res) => {
 });
 
 /** Profile pictures of everyone on this mail system, by address (shown beside their messages). */
+/**
+ * Address suggestions for Compose: the team's mailboxes, then everyone this account has written
+ * to or heard from, most frequent first (writing to someone counts more than hearing from them).
+ */
+router.get('/contacts', (req, res) => {
+  const me = req.me;
+  const people = new Map(); // address -> { address, name, score, team }
+  const add = (person, weight) => {
+    const address = normalize(person?.address);
+    if (!EMAIL_RE.test(address) || address === me) return;
+    const entry = people.get(address) || { address, name: '', score: 0, team: false };
+    if (!entry.name && person.name) entry.name = String(person.name).slice(0, 120);
+    entry.score += weight;
+    people.set(address, entry);
+  };
+  for (const a of db().aliases) {
+    if (a.disabled) continue;
+    add({ address: a.address, name: a.displayName }, 1);
+    const entry = people.get(a.address);
+    if (entry) entry.team = true;
+  }
+  if (config.mailbox) add({ address: config.mailbox, name: db().owner?.displayName }, 1);
+  for (const m of messagesFor(me)) add(m.from, 1);
+  for (const m of Object.values(db().sentBox.messages)) {
+    if (isOwner(me) || m.from.address === me) for (const p of [...(m.to || []), ...(m.cc || [])]) add(p, 3);
+  }
+  for (const s of db().sent) {
+    if (isOwner(me) || s.from.address === me) for (const p of [...s.to, ...s.cc, ...(s.bcc || [])]) add(p, 3);
+  }
+  const list = [...people.values()].sort((a, b) => b.score - a.score || a.address.localeCompare(b.address)).slice(0, 500);
+  res.json(list.map(({ address, name, team }) => ({ address, name, team })));
+});
+
 router.get('/people', (req, res) => {
   const people = {};
   for (const a of db().aliases) if (a.avatar) people[a.address] = avatarUrl(a.avatar);
