@@ -226,10 +226,10 @@ async function parseSource(source, identity) {
 // one comes down only when it is opened, through attachmentContent.
 const LITE_MIN_BYTES = 512 * 1024;
 
-async function download(folder, uid) {
+async function download(folder, uid, background = false) {
   if (config.mailBridge.configured && cacheOf(folder).messages[uid]?.size > LITE_MIN_BYTES) {
     try {
-      const { raw } = await bridge('fetchLite', { folder, uid });
+      const { raw } = await bridge('fetchLite', { folder, uid, ...(background && { background: true }) });
       return raw ? Buffer.from(raw, 'base64') : null;
     } catch (err) {
       // A bridge from before fetchLite: download the whole message as before.
@@ -252,7 +252,7 @@ export async function attachmentContent(att, uid, folder = 'inbox') {
 }
 
 /** Read memory, then durable cache, and only then download from the mail server. */
-export function fetchParsed(uid, folder = 'inbox') {
+export function fetchParsed(uid, folder = 'inbox', { background = false } = {}) {
   uid = Number(uid);
   const key = cacheKey(folder, uid);
   const cached = recall(key);
@@ -263,7 +263,7 @@ export function fetchParsed(uid, folder = 'inbox') {
     let source = await messageCache.get(identity);
     const persisted = Boolean(source);
     if (!source) {
-      source = await download(folder, uid);
+      source = await download(folder, uid, background);
       if (!source) return null;
     }
     const parsed = await parseSource(source, identity);
@@ -286,6 +286,17 @@ export function prefetch(uids, folder = 'inbox') {
     const key = cacheKey(folder, uid);
     return record && record.size <= PREFETCH_MAX_BYTES && !parsedCache.has(key) && !inFlight.has(key) && !prefetching.has(key);
   });
+  // Bigger messages are preloaded without their attachments (fetchLite), so they open at once too.
+  if (config.mailBridge.configured) {
+    const large = uids.map(Number).filter((uid) => cacheOf(folder).messages[uid]?.size > PREFETCH_MAX_BYTES);
+    for (const uid of large) {
+      prefetchQueue = prefetchQueue.then(() => {
+        const key = cacheKey(folder, uid);
+        if (parsedCache.has(key) || inFlight.has(key) || !cacheOf(folder).messages[uid]) return undefined;
+        return fetchParsed(uid, folder, { background: true }).catch((err) => console.warn('[prefetch]', err.message));
+      });
+    }
+  }
   if (!wanted.length || !config.configured) return;
 
   const batches = [];

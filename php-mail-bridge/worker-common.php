@@ -148,7 +148,7 @@ function aliasmail_worker_dispatch(array $request, string $token, Closure $handl
     try {
         if ($action === '__status') $result = $status();
         elseif ($action === '__stop') { $stop(); $result = ['stopping' => true]; }
-        elseif (in_array($action, ['sync', 'fetch', 'fetchMany'], true)) $result = $handle($body);
+        elseif (in_array($action, ['sync', 'fetch', 'fetchMany', 'fetchLite', 'fetchPart'], true)) $result = $handle($body);
         else return ['id' => $id, 'ok' => false, 'error' => 'Worker only accepts mail reads'];
         return ['id' => $id, 'ok' => true, 'result' => $result];
     } catch (Throwable $error) {
