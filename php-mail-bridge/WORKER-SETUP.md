@@ -13,7 +13,7 @@ Upload ALL files from its php-mail-bridge folder into:
 Files: index.php, bridge-core.php, worker-common.php, worker.php, settings.php,
 .htaccess, and WORKER-SETUP.md. Ensure hidden .htaccess is included.
 
-Preserve your EXISTING settings.local.php or external aliasmail-settings.php.
+Preserve your EXISTING ~/aliasmail-settings.php (the only settings file).
 The package deliberately excludes credentials. settings.php is only the existing
 loader for your private settings. Do not replace your private settings with examples.
 
