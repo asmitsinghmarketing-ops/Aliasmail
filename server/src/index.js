@@ -38,13 +38,16 @@ app.set('trust proxy', config.trustProxy ? 1 : 'loopback');
 // allowed when Drive is set up. Email bodies stay sandboxed without scripts either way.
 const PICKER = driveEnabled() ? ' https://apis.google.com' : '';
 const PICKER_FRAMES = driveEnabled() ? ' https://docs.google.com https://drive.google.com https://content.googleapis.com' : '';
+// Attachments are uploaded by the browser straight to the PHP bridge's upload.php, next to its index.php.
+let BRIDGE = '';
+try { BRIDGE = ` ${new URL(config.mailBridge.url).origin}`; } catch {}
 const CSP = [
   "default-src 'self'",
   `script-src 'self'${PICKER}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https: http:",
   "font-src 'self' data: https:",
-  `connect-src 'self'${PICKER}`,
+  `connect-src 'self'${PICKER}${BRIDGE}`,
   `frame-src 'self' about:${PICKER_FRAMES}`,
   "frame-ancestors 'none'",
   "form-action 'self'",

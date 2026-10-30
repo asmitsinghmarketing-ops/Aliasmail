@@ -7,6 +7,6 @@ Options -Indexes
   Require all denied
 </Files>
 
-<FilesMatch "^(bridge-core|worker-common|worker)\.php$">
+<FilesMatch "^(bridge-core|worker-common|worker|upload-common)\.php$">
   Require all denied
 </FilesMatch>
