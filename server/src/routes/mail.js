@@ -15,7 +15,7 @@ import { audit } from '../audit.js';
 // Guessing the current password from a signed-in browser: 5 tries per 15 minutes.
 const passwordChecks = limiter('password-change', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 import { requireAuth } from '../auth.js';
-import { deleteFromServer, fetchParsed, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
+import { attachmentContent, deleteFromServer, fetchParsed, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
 import { deliver } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
@@ -377,7 +377,7 @@ router.get('/messages/:uid/attachments/:index', async (req, res) => {
   const msg = ownMessage(req);
   const att = (await fetchParsed(msg.uid))?.attachments[Number(req.params.index)];
   if (!att) throw new HttpError(404, 'Attachment not found');
-  sendAttachment(res, att);
+  sendAttachment(res, await attachmentContent(att, msg.uid));
 });
 
 /** Per-account state changes. Each returns a patch for one message's state. */
@@ -463,7 +463,7 @@ router.get('/sent/:id/attachments/:index', async (req, res) => {
   const msg = ownSent(req);
   const att = (await fetchParsed(msg.uid, 'sent'))?.attachments[Number(req.params.index)];
   if (!att) throw new HttpError(404, 'Attachment not found');
-  sendAttachment(res, att);
+  sendAttachment(res, await attachmentContent(att, msg.uid, 'sent'));
 });
 
 router.post('/sent/delete', async (req, res) => {

@@ -71,6 +71,69 @@ function imap_raw_message($imap, int $uid): ?string {
     return $header . "\r\n" . $body;
 }
 
+const LITE_KEEP_BYTES = 256 * 1024;
+
+/**
+ * The message with large attachments left out, so it opens without downloading them. Each one
+ * left out keeps its headers plus "X-AliasMail-Part: <section>; size=<bytes>" and an empty body;
+ * fetchPart gets it when it is opened. Text, inline images (Content-ID) and small files stay.
+ * Null when the message isn't multipart (nothing to leave out), so the caller fetches it whole.
+ */
+function imap_lite_message($imap, int $uid): ?array {
+    if (!imap_msgno($imap, $uid)) return ['raw' => null];
+    $structure = @imap_fetchstructure($imap, $uid, FT_UID);
+    if (!$structure || (int)$structure->type !== TYPEMULTIPART) return null;
+    $header = imap_fetchheader($imap, $uid, FT_UID);
+    if ($header === false) throw new RuntimeException('IMAP header download failed');
+    $left = 0;
+    $body = lite_multipart($imap, $uid, $structure, '', $left);
+    return $left ? ['raw' => rtrim($header, "\r\n") . "\r\n\r\n" . $body, 'lite' => true] : null;
+}
+function lite_param($part, string $name): string {
+    foreach ([$part->parameters ?? [], $part->dparameters ?? []] as $list) {
+        foreach ((array)$list as $p) if (strcasecmp((string)$p->attribute, $name) === 0) return (string)$p->value;
+    }
+    return '';
+}
+function lite_multipart($imap, int $uid, $part, string $section, int &$left): string {
+    $boundary = lite_param($part, 'boundary');
+    if ($boundary === '') throw new RuntimeException('Multipart message without a boundary');
+    $out = '';
+    foreach ($part->parts ?? [] as $i => $child) {
+        $number = $section === '' ? (string)($i + 1) : $section . '.' . ($i + 1);
+        $mime = imap_fetchmime($imap, $uid, $number, FT_UID | FT_PEEK);
+        if ($mime === false) throw new RuntimeException('IMAP part download failed');
+        $out .= '--' . $boundary . "\r\n";
+        if ((int)$child->type === TYPEMULTIPART) {
+            $out .= $mime . lite_multipart($imap, $uid, $child, $number, $left);
+            continue;
+        }
+        // The message text itself (some mail apps mark it "inline"), never a text file attached.
+        $isText = (int)$child->type === TYPETEXT && lite_param($child, 'filename') === '' && lite_param($child, 'name') === ''
+            && (empty($child->ifdisposition) || strcasecmp((string)$child->disposition, 'inline') === 0);
+        $inline = !empty($child->ifid);
+        $bytes = (int)($child->bytes ?? 0);
+        if (!$isText && !$inline && $bytes > LITE_KEEP_BYTES) {
+            $out .= rtrim($mime, "\r\n") . "\r\nX-AliasMail-Part: {$number}; size={$bytes}\r\n\r\n\r\n";
+            $left++;
+            continue;
+        }
+        $body = imap_fetchbody($imap, $uid, $number, FT_UID | FT_PEEK);
+        if ($body === false) throw new RuntimeException('IMAP part download failed');
+        $out .= $mime . $body . "\r\n";
+    }
+    return $out . '--' . $boundary . "--\r\n";
+}
+/** One part of a message (its MIME headers and body), for an attachment left out by fetchLite. */
+function imap_message_part($imap, int $uid, string $section): ?string {
+    if (!preg_match('/^\d+(\.\d+)*$/', $section)) throw new RuntimeException('Invalid message part');
+    if (!imap_msgno($imap, $uid)) return null;
+    $mime = imap_fetchmime($imap, $uid, $section, FT_UID | FT_PEEK);
+    $body = imap_fetchbody($imap, $uid, $section, FT_UID | FT_PEEK);
+    if ($mime === false || $body === false) throw new RuntimeException('IMAP part download failed');
+    return $mime . $body;
+}
+
 function structure_has_attachments($part): bool {
     if (!$part) return false;
     if (isset($part->disposition) && strtolower((string)$part->disposition) === 'attachment') return true;
@@ -236,6 +299,22 @@ function handle(array $body): array {
             imap_release($imap);
         }
         return ['messages' => $messages];
+    }
+    if ($action === 'fetchLite' || $action === 'fetchPart') {
+        [$imap] = imap_open_folder((string)($body['folder'] ?? 'inbox'));
+        $uid = (int)($body['uid'] ?? 0);
+        try {
+            if ($action === 'fetchPart') {
+                $part = imap_message_part($imap, $uid, (string)($body['part'] ?? ''));
+                return ['raw' => $part === null ? null : base64_encode($part)];
+            }
+            $lite = imap_lite_message($imap, $uid);
+            if ($lite === null) {
+                $raw = imap_raw_message($imap, $uid);
+                return ['raw' => $raw === null ? null : base64_encode($raw), 'lite' => false];
+            }
+            return ['raw' => $lite['raw'] === null ? null : base64_encode($lite['raw']), 'lite' => !empty($lite['lite'])];
+        } finally { imap_release($imap); }
     }
     if ($action === 'fetch') {
         [$imap] = imap_open_folder((string)($body['folder'] ?? 'inbox'));

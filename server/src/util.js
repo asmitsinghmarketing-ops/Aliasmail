@@ -52,6 +52,10 @@ export function matchesQuery(item, q) {
 export const toUidList = (ids) => (Array.isArray(ids) ? ids : []).map(Number).filter(Number.isInteger);
 
 /** Turn a mailparser result into what the client renders. Inline (cid:) images become data URIs. */
+// An attachment the message was opened without (fetchLite) reports its encoded size; base64
+// carries 3 bytes in every 4.
+const leftOutSize = (a) => Math.round(Number(/size=(\d+)/.exec(a.headers?.get('x-aliasmail-part') || '')?.[1] || 0) * 0.74);
+
 export function bodyOf(parsed) {
   let html = parsed.html || null;
   if (html) {
@@ -66,7 +70,7 @@ export function bodyOf(parsed) {
     text: parsed.text || '',
     references: parsed.references || null,
     attachments: parsed.attachments
-      .map((a, index) => ({ index, filename: a.filename || `attachment-${index + 1}`, contentType: a.contentType, size: a.size, inline: Boolean(a.cid && a.contentDisposition === 'inline') }))
+      .map((a, index) => ({ index, filename: a.filename || `attachment-${index + 1}`, contentType: a.contentType, size: a.size || leftOutSize(a), inline: Boolean(a.cid && a.contentDisposition === 'inline') }))
       .filter((a) => !a.inline),
   };
 }

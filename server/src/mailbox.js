@@ -222,6 +222,35 @@ async function parseSource(source, identity) {
   return parsed;
 }
 
+// Larger messages are opened without their big attachments (see fetchLite in the bridge); each
+// one comes down only when it is opened, through attachmentContent.
+const LITE_MIN_BYTES = 512 * 1024;
+
+async function download(folder, uid) {
+  if (config.mailBridge.configured && cacheOf(folder).messages[uid]?.size > LITE_MIN_BYTES) {
+    try {
+      const { raw } = await bridge('fetchLite', { folder, uid });
+      return raw ? Buffer.from(raw, 'base64') : null;
+    } catch (err) {
+      // A bridge from before fetchLite: download the whole message as before.
+      if (!/Unsupported bridge action/.test(err.message)) throw err;
+    }
+  }
+  const { raw } = await bridge('fetch', { folder, uid });
+  return raw ? Buffer.from(raw, 'base64') : null;
+}
+
+/** An attachment with its content, downloading it now if the message was opened without it. */
+export async function attachmentContent(att, uid, folder = 'inbox') {
+  const part = /^([\d.]+);/.exec(String(att.headers?.get('x-aliasmail-part') || ''))?.[1];
+  if (!part) return att;
+  const { raw } = await bridge('fetchPart', { folder, uid: Number(uid), part });
+  if (!raw) throw new HttpError(404, 'This message was deleted from the mailbox');
+  const file = (await simpleParser(Buffer.from(raw, 'base64'))).attachments[0];
+  if (!file) throw new HttpError(500, 'The attachment could not be read');
+  return { ...att, content: file.content, size: file.content.length };
+}
+
 /** Read memory, then durable cache, and only then download from the mail server. */
 export function fetchParsed(uid, folder = 'inbox') {
   uid = Number(uid);
@@ -234,9 +263,8 @@ export function fetchParsed(uid, folder = 'inbox') {
     let source = await messageCache.get(identity);
     const persisted = Boolean(source);
     if (!source) {
-      const { raw } = await bridge('fetch', { folder, uid });
-      if (!raw) return null;
-      source = Buffer.from(raw, 'base64');
+      source = await download(folder, uid);
+      if (!source) return null;
     }
     const parsed = await parseSource(source, identity);
     if (!persisted) void messageCache.put(identity, source);

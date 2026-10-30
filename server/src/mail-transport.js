@@ -135,7 +135,7 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
   // Repeating these can't change anything twice. Sending, moving and deleting are never retried:
   // a dropped connection doesn't prove the first attempt failed.
   const SEND_ACTIONS = new Set(['sendRaw', 'sendStagedRaw', 'sendWithUploads']);
-  const SAFE_TO_RETRY = new Set(['health', 'test', 'sync', 'fetch', 'fetchMany', 'workerStatus', 'flag']);
+  const SAFE_TO_RETRY = new Set(['health', 'test', 'sync', 'fetch', 'fetchMany', 'workerStatus', 'flag', 'fetchLite', 'fetchPart']);
 
   async function bridgePost(action, data) {
     if (!settings.mailBridge.configured) throw new HttpError(503, 'PHP mail bridge is not configured');
@@ -222,7 +222,7 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
 
   return {
     async request(action, data = {}) {
-      if (settings.mailBridge.configured && ['startUpload', 'consumeUpload', 'deleteUpload', 'saveStagedSent', 'sendWithUploads'].includes(action)) return bridge(action, data);
+      if (settings.mailBridge.configured && ['startUpload', 'consumeUpload', 'deleteUpload', 'saveStagedSent', 'sendWithUploads', 'fetchLite', 'fetchPart'].includes(action)) return bridge(action, data);
       const transport = await selected();
       // A bridge can still send SMTP on hosts where only direct IMAP is enabled.
       if (transport === 'direct' && action === 'sendRaw' && settings.mailBridge.configured) return bridge(action, data);
