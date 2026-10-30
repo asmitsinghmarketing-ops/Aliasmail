@@ -110,6 +110,30 @@ export function getMessage(path) {
 
 export const preloadMessage = (path) => getMessage(path).catch(() => {});
 
+// Files that can be looked at in a new tab, by extension. Only types a browser shows without
+// running anything: never HTML or SVG, which could run scripts as this site.
+const PREVIEW_TYPES = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', txt: 'text/plain', csv: 'text/plain', log: 'text/plain' };
+export const previewType = (filename) => PREVIEW_TYPES[String(filename).split('.').pop().toLowerCase()] || null;
+
+/** Open an attachment in a new tab (PDF, image, text) instead of downloading it. */
+export async function preview(path, filename) {
+  const type = previewType(filename);
+  if (!type) return download(path, filename);
+  // Opened now, inside the click, so it isn't blocked as a pop-up; filled once the file is here.
+  const tab = window.open('', '_blank');
+  try {
+    const res = await request(path);
+    if (!res.ok) throw new Error('Couldn’t open the attachment');
+    const url = URL.createObjectURL(new Blob([await res.arrayBuffer()], { type }));
+    if (tab) tab.location.href = url;
+    else window.location.assign(url);
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (err) {
+    tab?.close();
+    throw err;
+  }
+}
+
 export async function download(path, filename) {
   const res = await request(path);
   if (!res.ok) throw new Error('Download failed');

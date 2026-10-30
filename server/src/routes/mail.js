@@ -16,7 +16,7 @@ import { audit } from '../audit.js';
 const passwordChecks = limiter('password-change', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 import { requireAuth } from '../auth.js';
 import { attachmentContent, deleteFromServer, fetchParsed, forwardableAttachment, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
-import { deliver } from '../outbox.js';
+import { deliver, queueInOutbox, runScheduled } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
 import { announceChange, mailEvents } from '../mail-events.js';
@@ -251,6 +251,8 @@ const scheduledSummary = (s) =>
     sendAt: s.sendAt,
     error: s.failed ? s.error : null,
     hasAttachments: s.mail.attachments.length > 0,
+    // Outbox: a send that failed, being retried (lastError, next try at sendAt) or given up on.
+    ...(s.outbox && { outbox: true, failed: Boolean(s.failed), uncertain: Boolean(s.uncertain), lastError: s.error || null, attempts: s.attempts || 0 }),
   });
 
 const DRAFT_FIELDS = ['to', 'cc', 'bcc', 'subject', 'text', 'html', 'inReplyTo'];
@@ -272,7 +274,8 @@ router.get('/folders', (req, res) => {
     snoozed: count(FOLDERS.snoozed),
     important: unread('important'),
     sent: sentItems(me).length,
-    scheduled: db().scheduled.filter((s) => s.alias === me).length,
+    scheduled: db().scheduled.filter((s) => s.alias === me && !s.outbox).length,
+    outbox: db().scheduled.filter((s) => s.alias === me && s.outbox).length,
     drafts: db().drafts.filter((d) => d.alias === me).length,
     all: unread('all'),
     spam: messagesFor(me, db().spamBox.messages).length,
@@ -302,7 +305,8 @@ router.get('/messages', (req, res) => {
   let items;
   if (folder === 'sent') items = sentItems(me);
   else if (folder === 'drafts') items = db().drafts.filter((d) => d.alias === me).map(draftSummary);
-  else if (folder === 'scheduled') items = db().scheduled.filter((s) => s.alias === me).map(scheduledSummary);
+  else if (folder === 'scheduled') items = db().scheduled.filter((s) => s.alias === me && !s.outbox).map(scheduledSummary);
+  else if (folder === 'outbox') items = db().scheduled.filter((s) => s.alias === me && s.outbox).map(scheduledSummary);
   else if (folder === 'spam') items = messagesFor(me, db().spamBox.messages).map(spamSummary);
   else {
     const labelId = folder.startsWith('label:') ? folder.slice(6) : null;
@@ -583,7 +587,7 @@ router.get('/scheduled/:id', (req, res) => {
   res.json({
     ...scheduledSummary(item),
     bcc: asAddresses(item.mail.bcc),
-    html: null,
+    html: item.mail.html || null,
     text: item.mail.text,
     attachments: item.mail.attachments.map((a, index) => ({ index, filename: a.filename, size: a.size || Buffer.byteLength(a.content || '', 'base64'), unavailable: true })),
   });
@@ -610,6 +614,24 @@ router.post('/scheduled/cancel', (req, res) => {
     });
   }
   db().scheduled = db().scheduled.filter((s) => !(s.alias === me && ids.has(s.id)));
+  save();
+  res.json({ ok: true });
+});
+
+/** Outbox: try failed messages again now. */
+router.post('/outbox/retry', (req, res) => {
+  const ids = new Set((req.body?.ids ?? []).map(String));
+  const items = db().scheduled.filter((s) => s.alias === req.me && s.outbox && ids.has(s.id));
+  for (const item of items) Object.assign(item, { failed: false, uncertain: false, attempts: 0, sendAt: new Date().toISOString() });
+  save();
+  void runScheduled();
+  res.json({ ok: true, retrying: items.length });
+});
+
+/** Outbox: delete messages that won't be sent. */
+router.post('/outbox/delete', (req, res) => {
+  const ids = new Set((req.body?.ids ?? []).map(String));
+  db().scheduled = db().scheduled.filter((s) => !(s.alias === req.me && s.outbox && ids.has(s.id)));
   save();
   res.json({ ok: true });
 });
@@ -710,9 +732,14 @@ router.post('/send', async (req, res) => {
     const reason = err.response || err.message || (err.errors || []).map((e) => e.message).filter(Boolean).join('; ') || err.code || err.name;
     // Only the browser saw the reason before; keep it in the host's log too (no message content).
     console.warn(`[send] from ${me} to ${to.length + cc.length + bcc.length} recipient(s) failed via ${config.mailBridge.configured ? 'PHP bridge' : `direct SMTP ${config.smtp.host}:${config.smtp.port}`}: ${reason}`);
-    if (err instanceof HttpError) throw err;
-    // Pass on the mail server's reason (e.g. "sender address rejected").
-    throw new HttpError(502, `The mail server didn't accept the message: ${reason}`);
+    // Nothing is lost: the message waits in the Outbox, retried automatically unless the mail
+    // server refused it or it may have gone out already. The mail server's reason (e.g. "sender
+    // address rejected") is shown with it.
+    const failure = err instanceof HttpError ? err : Object.assign(new Error(`The mail server didn't accept the message: ${reason}`), { status: err.status });
+    const item = queueInOutbox(me, mail, driveFrom, failure);
+    removeDraft();
+    save();
+    return res.status(202).json({ queued: true, retrying: !item.failed, uncertain: Boolean(item.uncertain), error: item.error, outbox: scheduledSummary(item) });
   }
   removeDraft();
   save();

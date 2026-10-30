@@ -15,6 +15,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN = { email: 'owner@example.com', password: 'admin-password-123' };
 const pdf = crypto.randomBytes(40_000);
 const sent = [];
+let sendMode = 'ok'; // ok | spam | down
 
 let server;
 let bridge;
@@ -37,7 +38,12 @@ test.before(async () => {
       }
       if (data.action === 'fetch') return reply({ raw: raw.toString('base64') });
       if (data.action === 'fetchMany') return reply({ messages: [{ uid: 1, raw: raw.toString('base64') }] });
-      if (data.action === 'sendRaw') { sent.push(Buffer.from(data.raw, 'base64')); return reply({ ok: true }); }
+      if (data.action === 'sendRaw') {
+        if (sendMode === 'spam') { res.statusCode = 502; return reply({ error: 'SMTP rejected command: 550 This message was classified as SPAM and may not be delivered' }); }
+        if (sendMode === 'down') { res.statusCode = 502; return reply({ error: 'SMTP connection failed: Connection timed out (110)' }); }
+        sent.push(Buffer.from(data.raw, 'base64'));
+        return reply({ ok: true });
+      }
       reply({ ok: true });
     });
   });
@@ -110,4 +116,39 @@ test('forwarding sends the original attachment, only for someone who can open th
   });
   assert.equal(refused.status, 404);
   assert.equal(sent.length, 1);
+});
+
+test('a message that cannot be sent waits in the Outbox instead of being lost', async () => {
+  const john = await signIn({ email: 'john@example.com', password: 'john-password' });
+  const before = sent.length;
+  const outbox = async () => (await john('GET', '/api/mail/messages?folder=outbox')).data.items;
+
+  // Refused by the mail server: kept as failed with the reason, not retried automatically.
+  sendMode = 'spam';
+  const refused = await john('POST', '/api/mail/send', { to: 'a@outside.test', subject: '', text: 'He' });
+  assert.equal(refused.status, 202);
+  assert.equal(refused.data.queued, true);
+  assert.equal(refused.data.retrying, false);
+  assert.match(refused.data.error, /classified as SPAM/);
+
+  // Temporary trouble: queued for an automatic retry.
+  sendMode = 'down';
+  const later = await john('POST', '/api/mail/send', { to: 'b@outside.test', subject: 'Report', text: 'Attached soon' });
+  assert.equal(later.status, 202);
+  assert.equal(later.data.retrying, true);
+
+  let items = await outbox();
+  assert.equal(items.length, 2);
+  assert.equal(items.find((i) => i.subject === '').failed, true);
+  assert.equal(items.find((i) => i.subject === 'Report').failed, false);
+  assert.equal((await john('GET', '/api/mail/folders')).data.outbox, 2);
+  assert.equal((await john('GET', '/api/mail/folders')).data.scheduled, 0);
+
+  // Retry now, with the mail server working again: both go out and the Outbox empties.
+  sendMode = 'ok';
+  assert.equal((await john('POST', '/api/mail/outbox/retry', { ids: items.map((i) => i.id) })).status, 200);
+  for (let i = 0; i < 50 && (await outbox()).length; i++) await new Promise((r) => setTimeout(r, 100));
+  items = await outbox();
+  assert.equal(items.length, 0);
+  assert.equal(sent.length, before + 2);
 });

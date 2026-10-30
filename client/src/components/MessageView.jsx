@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { download, getMessage } from '../api.js';
+import { download, getMessage, preview, previewType } from '../api.js';
 import { displayName, formatDate, formatSize, personLabel, timeAgo } from '../format.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
@@ -73,6 +73,81 @@ function HtmlBody({ html }) {
 
 const joinPeople = (list, me) => (list || []).map((p) => personLabel(p, me)).join(', ');
 
+// Attachment cards are coloured by kind of file, so a PDF or a spreadsheet stands out at a glance.
+const FILE_KINDS = [
+  ['pdf', /^pdf$/, 'PDF'],
+  ['doc', /^(docx?|odt|rtf|pages)$/, 'Document'],
+  ['sheet', /^(xlsx?|ods|csv|numbers)$/, 'Spreadsheet'],
+  ['slides', /^(pptx?|odp|key)$/, 'Presentation'],
+  ['image', /^(png|jpe?g|gif|webp|heic|bmp|svg|tiff?)$/, 'Image'],
+  ['archive', /^(zip|rar|7z|tar|gz)$/, 'Archive'],
+  ['media', /^(mp3|wav|m4a|mp4|mov|avi|webm)$/, 'Media'],
+];
+const fileKind = (filename) => {
+  const ext = String(filename).split('.').pop().toLowerCase();
+  const [kind, , label] = FILE_KINDS.find(([, re]) => re.test(ext)) || ['other', null, ext.length <= 5 ? ext.toUpperCase() : 'File'];
+  return { kind, label, ext: ext.length <= 4 ? ext : 'file' };
+};
+
+function Attachments({ url, attachments, onError }) {
+  const [busy, setBusy] = useState(null); // index being fetched, or 'all'
+  const total = attachments.reduce((sum, a) => sum + (a.size || 0), 0);
+  const available = attachments.filter((a) => !a.unavailable);
+  const run = async (key, job) => {
+    setBusy(key);
+    try { await job(); } catch (err) { onError(err.message); } finally { setBusy(null); }
+  };
+  return (
+    <section className="attachments" aria-label="Attachments">
+      <div className="attachments-head">
+        <span className="attachments-title">
+          <Icon name="attach" size={16} /> {attachments.length} attachment{attachments.length === 1 ? '' : 's'}
+          {total > 0 && <span className="muted"> · {formatSize(total)}</span>}
+        </span>
+        {available.length > 1 && (
+          <button
+            type="button"
+            className="link attachments-all"
+            disabled={busy !== null}
+            onClick={() => run('all', async () => { for (const a of available) await download(`${url}/attachments/${a.index}`, a.filename); })}
+          >
+            <Icon name="download" size={16} /> {busy === 'all' ? 'Downloading…' : 'Download all'}
+          </button>
+        )}
+      </div>
+      <div className="attachment-grid">
+        {attachments.map((a) => {
+          const { kind, label, ext } = fileKind(a.filename);
+          const path = `${url}/attachments/${a.index}`;
+          const canPreview = !a.unavailable && previewType(a.filename);
+          return (
+            <div key={a.index} className={`attachment file-${kind} ${a.unavailable ? 'unavailable' : ''} ${busy === a.index ? 'busy' : ''}`}>
+              <button
+                type="button"
+                className="attachment-main"
+                disabled={a.unavailable || busy !== null}
+                title={a.unavailable ? 'Available once the copy reaches the Sent folder' : canPreview ? `Open ${a.filename}` : `Download ${a.filename}`}
+                onClick={() => run(a.index, () => (canPreview ? preview(path, a.filename) : download(path, a.filename)))}
+              >
+                <span className="attachment-type" aria-hidden="true">{ext}</span>
+                <span className="attachment-text">
+                  <span className="attachment-name">{a.filename}</span>
+                  <span className="attachment-meta">{busy === a.index ? 'Opening…' : `${label} · ${formatSize(a.size)}`}</span>
+                </span>
+              </button>
+              {!a.unavailable && (
+                <button type="button" className="icon-btn attachment-download" title={`Download ${a.filename}`} disabled={busy !== null} onClick={() => run(a.index, () => download(path, a.filename))}>
+                  <Icon name="download" size={18} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 const LINK = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]|www\.[^\s<>"']+[^\s<>"'.,;:!?)\]])/g;
 
 /** Plain text with its web addresses made clickable (rendered by React, so nothing is injected). */
@@ -133,6 +208,8 @@ export default function MessageView({
   labelsById = {},
   avatars = {},
   notice,
+  noticeTone,
+  footerActions,
   patch,
 }) {
   const [msg, setMsg] = useState(null);
@@ -191,7 +268,15 @@ export default function MessageView({
       </div>
 
       {error && <div className="alert m">{error}</div>}
-      {notice && <div className="banner">{notice}</div>}
+      {notice &&
+        (noticeTone ? (
+          <div className={`notice-card notice-${noticeTone}`} role={noticeTone === 'error' ? 'alert' : 'status'}>
+            <Icon name={noticeTone === 'error' ? 'spam' : noticeTone === 'warning' ? 'outbox' : 'info'} size={20} />
+            <span>{notice}</span>
+          </div>
+        ) : (
+          <div className="banner">{notice}</div>
+        ))}
 
       {head && (
         <article className="message">
@@ -273,31 +358,19 @@ export default function MessageView({
             {msg && (msg.html ? <HtmlBody html={msg.html} /> : <PlainBody text={msg.text || ''} />)}
           </div>
 
-          {msg?.attachments?.length > 0 && (
-            <div className="attachments">
-              <div className="muted small attachments-title">
-                {msg.attachments.length} attachment{msg.attachments.length === 1 ? '' : 's'}
-              </div>
-              {msg.attachments.map((a) => (
-                <button
-                  key={a.index}
-                  className="attachment"
-                  disabled={a.unavailable}
-                  title={a.unavailable ? 'Available once the copy reaches the Sent folder' : `Download ${a.filename}`}
-                  onClick={() => download(`${url}/attachments/${a.index}`, a.filename).catch((err) => setError(err.message))}
-                >
-                  <span className="attachment-type">{(a.filename.split('.').pop() || 'file').slice(0, 4)}</span>
-                  <span className="attachment-text">
-                    <span className="attachment-name">{a.filename}</span>
-                    <span className="muted small">{formatSize(a.size)}</span>
-                  </span>
-                  {!a.unavailable && <Icon name="download" size={18} />}
+          {msg?.attachments?.length > 0 && <Attachments url={url} attachments={msg.attachments} onError={setError} />}
+
+          {msg && footerActions?.length > 0 && (
+            <div className="reply-bar">
+              {footerActions.map((a) => (
+                <button key={a.label} className={`btn ${a.primary ? 'btn-primary' : 'btn-outline'}`} onClick={a.onClick}>
+                  <Icon name={a.icon} size={18} /> {a.label}
                 </button>
               ))}
             </div>
           )}
 
-          {msg && (onReply || onForward) && (
+          {msg && !footerActions?.length && (onReply || onForward) && (
             <div className="reply-bar">
               {onReply && msg.kind === 'inbox' && (
                 <button className="btn btn-outline" onClick={() => onReply(msg)}>

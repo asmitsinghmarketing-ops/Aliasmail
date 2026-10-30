@@ -33,8 +33,41 @@ export async function deliver(address, mail) {
   return messageId;
 }
 
-const MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 4;
+// Minutes to wait before each automatic retry of a message in the Outbox.
+const RETRY_AFTER_MINUTES = [1, 5, 15];
 let busy = false;
+
+/**
+ * Why a send failed, for the Outbox: `uncertain` when it may have gone out anyway (never retried
+ * automatically, so nothing is sent twice), `permanent` when the mail server refused it (5xx, e.g.
+ * "classified as SPAM", or a bad recipient), otherwise temporary and worth retrying.
+ */
+export function sendFailure(err) {
+  const reason = String(err?.message || err || 'Sending failed');
+  const uncertain = /may still have been sent/i.test(reason);
+  const permanent = !uncertain && (/\b5\d\d\b/.test(reason) || (err?.status >= 400 && err?.status < 500));
+  return { reason, uncertain, permanent };
+}
+
+function markFailed(item, err) {
+  const { reason, uncertain, permanent } = sendFailure(err);
+  item.outbox = true;
+  item.attempts = (item.attempts || 0) + 1;
+  item.error = reason;
+  item.uncertain = uncertain;
+  item.failed = uncertain || permanent || item.attempts >= MAX_ATTEMPTS;
+  if (!item.failed) item.sendAt = new Date(Date.now() + RETRY_AFTER_MINUTES[Math.min(item.attempts, RETRY_AFTER_MINUTES.length) - 1] * 60_000).toISOString();
+  return item;
+}
+
+/** A message that couldn't be sent right now waits in the Outbox (retried, or kept as failed). */
+export function queueInOutbox(alias, mail, drive, err) {
+  const item = markFailed({ id: crypto.randomUUID(), alias, sendAt: new Date().toISOString(), createdAt: new Date().toISOString(), mail, ...(drive && { drive }) }, err);
+  db().scheduled.push(item);
+  save();
+  return item;
+}
 
 /** Send scheduled messages that are due. Failures are retried, then kept with the error. */
 export async function runScheduled() {
@@ -51,10 +84,9 @@ export async function runScheduled() {
           void shareWithRecipients(drive.by.role, drive.by.email, drive, [...mail.to, ...mail.cc, ...mail.bcc]);
         }
       } catch (err) {
-        item.attempts = (item.attempts || 0) + 1;
-        item.error = err.message;
-        if (item.attempts >= MAX_ATTEMPTS) item.failed = true;
-        console.warn(`[scheduled] ${item.id} failed (attempt ${item.attempts}):`, err.message);
+        // A scheduled message that fails moves to the Outbox too, like Gmail.
+        markFailed(item, err);
+        console.warn(`[outbox] ${item.id} failed (attempt ${item.attempts}${item.failed ? ', not retrying' : ''}):`, err.message);
       }
       save();
     }

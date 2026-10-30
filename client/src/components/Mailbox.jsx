@@ -22,6 +22,8 @@ const FOLDERS = [
   { id: 'important', label: 'Important', icon: 'important', count: 'important', color: '#d6336c' },
   { id: 'sent', label: 'Sent', icon: 'send', color: '#1c7ed6' },
   { id: 'scheduled', label: 'Scheduled', icon: 'scheduleSend', count: 'scheduled', plain: true, color: '#7048e8' },
+  // Like Gmail, the Outbox appears only while something in it is waiting to be sent.
+  { id: 'outbox', label: 'Outbox', icon: 'outbox', count: 'outbox', plain: true, color: '#e03131', onlyWhenUsed: true },
   { id: 'drafts', label: 'Drafts', icon: 'draft', count: 'drafts', plain: true, color: '#ae3ec9' },
   { id: 'all', label: 'All Mail', icon: 'mail', color: '#2b8a3e' },
   // Spam is switched off for now (also SYNCED_FOLDERS in server/src/mailbox.js). Uncomment to show it:
@@ -53,9 +55,10 @@ const DONE = {
   notSpam: ['moved to Inbox', null],
   unsnooze: ['unsnoozed', null],
   cancel: ['cancelled and moved to Drafts', null],
+  retry: ['being sent again', null],
 };
 // Actions after which an open message no longer belongs in the current view.
-const LEAVES_VIEW = ['archive', 'trash', 'inbox', 'restore', 'delete', 'unread', 'spam', 'notSpam', 'snooze', 'cancel'];
+const LEAVES_VIEW = ['archive', 'trash', 'inbox', 'restore', 'delete', 'unread', 'spam', 'notSpam', 'snooze', 'cancel', 'retry'];
 
 const URLS = { inbox: '/mail/messages', sent: '/mail/sent', spam: '/mail/spam', scheduled: '/mail/scheduled' };
 
@@ -80,6 +83,16 @@ const SHORTCUTS = [
 ];
 
 const UNDO_SEND_MS = 5000;
+
+// Mail-server refusals in plain words, with what to do about them.
+function friendlyReason(reason) {
+  const r = String(reason || '');
+  if (/classified as SPAM/i.test(r)) return 'The mail server flagged it as spam, which usually happens when there is no subject or almost no text. Add a subject and a few sentences, then send it again.';
+  if (/(user unknown|no such user|does not exist|5\.1\.1|recipient.*(rejected|invalid))/i.test(r)) return 'One of the addresses doesn’t exist. Check the recipients and send it again.';
+  if (/(too large|size limit|5\.3\.4|\b552\b)/i.test(r)) return 'The message is too large for the mail server. Remove an attachment or share it from Drive instead.';
+  if (/(timed out|couldn’t reach|ECONNREFUSED|connection failed|didn’t answer)/i.test(r)) return 'The mail server couldn’t be reached just now.';
+  return r.trim().replace(/[.\s]*$/, '.');
+}
 
 const quote = (msg) =>
   (msg.text || '')
@@ -216,8 +229,9 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const labelsById = useMemo(() => Object.fromEntries(labels.map((l) => [l.id, l])), [labels]);
   const showTabs = folder === 'inbox' && !search;
 
-  const flash = (text, undo, ms = 6000) => {
-    setToast({ text, undo });
+  // `extra`: { tone: 'error' | 'warning' | 'success', title, actions: [{ label, onClick }] }.
+  const flash = (text, undo, ms = 6000, extra = {}) => {
+    setToast({ text, undo, ...extra });
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), ms);
   };
@@ -455,11 +469,12 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       if (folder === 'sent') await api('/mail/sent/delete', { method: 'POST', body: { ids } });
       else if (folder === 'drafts') await api('/mail/drafts/delete', { method: 'POST', body: { ids } });
       else if (folder === 'scheduled') await api('/mail/scheduled/cancel', { method: 'POST', body: { ids } });
+      else if (folder === 'outbox') await api(action === 'retry' ? '/mail/outbox/retry' : action === 'cancel' ? '/mail/scheduled/cancel' : '/mail/outbox/delete', { method: 'POST', body: { ids } });
       else if (folder === 'spam') await api('/mail/spam/action', { method: 'POST', body: { ids, action } });
       else await api('/mail/messages/action', { method: 'POST', body: { ids, action, ...extra } });
 
       const [doneText, undoAction] =
-        folder === 'sent' ? ['deleted', null] : folder === 'drafts' ? ['discarded', null] : action === 'snooze' ? [`snoozed until ${shortTime(extra.until)}`, 'unsnooze'] : DONE[action] || [];
+        folder === 'sent' || (folder === 'outbox' && action === 'delete') ? ['deleted', null] : folder === 'drafts' ? ['discarded', null] : folder === 'outbox' && action === 'cancel' ? ['moved to Drafts', null] : action === 'snooze' ? [`snoozed until ${shortTime(extra.until)}`, 'unsnooze'] : DONE[action] || [];
       if (doneText && !silent) {
         const noun = ids.length === 1 ? 'Conversation' : `${ids.length} conversations`;
         const undo = undoAction && (() => act(ids, undoAction, {}, { silent: true }).then(() => flash('Action undone.')));
@@ -665,11 +680,31 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     pendingSends.current += 1;
     const timer = setTimeout(async () => {
       if (cancelled) return;
+      const subject = payload.subject || '(no subject)';
       try {
-        sharedNote(await api('/mail/send', { method: 'POST', body }));
+        const result = await api('/mail/send', { method: 'POST', body });
+        if (result.queued) {
+          // Not sent, but not lost: it waits in the Outbox (retried by itself unless refused).
+          flash(
+            result.uncertain
+              ? 'The connection dropped while sending, so it may already have gone out. Check Sent before retrying from the Outbox.'
+              : result.retrying
+                ? `${friendlyReason(result.error)} AliasMail will keep trying in the background.`
+                : friendlyReason(result.error),
+            null,
+            20000,
+            {
+              tone: result.retrying ? 'warning' : 'error',
+              title: result.retrying ? `“${subject}” is waiting in the Outbox` : `“${subject}” wasn’t sent`,
+              actions: [{ label: 'Open Outbox', onClick: () => goTo('outbox') }],
+            },
+          );
+        } else {
+          sharedNote(result);
+        }
         load();
       } catch (err) {
-        flash(`Couldn’t send “${payload.subject || '(no subject)'}”: ${err.message.replace(/[.\s]*$/, '.')} It’s open again so you can retry.`, null, 12000);
+        flash(`${err.message.replace(/[.\s]*$/, '.')} It’s open again so you can fix it and send.`, null, 15000, { tone: 'error', title: `Couldn’t send “${subject}”` });
         reopen(payload);
       } finally {
         pendingSends.current -= 1;
@@ -747,6 +782,15 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     if (folder === 'sent') return <IconButton icon="trash" title="Delete" danger size={size} onClick={() => act(ids, 'delete')} />;
     if (folder === 'drafts') return <IconButton icon="trash" title="Discard drafts" danger size={size} onClick={() => act(ids, 'delete')} />;
     if (folder === 'scheduled') return <IconButton icon="close" title="Cancel send" size={size} onClick={() => act(ids, 'cancel')} />;
+    if (folder === 'outbox') {
+      return (
+        <>
+          <IconButton icon="refresh" title="Try sending again now" size={size} onClick={() => act(ids, 'retry')} />
+          <IconButton icon="edit" title="Edit (moves to Drafts)" size={size} onClick={() => act(ids, 'cancel')} />
+          <IconButton icon="trash" title="Delete" danger size={size} onClick={() => act(ids, 'delete')} />
+        </>
+      );
+    }
     if (folder === 'spam') {
       return (
         <>
@@ -826,11 +870,18 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const notice =
     open?.kind === 'spam'
       ? 'This message is in Spam. Be careful with links, and attachments are blocked.'
-      : open?.kind === 'scheduled'
-        ? `Scheduled to send ${shortTime(open.sendAt)}.${open.error ? ` Last attempt failed: ${open.error}` : ''}`
-        : null;
+      : open?.outbox
+        ? open.uncertain
+          ? 'Not sent from the Outbox: the connection dropped while sending, so it may already have gone out. Check Sent before trying again.'
+          : open.failed
+            ? `Not sent. ${friendlyReason(open.lastError)}`
+            : `Waiting in the Outbox. ${friendlyReason(open.lastError)} Trying again ${shortTime(open.sendAt)}.`
+        : open?.kind === 'scheduled'
+          ? `Scheduled to send ${shortTime(open.sendAt)}.${open.error ? ` Last attempt failed: ${open.error}` : ''}`
+          : null;
 
   function rowDate(item) {
+    if (item.outbox) return <span className={item.failed ? 'text-red' : 'text-orange'}>{item.failed ? (item.uncertain ? 'Check Sent' : 'Not sent') : `Retry ${shortTime(item.sendAt)}`}</span>;
     if (item.kind === 'scheduled') return <span className={item.error ? 'text-red' : 'text-orange'}>{item.error ? 'Failed' : shortTime(item.sendAt)}</span>;
     if (item.snoozedUntil) return <span className="text-orange">{shortTime(item.snoozedUntil)}</span>;
     return formatDate(item.date);
@@ -960,7 +1011,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             <Icon name="edit" /> <span>Compose</span>
           </button>
           <nav>
-            {FOLDERS.map((f) => (
+            {FOLDERS.filter((f) => !f.onlyWhenUsed || counts[f.count] > 0 || folder === f.id).map((f) => (
               <button key={f.id} className={`nav-item ${folder === f.id ? 'active' : ''}`} onClick={() => goTo(f.id)} title={f.label}>
                 <span className="nav-icon" style={{ '--c': f.color }}>
                   <Icon name={f.icon} size={18} />
@@ -1134,6 +1185,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               labelsById={labelsById}
               avatars={people}
               notice={notice}
+              noticeTone={open.outbox ? (open.failed ? 'error' : 'warning') : undefined}
               patch={livePatch}
               actions={actionButtons([open.id], [{ ...live, read: true }])}
               position={openIndex >= 0 ? { index: openIndex, total: list.items.length } : null}
@@ -1147,7 +1199,16 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               onStar={toggleStar}
               onReply={reply}
               onReplyAll={replyAll}
-              onForward={open.kind === 'spam' ? null : forward}
+              onForward={open.kind === 'spam' || open.kind === 'scheduled' ? null : forward}
+              footerActions={
+                open.outbox
+                  ? [
+                      { label: 'Send again', icon: 'send', primary: true, onClick: () => act([open.id], 'retry') },
+                      { label: 'Edit', icon: 'edit', onClick: () => act([open.id], 'cancel') },
+                      { label: 'Delete', icon: 'trash', onClick: () => act([open.id], 'delete') },
+                    ]
+                  : null
+              }
             />
           ) : (
             <div className="view-enter" key={`${folder}|${category}|${search}`}>
@@ -1369,8 +1430,36 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       )}
 
       {toast && (
-        <div className="toast">
-          {toast.text}
+        <div className={`toast ${toast.tone ? `toast-card toast-${toast.tone}` : ''}`} role={toast.tone === 'error' ? 'alert' : 'status'}>
+          {toast.tone && (
+            <span className="toast-icon" aria-hidden="true">
+              <Icon name={toast.tone === 'success' ? 'check' : toast.tone === 'warning' ? 'outbox' : 'spam'} size={20} />
+            </span>
+          )}
+          {toast.tone ? (
+            <span className="toast-body">
+              {toast.title && <strong className="toast-title">{toast.title}</strong>}
+              <span className="toast-text">{toast.text}</span>
+              {toast.actions?.length > 0 && (
+                <span className="toast-actions">
+                  {toast.actions.map((a) => (
+                    <button
+                      key={a.label}
+                      className="toast-action"
+                      onClick={() => {
+                        setToast(null);
+                        a.onClick();
+                      }}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </span>
+              )}
+            </span>
+          ) : (
+            toast.text
+          )}
           {toast.undo && (
             <button
               className="toast-action"
