@@ -1,5 +1,7 @@
 <?php
-// Copy to settings.local.php in the PHP service folder. Keep this file private and never commit it.
+// Copy to settings.local.php in the PHP service folder, or to aliasmail-settings.php in your
+// home directory (two levels above it, outside public_html). Keep the real file private and
+// never commit it. For another location, set ALIASMAIL_SETTINGS_FILE.
 $GLOBALS['aliasmailSettings'] = [
     'MAIL_USER' => 'mailbox@example.com',
     'MAIL_PASSWORD' => 'replace-with-mailbox-password',
