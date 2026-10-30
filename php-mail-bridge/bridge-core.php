@@ -313,6 +313,14 @@ function handle(array $body): array {
         }
         return ['messages' => $messages];
     }
+    if ($action === 'fetchPartBytes') {
+        // An attachment's decoded contents, for download.php (served by a worker when one runs).
+        [$imap] = imap_open_folder((string)($body['folder'] ?? 'inbox'));
+        try {
+            $bytes = imap_part_bytes($imap, (int)($body['uid'] ?? 0), (string)($body['part'] ?? ''));
+            return ['bytes' => $bytes === null ? null : base64_encode($bytes)];
+        } finally { imap_release($imap); }
+    }
     if ($action === 'fetchLite' || $action === 'fetchPart') {
         [$imap] = imap_open_folder((string)($body['folder'] ?? 'inbox'));
         $uid = (int)($body['uid'] ?? 0);

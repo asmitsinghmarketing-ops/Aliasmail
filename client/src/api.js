@@ -115,6 +115,18 @@ export const preloadMessage = (path) => getMessage(path).catch(() => {});
 const PREVIEW_TYPES = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', txt: 'text/plain', csv: 'text/plain', log: 'text/plain' };
 export const previewType = (filename) => PREVIEW_TYPES[String(filename).split('.').pop().toLowerCase()] || null;
 
+// Large attachments come straight from the mail bridge through a short-lived link (no detour
+// through the app, and the browser shows its own download progress). Null: fetch it here.
+async function directLink(path) {
+  try {
+    const res = await request(`${path}/link`);
+    if (!res.ok) return null;
+    return (await res.json()).url || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Open an attachment in a new tab (PDF, image, text) instead of downloading it. */
 export async function preview(path, filename) {
   const type = previewType(filename);
@@ -122,6 +134,12 @@ export async function preview(path, filename) {
   // Opened now, inside the click, so it isn't blocked as a pop-up; filled once the file is here.
   const tab = window.open('', '_blank');
   try {
+    const link = await directLink(path);
+    if (link) {
+      if (tab) tab.location.href = `${link}&inline=1`;
+      else window.location.assign(`${link}&inline=1`);
+      return;
+    }
     const res = await request(path);
     if (!res.ok) throw new Error('Couldn’t open the attachment');
     const url = URL.createObjectURL(new Blob([await res.arrayBuffer()], { type }));
@@ -135,10 +153,15 @@ export async function preview(path, filename) {
 }
 
 export async function download(path, filename) {
+  const link = await directLink(path);
+  if (link) {
+    // A normal browser download (Content-Disposition: attachment), with its own progress bar.
+    Object.assign(document.createElement('a'), { href: link, rel: 'noreferrer' }).click();
+    return;
+  }
   const res = await request(path);
   if (!res.ok) throw new Error('Download failed');
   const url = URL.createObjectURL(await res.blob());
-  const link = Object.assign(document.createElement('a'), { href: url, download: filename });
-  link.click();
+  Object.assign(document.createElement('a'), { href: url, download: filename }).click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

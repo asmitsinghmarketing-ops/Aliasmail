@@ -261,6 +261,23 @@ export async function forwardableAttachment(att, uid, folder, owner) {
   return { filename: full.filename || 'attachment', contentType: full.contentType, content: full.content.toString('base64'), size: full.content.length };
 }
 
+/**
+ * A short-lived link to download a large attachment straight from the bridge (download.php),
+ * so the file doesn't travel through this app; null when it isn't one (download it here).
+ */
+export async function attachmentLink(att, uid, folder = 'inbox') {
+  const part = leftOutPart(att);
+  if (!part || !config.mailBridge.configured) return null;
+  try {
+    const { url } = await bridge('partLink', { folder, uid: Number(uid), part, filename: att.filename || '', contentType: att.contentType || '' });
+    return url || null;
+  } catch (err) {
+    // A bridge from before download links: the app serves the file as before.
+    if (/Unsupported bridge action|MAIL_UPLOAD_URL/.test(err.message)) return null;
+    throw err;
+  }
+}
+
 /** An attachment with its content, downloading it now if the message was opened without it. */
 export async function attachmentContent(att, uid, folder = 'inbox') {
   const part = leftOutPart(att);

@@ -58,6 +58,11 @@ try {
         if ($bytes === null) throw new RuntimeException('This message was deleted from the mailbox');
         reply(200, upload_store_completed($bytes, (string)($body['owner'] ?? ''), (string)($body['filename'] ?? ''), (string)($body['contentType'] ?? '')));
     }
+    // A short-lived link for the browser to download one attachment straight from download.php.
+    if ($action === 'partLink') {
+        reply(200, download_link_create((string)($body['folder'] ?? 'inbox'), (int)($body['uid'] ?? 0), (string)($body['part'] ?? ''),
+            (string)($body['filename'] ?? ''), (string)($body['contentType'] ?? '')));
+    }
     if ($action === 'saveStagedSent') {
         $rawId = (string)($body['rawId'] ?? ''); $raw = raw_read($rawId);
         [$imap] = imap_open_folder('sent', false);

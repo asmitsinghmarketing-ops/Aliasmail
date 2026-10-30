@@ -222,7 +222,7 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
 
   return {
     async request(action, data = {}) {
-      if (settings.mailBridge.configured && ['startUpload', 'consumeUpload', 'deleteUpload', 'saveStagedSent', 'sendWithUploads', 'fetchLite', 'fetchPart', 'uploadFromPart'].includes(action)) return bridge(action, data);
+      if (settings.mailBridge.configured && ['startUpload', 'consumeUpload', 'deleteUpload', 'saveStagedSent', 'sendWithUploads', 'fetchLite', 'fetchPart', 'uploadFromPart', 'partLink'].includes(action)) return bridge(action, data);
       const transport = await selected();
       // A bridge can still send SMTP on hosts where only direct IMAP is enabled.
       if (transport === 'direct' && action === 'sendRaw' && settings.mailBridge.configured) return bridge(action, data);

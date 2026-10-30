@@ -3,8 +3,9 @@ import { api, cachedMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
 import { withDriveLinks } from '../drivePicker.js';
-import { uploadAttachments } from '../attachmentUpload.js';
+import { uploadAttachments, uploadProgress } from '../attachmentUpload.js';
 import LoginCodes from './LoginCodes.jsx';
+import SendingTray from './SendingTray.jsx';
 import { ask } from './Dialog.jsx';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
@@ -220,6 +221,18 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState(null);
+  // Messages on their way out from this page (attachments uploading, then sending), shown at
+  // the top of the Outbox with their progress until they have gone.
+  const [sending, setSending] = useState([]);
+  const [justSent, setJustSent] = useState(null); // { key, subject } shown as "Sent" briefly
+  const justSentTimer = useRef(null);
+  const [trayMin, setTrayMin] = useState(false);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!sending.length) return undefined;
+    const timer = setInterval(() => setTick((n) => n + 1), 400);
+    return () => clearInterval(timer);
+  }, [sending.length]);
   const [leaving, setLeaving] = useState(new Set()); // rows animating out of the list
   const toastTimer = useRef(null);
   const searchInput = useRef(null);
@@ -655,7 +668,6 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     // message goes out once they're done.
     const uploading = uploadAttachments(files);
     uploading.catch(() => {});
-    const stillUploading = files.some((f) => f._file && !f.uploadId);
     const bodyWith = (uploaded) => ({
       ...rest,
       ...withDriveLinks(payload, driveFiles),
@@ -685,19 +697,40 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     // undo window ends. A failure is reported then, and the message reopens so nothing is lost.
     let cancelled = false;
     pendingSends.current += 1;
+    // Like Gmail, it shows in the Outbox (with its progress) until it has actually gone out.
+    const key = `s${Date.now()}${Math.random().toString(36).slice(2)}`;
+    const phase = (p) => setSending((list) => list.map((s) => (s.key === key ? { ...s, phase: p } : s)));
+    const done = () => setSending((list) => list.filter((s) => s.key !== key));
+    // Undo, offered by the sending card until the undo window ends.
+    const undo = () => {
+      if (cancelled) return;
+      cancelled = true;
+      pendingSends.current -= 1;
+      clearTimeout(timer);
+      done();
+      reopen(payload);
+      flash('Sending undone.');
+    };
+    setSending((list) => [...list, { key, subject: payload.subject, to: payload.to, files, phase: 'waiting', undo }]);
     const timer = setTimeout(async () => {
       if (cancelled) return;
       const subject = payload.subject || '(no subject)';
       try {
         let uploaded;
+        phase('uploading');
         try {
           uploaded = await uploading;
         } catch (err) {
           throw new Error(`An attachment didn’t upload (${err.message.replace(/[.\s]*$/, '')})`);
         }
         if (cancelled) return;
+        phase('sending');
         const result = await api('/mail/send', { method: 'POST', body: bodyWith(uploaded) });
-        if (stillUploading && !result.queued) flash('Message sent.', null, 4000, { tone: 'success', title: `“${subject}” was sent` });
+        if (!result.queued) {
+          setJustSent({ key, subject });
+          clearTimeout(justSentTimer.current);
+          justSentTimer.current = setTimeout(() => setJustSent(null), 3500);
+        }
         if (result.queued) {
           // Not sent, but not lost: it waits in the Outbox (retried by itself unless refused).
           flash(
@@ -723,19 +756,12 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         reopen(payload);
       } finally {
         pendingSends.current -= 1;
+        done();
       }
     }, UNDO_SEND_MS);
-    flash(
-      stillUploading ? 'Sending… attachments are uploading in the background.' : 'Message sent.',
-      () => {
-        cancelled = true;
-        pendingSends.current -= 1;
-        clearTimeout(timer);
-        reopen(payload);
-        flash('Sending undone.');
-      },
-      UNDO_SEND_MS,
-    );
+    // The sending card shows progress and Undo; clear any older pop-up out of its way.
+    setToast(null);
+    setTrayMin(false);
   }
 
   /* ----- keyboard shortcuts (Gmail style) ----- */
@@ -874,6 +900,37 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     );
   }
 
+  const shownCounts = { ...counts, outbox: (counts.outbox || 0) + sending.length };
+
+  // The Outbox's live rows: each message this page is uploading or sending right now.
+  const sendingRows = folder === 'outbox' && !search && sending.length > 0 && (
+    <div className="sending-rows" aria-live="polite">
+      {sending.map((m) => {
+        const { loaded, total } = uploadProgress(m.files);
+        const pct = total ? Math.round((loaded / total) * 100) : 100;
+        // Attachments upload from the moment they're attached, so show that even during Undo.
+        const uploadingNow = m.phase !== 'sending' && total > 0 && loaded < total;
+        const status = uploadingNow ? `Uploading attachments · ${pct}%` : m.phase === 'waiting' ? 'Sending in a moment…' : 'Sending…';
+        const bar = uploadingNow ? pct : m.phase === 'waiting' ? 0 : null;
+        return (
+          <div key={m.key} className="sending-row">
+            <span className="sending-icon" aria-hidden="true"><Icon name="send" size={18} /></span>
+            <div className="sending-text">
+              <div className="sending-line">
+                <strong>{m.subject || '(no subject)'}</strong>
+                <span className="muted small"> · to {m.to || '—'}</span>
+              </div>
+              <div className={`sending-bar ${bar === null ? 'indeterminate' : ''}`}>
+                <span style={bar === null ? undefined : { width: `${Math.max(bar, 3)}%` }} />
+              </div>
+            </div>
+            <span className="sending-status">{status}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+
   const allSelected = list.items.length > 0 && list.items.every((i) => selected.has(i.id));
   const selectedIds = [...selected];
   const selectedItems = list.items.filter((i) => selected.has(i.id));
@@ -909,7 +966,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const drawerVisiblyOpen = !collapsed || (drawerDrag !== null && drawerDrag > 0);
 
   return (
-    <div className={`app ${drawerVisiblyOpen ? 'menu-open' : ''}`} style={{ '--alias': user.color }}>
+    <div className={`app ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.length || justSent ? 'has-send-tray' : ''}`} style={{ '--alias': user.color }}>
       <header className="topbar">
         <div className="brand">
           <button
@@ -1026,13 +1083,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             <Icon name="edit" /> <span>Compose</span>
           </button>
           <nav>
-            {FOLDERS.filter((f) => !f.onlyWhenUsed || counts[f.count] > 0 || folder === f.id).map((f) => (
+            {FOLDERS.filter((f) => !f.onlyWhenUsed || shownCounts[f.count] > 0 || folder === f.id).map((f) => (
               <button key={f.id} className={`nav-item ${folder === f.id ? 'active' : ''}`} onClick={() => goTo(f.id)} title={f.label}>
                 <span className="nav-icon" style={{ '--c': f.color }}>
                   <Icon name={f.icon} size={18} />
                 </span>
                 <span className="nav-label">{f.label}</span>
-                {f.count && counts[f.count] > 0 && <span className={`count ${f.plain ? 'plain' : ''}`}>{counts[f.count]}</span>}
+                {f.count && shownCounts[f.count] > 0 && <span className={`count ${f.plain ? 'plain' : ''}`}>{shownCounts[f.count]}</span>}
               </button>
             ))}
             {onOpenAdmin && (
@@ -1314,9 +1371,10 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 </div>
               )}
 
+              {sendingRows}
               <div className="rows">
                 {loading && <div className="loading-lines list"><span /><span /><span /><span /></div>}
-                {!loading && list.items.length === 0 && (
+                {!loading && list.items.length === 0 && !sendingRows && (
                   <div className="empty">
                     {search
                       ? 'No messages match your search.'
@@ -1444,6 +1502,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         </div>
       )}
 
+      <SendingTray
+        items={sending}
+        justSent={justSent}
+        minimized={trayMin}
+        onToggle={() => setTrayMin((m) => !m)}
+        onView={() => goTo('outbox')}
+      />
       {toast && (
         <div className={`toast ${toast.tone ? `toast-card toast-${toast.tone}` : ''}`} role={toast.tone === 'error' ? 'alert' : 'status'}>
           {toast.tone && (
@@ -1473,7 +1538,21 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               )}
             </span>
           ) : (
-            toast.text
+            <>
+              {toast.text}
+              {toast.actions?.map((a) => (
+                <button
+                  key={a.label}
+                  className="toast-action"
+                  onClick={() => {
+                    setToast(null);
+                    a.onClick();
+                  }}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </>
           )}
           {toast.undo && (
             <button

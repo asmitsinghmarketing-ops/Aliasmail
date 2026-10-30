@@ -14,7 +14,25 @@ async function responseJson(response) {
   return data;
 }
 
-export async function uploadAttachment(file) {
+// One piece of a file, sent with XMLHttpRequest because fetch can't report upload progress.
+function sendPiece(url, headers, body, onBytes) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+    xhr.upload.onprogress = (e) => onBytes(e.loaded);
+    xhr.onload = () => {
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new Error(data?.error || `Attachment upload failed (${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new TypeError('Attachment upload failed: network error'));
+    xhr.send(body);
+  });
+}
+
+export async function uploadAttachment(file, onProgress = () => {}) {
   if (!(file instanceof File)) throw new Error('Choose the attachment again');
   const bytes = await file.arrayBuffer();
   const [digest, keys] = await Promise.all([
@@ -30,12 +48,15 @@ export async function uploadAttachment(file) {
   const headers = (index) => ({ 'Content-Type': 'application/octet-stream', 'X-Upload-Id': session.uploadId, 'X-Chunk-Index': String(index) });
   for (let offset = 0, index = 0; offset < file.size; offset += session.chunkBytes, index++) {
     const body = file.slice(offset, Math.min(offset + session.chunkBytes, file.size));
-    let response;
     for (let attempt = 0; attempt < 2; attempt++) {
-      try { response = await fetch(`${session.uploadUrl}?action=chunk`, { method: 'POST', headers: headers(index), body }); break; }
-      catch (error) { if (attempt) throw error; }
+      try {
+        await sendPiece(`${session.uploadUrl}?action=chunk`, headers(index), body, (sent) => onProgress(offset + sent));
+        break;
+      } catch (error) {
+        if (attempt || !(error instanceof TypeError)) throw error; // retry a dropped connection once
+      }
     }
-    await responseJson(response);
+    onProgress(offset + body.size);
   }
   const signature = base64(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keys.privateKey, new TextEncoder().encode(session.manifest)));
   const completed = await fetch(`${session.uploadUrl}?action=finalize`, {
@@ -47,12 +68,25 @@ export async function uploadAttachment(file) {
 
 // Uploads start as soon as a file is attached (like Gmail), so Send usually finds them done.
 const pending = new WeakMap();
+const uploadedSoFar = new WeakMap(); // item -> bytes sent
+
+/** Bytes of these attachments already uploaded, for the Outbox's progress bar. */
+export function uploadProgress(files) {
+  let loaded = 0;
+  let total = 0;
+  for (const item of files) {
+    if (!item._file) continue;
+    total += item.size || 0;
+    loaded += item.uploadId ? item.size || 0 : Math.min(uploadedSoFar.get(item) || 0, item.size || 0);
+  }
+  return { loaded, total };
+}
 
 /** Start uploading an attached file in the background; errors surface when sending. */
 export function preuploadAttachment(item) {
   if (!item._file || item.uploadId || pending.has(item)) return;
-  const upload = uploadAttachment(item._file);
-  upload.catch(() => {});
+  const upload = uploadAttachment(item._file, (bytes) => uploadedSoFar.set(item, bytes));
+  upload.then(() => uploadedSoFar.set(item, item.size || 0), () => uploadedSoFar.delete(item));
   pending.set(item, upload);
 }
 
@@ -60,7 +94,9 @@ export async function uploadAttachments(files) {
   return Promise.all(files.map(async (item) => {
     if (!item._file || item.uploadId) return item;
     try {
-      return await (pending.get(item) || uploadAttachment(item._file));
+      const done = await (pending.get(item) || uploadAttachment(item._file, (bytes) => uploadedSoFar.set(item, bytes)));
+      uploadedSoFar.set(item, item.size || 0);
+      return done;
     } catch (err) {
       pending.delete(item); // the next Send tries this file again
       throw err;

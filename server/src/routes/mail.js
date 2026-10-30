@@ -15,7 +15,7 @@ import { audit } from '../audit.js';
 // Guessing the current password from a signed-in browser: 5 tries per 15 minutes.
 const passwordChecks = limiter('password-change', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 import { requireAuth } from '../auth.js';
-import { attachmentContent, deleteFromServer, fetchParsed, forwardableAttachment, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
+import { attachmentContent, attachmentLink, deleteFromServer, fetchParsed, forwardableAttachment, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
 import { deliver, queueInOutbox, runScheduled } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
@@ -377,6 +377,14 @@ router.get('/messages/:uid', async (req, res) => {
   res.json({ ...summary(msg, me), replyTo: msg.replyTo, messageId: msg.messageId, ...bodyOf(parsed) });
 });
 
+// A direct download link for a large attachment ({ url: null } means: use the route below).
+router.get('/messages/:uid/attachments/:index/link', async (req, res) => {
+  const msg = ownMessage(req);
+  const att = (await fetchParsed(msg.uid))?.attachments[Number(req.params.index)];
+  if (!att) throw new HttpError(404, 'Attachment not found');
+  res.json({ url: await attachmentLink(att, msg.uid, 'inbox') });
+});
+
 router.get('/messages/:uid/attachments/:index', async (req, res) => {
   const msg = ownMessage(req);
   const att = (await fetchParsed(msg.uid))?.attachments[Number(req.params.index)];
@@ -461,6 +469,13 @@ router.get('/sent/:id', async (req, res) => {
     text: record.text,
     attachments: record.attachments.map((a) => ({ ...a, unavailable: true })),
   });
+});
+
+router.get('/sent/:id/attachments/:index/link', async (req, res) => {
+  const msg = ownSent(req);
+  const att = (await fetchParsed(msg.uid, 'sent'))?.attachments[Number(req.params.index)];
+  if (!att) throw new HttpError(404, 'Attachment not found');
+  res.json({ url: await attachmentLink(att, msg.uid, 'sent') });
 });
 
 router.get('/sent/:id/attachments/:index', async (req, res) => {

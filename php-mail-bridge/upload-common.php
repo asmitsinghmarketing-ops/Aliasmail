@@ -123,6 +123,29 @@ function raw_read(string $id): string {
     if(!is_array($s)||($s['kind']??'')!=='raw'||(int)$s['received']!==(int)$s['size']||!is_file($path)||!hash_equals((string)$s['sha256'],hash_file('sha256',$path))) throw new RuntimeException('Staged message verification failed');
     $raw=file_get_contents($path); if($raw===false) throw new RuntimeException('Staged message unavailable'); return $raw;
 }
+// Download links: the browser fetches an attachment straight from here (download.php) instead of
+// through the app. Each link names one part of one message and expires after a few minutes;
+// its id is 192 random bits, so it can't be guessed.
+const DOWNLOAD_TTL = 300;
+
+function download_link_create(string $folder, int $uid, string $part, string $filename, string $type): array {
+    mailbox_name($folder); // only the known folders
+    if ($uid < 1 || !preg_match('/^\d+(\.\d+)*$/', $part)) throw new RuntimeException('Invalid message part');
+    $base = config_value('MAIL_UPLOAD_URL');
+    if ($base === '') throw new RuntimeException('MAIL_UPLOAD_URL is not configured');
+    $id = bin2hex(random_bytes(24));
+    $filename = trim(str_replace(["\0", "\r", "\n"], '', $filename)) ?: 'attachment';
+    $s = ['kind' => 'download', 'id' => $id, 'folder' => $folder, 'uid' => $uid, 'part' => $part,
+        'filename' => substr($filename, 0, 255), 'contentType' => substr(trim($type) ?: 'application/octet-stream', 0, 200), 'expires' => time() + DOWNLOAD_TTL];
+    file_put_contents(upload_path($id, '.json'), json_encode($s, JSON_THROW_ON_ERROR), LOCK_EX);
+    return ['url' => preg_replace('#[^/]*$#', 'download.php', $base, 1) . '?id=' . $id, 'expires' => $s['expires']];
+}
+function download_link_read(string $id): array {
+    $s = json_decode((string)@file_get_contents(upload_path($id, '.json')), true);
+    if (!is_array($s) || ($s['kind'] ?? '') !== 'download' || (int)$s['expires'] < time()) throw new RuntimeException('This download link has expired. Open the message and click the attachment again.');
+    return $s;
+}
+
 /** A finished upload made here rather than by a browser (an attachment being forwarded). */
 function upload_store_completed(string $bytes, string $owner, string $filename, string $type): array {
     $owner = strtolower(trim($owner)); $filename = trim($filename);
