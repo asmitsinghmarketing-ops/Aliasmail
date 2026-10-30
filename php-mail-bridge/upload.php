@@ -13,7 +13,7 @@ try{
     $id=(string)($_SERVER['HTTP_X_UPLOAD_ID']??''); $action=(string)($_GET['action']??'chunk');
     if($action==='chunk'){
         $index=filter_var($_SERVER['HTTP_X_CHUNK_INDEX']??null,FILTER_VALIDATE_INT); if($index===false||$index<0)throw new RuntimeException('Invalid chunk number');
-        $bytes=file_get_contents('php://input',false,null,0,UPLOAD_CHUNK_BYTES+1); if($bytes===false||strlen($bytes)>UPLOAD_CHUNK_BYTES)throw new RuntimeException('Attachment chunk is too large');
+        $bytes=file_get_contents('php://input',false,null,0,UPLOAD_MAX_CHUNK_BYTES+1); if($bytes===false||strlen($bytes)>UPLOAD_MAX_CHUNK_BYTES)throw new RuntimeException('Attachment chunk is too large');
         upload_reply(200,upload_chunk($id,$index,$bytes));
     }
     if($action==='finalize'){$body=json_decode(file_get_contents('php://input'),true);upload_reply(200,upload_finalize($id,(string)($body['signature']??'')));}

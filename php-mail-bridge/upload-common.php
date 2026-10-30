@@ -1,15 +1,23 @@
 <?php
 declare(strict_types=1);
 
-// Browser uploads are plain binary bodies, which the host accepts in large pieces (1 MiB is far
-// below post_max_size). Staged messages arrive as JSON, which the host's firewall caps near 1 MB,
-// so those stay small.
+// Browser uploads are plain binary bodies, which the host accepts in large pieces. Fewer, bigger
+// pieces use more of a slow connection (each one costs a round trip), so the size follows PHP's
+// post_max_size, between 1 and 8 MiB. Staged messages arrive as JSON, which the host's firewall
+// caps near 1 MB, so those stay small.
 const UPLOAD_CHUNK_BYTES = 1024 * 1024;
+const UPLOAD_MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 const RAW_CHUNK_BYTES = 128 * 1024;
 const UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
 const UPLOAD_TTL = 3600;
 const COMPLETED_UPLOAD_TTL = 31 * 86400;
 
+function upload_chunk_bytes(): int {
+    $value = trim((string)ini_get('post_max_size'));
+    $limit = (int)$value * match (strtoupper(substr($value, -1))) { 'G' => 1 << 30, 'M' => 1 << 20, 'K' => 1 << 10, default => 1 };
+    if ($limit <= 0) return UPLOAD_MAX_CHUNK_BYTES; // 0 = no limit
+    return max(UPLOAD_CHUNK_BYTES, min(UPLOAD_MAX_CHUNK_BYTES, $limit - 64 * 1024));
+}
 function upload_dir(): string {
     $dir = rtrim(config_value('MAIL_UPLOAD_DIR', sys_get_temp_dir() . '/aliasmail-uploads'), '/\\');
     if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) throw new RuntimeException('Could not create upload directory');
@@ -43,12 +51,12 @@ function upload_start(array $body): array {
     if ($der === false || strlen($der) < 200 || strlen($der) > 600) throw new RuntimeException('Upload public key is invalid');
     $id = bin2hex(random_bytes(24));
     $s = ['kind'=>'attachment','id'=>$id,'owner'=>$owner,'filename'=>$name,'contentType'=>substr($type,0,200),'size'=>$size,
-        'sha256'=>$hash,'publicKey'=>$publicKey,'expires'=>time()+UPLOAD_TTL,'nextChunk'=>0,'received'=>0,'lastHash'=>'','complete'=>false];
+        'sha256'=>$hash,'publicKey'=>$publicKey,'expires'=>time()+UPLOAD_TTL,'chunkBytes'=>upload_chunk_bytes(),'nextChunk'=>0,'received'=>0,'lastHash'=>'','complete'=>false];
     $s['manifest'] = upload_manifest($s);
     file_put_contents(upload_path($id, '.json'), json_encode($s, JSON_THROW_ON_ERROR), LOCK_EX);
     $url = config_value('MAIL_UPLOAD_URL');
     if ($url === '') throw new RuntimeException('MAIL_UPLOAD_URL is not configured');
-    return ['uploadId'=>$id,'uploadUrl'=>$url,'manifest'=>$s['manifest'],'chunkBytes'=>UPLOAD_CHUNK_BYTES,'expires'=>$s['expires']];
+    return ['uploadId'=>$id,'uploadUrl'=>$url,'manifest'=>$s['manifest'],'chunkBytes'=>$s['chunkBytes'],'expires'=>$s['expires']];
 }
 function with_upload(string $id, callable $callback): array {
     $lock = fopen(upload_path($id, '.lock'), 'c+');
@@ -65,7 +73,7 @@ function upload_chunk(string $id, int $index, string $bytes): array {
         if ($s['complete']) throw new RuntimeException('Upload is already complete');
         $hash = hash('sha256', $bytes);
         if ($index === (int)$s['nextChunk']-1 && hash_equals((string)$s['lastHash'], $hash)) return ['ok'=>true,'nextChunk'=>$s['nextChunk']];
-        $expected = min(UPLOAD_CHUNK_BYTES, (int)$s['size']-(int)$s['received']);
+        $expected = min((int)($s['chunkBytes'] ?? UPLOAD_CHUNK_BYTES), (int)$s['size']-(int)$s['received']);
         if ($index !== (int)$s['nextChunk'] || $expected < 1 || strlen($bytes) !== $expected) throw new RuntimeException('Unexpected attachment chunk');
         if (file_put_contents(upload_path($id,'.bin'), $bytes, FILE_APPEND|LOCK_EX) !== strlen($bytes)) throw new RuntimeException('Could not save attachment chunk');
         $s['received'] += strlen($bytes); $s['nextChunk']++; $s['lastHash'] = $hash;
