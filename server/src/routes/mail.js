@@ -15,7 +15,7 @@ import { audit } from '../audit.js';
 // Guessing the current password from a signed-in browser: 5 tries per 15 minutes.
 const passwordChecks = limiter('password-change', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 import { requireAuth } from '../auth.js';
-import { attachmentLink, deleteFromServer, fetchParsed, sendPart, warmAttachments, forwardableAttachment, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
+import { attachmentLink, deleteFromServer, fetchParsed, noteSend, sendPart, warmAttachments, forwardableAttachment, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
 import { deliver, queueInOutbox, runScheduled } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
@@ -703,6 +703,16 @@ async function forwardedAttachment(me, from) {
 router.post('/send', async (req, res) => {
   const me = req.me;
   const body = req.body ?? {};
+  // Hop timing (admin overview → delivery timings): the browser's part comes with the request.
+  const received = Date.now();
+  const timing = {};
+  const client = body.clientTiming && typeof body.clientTiming === 'object' ? body.clientTiming : {};
+  const sendEntry = () => ({
+    at: new Date(received).toISOString(), from: me, recipients: parseList(body.to).length + parseList(body.cc).length + parseList(body.bcc).length,
+    attachments: Array.isArray(body.attachments) ? body.attachments.length : 0,
+    browser: { undoMs: Number(client.undoMs) || 0, uploadWaitMs: Number(client.uploadWaitMs) || 0 },
+    appMs: Date.now() - received, timing,
+  });
   const to = parseList(body.to);
   const cc = parseList(body.cc);
   const bcc = parseList(body.bcc);
@@ -753,7 +763,7 @@ router.post('/send', async (req, res) => {
   }
 
   try {
-    await deliver(me, mail);
+    await deliver(me, mail, timing);
   } catch (err) {
     // A connection that failed on every address (localhost is both ::1 and 127.0.0.1) has no
     // message of its own, only the per-address errors.
@@ -772,7 +782,8 @@ router.post('/send', async (req, res) => {
   removeDraft();
   save();
   const shared = driveFrom ? await shareWithRecipients(driveFrom.by.role, driveFrom.by.email, driveFrom, [...to, ...cc, ...bcc]) : null;
-  res.status(201).json({ ok: true, ...(shared && { drive: shared }) });
+  noteSend(sendEntry());
+  res.status(201).json({ ok: true, timing: { ...timing, appMs: Date.now() - received }, ...(shared && { drive: shared }) });
 });
 
 /* ---------------------------------- Google Drive ---------------------------------- */

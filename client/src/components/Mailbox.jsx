@@ -715,6 +715,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       try {
         let uploaded;
         phase('uploading');
+        const waitStarted = Date.now();
         try {
           uploaded = await uploading;
         } catch (err) {
@@ -722,7 +723,11 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         }
         if (cancelled) return;
         phase('sending');
-        const result = await api('/mail/send', { method: 'POST', body: bodyWith(uploaded) });
+        // Hop timing, kept by the server with this send (admin → delivery timings).
+        const clientTiming = { undoMs: UNDO_SEND_MS, uploadWaitMs: Date.now() - waitStarted };
+        const postStarted = Date.now();
+        const result = await api('/mail/send', { method: 'POST', body: { ...bodyWith(uploaded), clientTiming } });
+        if (result.timing) console.info('[AliasMail] send timing', { ...clientTiming, requestMs: Date.now() - postStarted, ...result.timing });
         if (result.queued) {
           // Not sent, but not lost: it waits in the Outbox (retried by itself unless refused).
           flash(

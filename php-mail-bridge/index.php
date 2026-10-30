@@ -33,8 +33,8 @@ try {
     if ($action === 'appendRaw') reply(200, raw_append((string)($body['rawId'] ?? ''), (string)($body['chunk'] ?? '')));
     if ($action === 'sendStagedRaw') {
         $rawId = (string)($body['rawId'] ?? '');
-        smtp_send_raw(raw_read($rawId), (array)($body['envelope'] ?? []));
-        reply(200, ['ok' => true, 'rawId' => $rawId]);
+        $timing = smtp_send_raw(raw_read($rawId), (array)($body['envelope'] ?? []));
+        reply(200, ['ok' => true, 'rawId' => $rawId, 'timing' => $timing]);
     }
     // A message whose attachments were uploaded here: the files are put in on this side, sent,
     // then deleted. The finished message is kept briefly for saveStagedSent (the Sent copy).
@@ -43,11 +43,13 @@ try {
         $raw = $stagedId !== '' ? raw_read($stagedId) : base64_decode((string)($body['raw'] ?? ''), true);
         if ($raw === false || $raw === '') throw new RuntimeException('Invalid message');
         $owner = (string)($body['owner'] ?? ''); $uploads = array_map('strval', (array)($body['uploads'] ?? []));
+        $spliceStart = microtime(true);
         $full = upload_splice($raw, $uploads, $owner);
-        smtp_send_raw($full, (array)($body['envelope'] ?? []));
+        $spliceMs = (int)round((microtime(true) - $spliceStart) * 1000);
+        $timing = ['attachMs' => $spliceMs] + smtp_send_raw($full, (array)($body['envelope'] ?? []));
         if ($stagedId !== '') raw_delete($stagedId);
         foreach ($uploads as $uploadId) { try { upload_delete($uploadId, $owner); } catch (Throwable $ignored) {} }
-        reply(200, ['ok' => true, 'rawId' => raw_store($full), 'uploadsDeleted' => true]);
+        reply(200, ['ok' => true, 'rawId' => raw_store($full), 'uploadsDeleted' => true, 'timing' => $timing]);
     }
     // Forwarding a large attachment: copied from the mailbox straight into an upload here, so
     // it is attached by sendWithUploads without travelling to the app and back.

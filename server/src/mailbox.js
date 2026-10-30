@@ -81,6 +81,9 @@ async function recordFromSource(item) {
     date: parsed.date && !Number.isNaN(parsed.date.getTime()) ? parsed.date.toISOString() : new Date().toISOString(),
     size: Number(item.size) || source.length, hasAttachments: Boolean(item.hasAttachments), recipients, state: {},
     snippet: (parsed.text || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+    // Delivery timing: when the mail server got it, and when AliasMail first saw it.
+    ...(item.arrived > 0 && { arrivedAt: new Date(item.arrived * 1000).toISOString() }),
+    detectedAt: new Date().toISOString(),
   };
   record.category = categorize(record, headers);
   return record;
@@ -126,7 +129,8 @@ async function syncFolder(folder, cache, quick = false) {
     save();
     announceChange();
   }
-  return { hasMore: result.hasMore === true, changed, bridgeMs, via: result.transport || 'bridge', fetched: records.length, total: (result.uids || []).length };
+  if (folder === 'inbox') for (const record of records) noteReceive(record, bridgeMs);
+  return { hasMore: result.hasMore === true, changed, bridgeMs, via: result.transport || 'bridge', fetched: records.length, total: (result.uids || []).length, bridge: result.timing || null };
 }
 
 let running = null;
@@ -155,7 +159,7 @@ async function runSync(folders, quick = false) {
       const result = await syncFolder(folder, cacheOf(folder), quick);
       hasMore = result.hasMore || hasMore;
       changed = result.changed || changed;
-      steps.push({ folder, bridgeMs: result.bridgeMs, via: result.via, fetched: result.fetched, total: result.total, hasMore: result.hasMore });
+      steps.push({ folder, bridgeMs: result.bridgeMs, via: result.via, fetched: result.fetched, total: result.total, hasMore: result.hasMore, bridge: result.bridge });
     }
     data.sync.lastError = null;
     if (hasMore) {
@@ -573,26 +577,33 @@ export async function setServerSeen(uids, seen, folder = 'inbox') {
  * per file (the base64 of "AMU:<uploadId>", one short line) and the bridge puts the files in. That
  * saves downloading each file to this app and uploading it again.
  */
-async function sendWithUploads(mail, uploadIds) {
+async function sendWithUploads(mail, uploadIds, timing) {
+  const started = Date.now();
   const attachments = mail.attachments.map((a) => (a.uploadId
     ? { filename: a.filename, contentType: a.contentType, content: Buffer.from(`AMU:${a.uploadId}`), contentTransferEncoding: 'base64' }
     : a));
   const compiled = new MailComposer({ ...mail, attachments }).compile();
   const raw = await compiled.build();
+  timing.buildMs = Date.now() - started;
+  const bridgeStarted = Date.now();
   const sent = await bridge('sendWithUploads', { raw: raw.toString('base64'), envelope: compiled.getEnvelope(), uploads: uploadIds, owner: mail.from.address });
+  Object.assign(timing, { route: 'attachments on the bridge', bridgeMs: Date.now() - bridgeStarted, relay: sent.timing || null });
+  const saveStarted = Date.now();
   void bridge('saveStagedSent', { rawId: sent.rawId })
+    .then(() => { timing.sentCopyMs = Date.now() - saveStarted; })
     .catch((err) => console.warn('[mail] Sent copy save failed:', err.message))
     .finally(() => syncInbox().catch((err) => console.warn('[mail] post-send sync failed:', err.message)));
   return compiled.messageId();
 }
 
 /** Send through SMTP; save the Sent copy in the background so it doesn't delay the send response. */
-export async function sendMail(mail) {
+export async function sendMail(mail, timing = {}) {
   assertConfigured();
+  const started = Date.now();
   const uploadIds = (mail.attachments || []).map((a) => a.uploadId).filter(Boolean);
   if (uploadIds.length) {
     try {
-      return await sendWithUploads(mail, uploadIds);
+      return await sendWithUploads(mail, uploadIds, timing);
     } catch (err) {
       // A bridge from before sendWithUploads: nothing was sent, so send the slower way below.
       if (!/Unsupported bridge action/.test(err.message)) throw err;
@@ -607,17 +618,53 @@ export async function sendMail(mail) {
   const raw = await compiled.build();
   const encodedRaw = raw.toString('base64');
   const envelope = compiled.getEnvelope();
+  timing.buildMs = Date.now() - started;
+  const bridgeStarted = Date.now();
   const sent = await bridge('sendRaw', { raw: encodedRaw, envelope });
+  // Over 96 KB (base64) the message goes to the bridge in pieces first (see mail-transport.js).
+  Object.assign(timing, { route: encodedRaw.length > 96 * 1024 ? 'through the app, in pieces' : 'through the app', bridgeMs: Date.now() - bridgeStarted, relay: sent.timing || null });
   await Promise.all(uploadIds.map((uploadId) => bridge('deleteUpload', { uploadId, owner: mail.from.address }).catch((err) => {
     console.warn('[mail] Temporary attachment cleanup failed:', err.message);
   })));
   const saveAction = sent.rawId ? 'saveStagedSent' : 'saveSent';
   const savePayload = sent.rawId ? { rawId: sent.rawId } : { raw: encodedRaw };
+  const saveStarted = Date.now();
   void bridge(saveAction, savePayload)
+    .then(() => { timing.sentCopyMs = Date.now() - saveStarted; })
     .catch((err) => console.warn('[mail] Sent copy save failed:', err.message))
     .finally(() => syncInbox().catch((err) => console.warn('[mail] post-send sync failed:', err.message)));
 
   return compiled.messageId();
+}
+
+// The last few sends and newly arrived messages, with how long each hop took (admin overview →
+// delivery timings, and the host's log). Kept in memory only.
+export const recentSends = [];
+export const recentReceives = [];
+const keepLast = (list, item) => {
+  list.unshift(item);
+  if (list.length > 20) list.length = 20;
+};
+const seconds = (from, to) => (from && to ? Math.round((Date.parse(to) - Date.parse(from)) / 100) / 10 : null);
+
+/** A send's hops: browser → app → bridge → relay (from the /send route). */
+export function noteSend(entry) {
+  keepLast(recentSends, entry);
+  const t = entry.timing || {};
+  const r = t.relay || {};
+  console.log(`[send-timing] app ${entry.appMs} ms (build ${t.buildMs ?? '-'}, bridge ${t.bridgeMs ?? '-'}) · relay: connect ${r.connectMs ?? '-'}, envelope ${r.envelopeMs ?? '-'}, upload ${r.uploadMs ?? '-'}, accept ${r.acceptMs ?? '-'}, quit ${r.quitMs ?? '-'} ms · ${t.route || ''}`);
+}
+
+/** A new message's hops: sent (its Date) → reached the mailbox → seen by AliasMail. */
+function noteReceive(record, checkMs) {
+  if (!record.arrivedAt || Date.now() - Date.parse(record.arrivedAt) > 30 * 60_000) return; // an import, not a fresh arrival
+  const entry = {
+    subject: String(record.subject || '').slice(0, 80), from: record.from?.address || '',
+    sentAt: record.date, arrivedAt: record.arrivedAt, detectedAt: record.detectedAt, checkMs,
+    sentToMailboxSec: seconds(record.date, record.arrivedAt), mailboxToAliasMailSec: seconds(record.arrivedAt, record.detectedAt),
+  };
+  keepLast(recentReceives, entry);
+  console.log(`[receive-timing] sent → mailbox ${entry.sentToMailboxSec} s · mailbox → AliasMail ${entry.mailboxToAliasMailSec} s (check took ${checkMs} ms)`);
 }
 
 /** Log in the interactive connection ahead of time (and keep it alive) so no click pays for the login. */

@@ -6,7 +6,7 @@ import { endSessions, signOutAccount } from '../sessions.js';
 import { audit } from '../audit.js';
 import { PALETTE, aliasesOf, createAlias, createRole, deleteAlias, deleteRole, findAliasById, typeOf, updateAlias, updateRole, withCounts } from '../aliases.js';
 import { requireAuth } from '../auth.js';
-import { cacheOf, deleteFromServer, sendPart, fetchParsed, prefetch, syncInbox, testConnection } from '../mailbox.js';
+import { cacheOf, deleteFromServer, fetchParsed, prefetch, recentReceives, recentSends, sendPart, syncInbox, testConnection } from '../mailbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
 import { liveSync } from '../live-sync.js';
@@ -39,6 +39,12 @@ function getAlias(req) {
   if (!alias) throw new HttpError(404, 'Alias not found');
   return alias;
 }
+
+// Where the time goes: the last sends (browser → app → bridge → relay) and the last new messages
+// (sent → reached the mailbox → seen by AliasMail), plus the last mail check.
+router.get('/timings', (req, res) => {
+  res.json({ sends: recentSends, receives: recentReceives, lastCheck: db().sync.lastRun || null, checking: liveSync.status() });
+});
 
 router.get('/overview', (req, res) => {
   const msgs = Object.values(db().messages);

@@ -8,13 +8,13 @@ import { shareWithRecipients } from './google-drive.js';
 const asAddresses = (list) => list.map((address) => ({ name: '', address }));
 
 /** Send `mail` (to/cc/bcc as address arrays, base64 attachments) from `address` and log it. */
-export async function deliver(address, mail) {
+export async function deliver(address, mail, timing = {}) {
   const account = accountOf(address);
   if (!account) throw new Error('This account no longer exists');
   const from = { name: account.displayName || '', address };
   const attachments = (mail.attachments || []).map((a) => ({ ...a, ...(a.content && { encoding: 'base64' }) }));
 
-  const messageId = await sendMail({ ...mail, from, attachments });
+  const messageId = await sendMail({ ...mail, from, attachments }, timing);
 
   // Shown in Sent until the copy saved to the mailbox's Sent folder is synced.
   db().sent.push({

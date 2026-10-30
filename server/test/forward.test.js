@@ -152,3 +152,20 @@ test('a message that cannot be sent waits in the Outbox instead of being lost', 
   assert.equal(items.length, 0);
   assert.equal(sent.length, before + 2);
 });
+
+test('each send is recorded with its hop timings for the admin', async () => {
+  const admin = await signIn(ADMIN);
+  const john = await signIn({ email: 'john@example.com', password: 'john-password' });
+  sendMode = 'ok';
+  const sent = await john('POST', '/api/mail/send', { to: 'a@outside.test', subject: 'Timing', text: 'Hi there', clientTiming: { undoMs: 5000, uploadWaitMs: 12 } });
+  assert.equal(sent.status, 201);
+  assert.equal(typeof sent.data.timing.bridgeMs, 'number');
+  const timings = (await admin('GET', '/api/admin/timings')).data;
+  const last = timings.sends[0];
+  assert.equal(last.from, 'john@example.com');
+  assert.equal(last.recipients, 1);
+  assert.deepEqual(last.browser, { undoMs: 5000, uploadWaitMs: 12 });
+  assert.equal(typeof last.timing.buildMs, 'number');
+  assert.equal(last.timing.route, 'through the app');
+  assert.ok(timings.checking && 'lastCheck' in timings);
+});

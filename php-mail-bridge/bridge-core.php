@@ -222,9 +222,18 @@ function smtp_open(?array &$capabilities = null) {
     return $socket;
 }
 
-function smtp_send_raw(string $raw, array $envelope): void {
+/**
+ * Hand a message to the mail relay. Returns how long each step took (milliseconds), so the app
+ * can show where sending time goes: connect (incl. greeting and login), envelope (sender and
+ * recipients), upload (the message itself), accept (the relay checking it, e.g. its spam scan,
+ * before saying "250 OK"), quit.
+ */
+function smtp_send_raw(string $raw, array $envelope): array {
+    $ms = static fn(float $since): int => (int)round((microtime(true) - $since) * 1000);
+    $start = microtime(true);
     $capabilities = [];
     $socket = smtp_open($capabilities);
+    $timing = ['connectMs' => $ms($start)];
     try {
         $from = str_replace(['<', '>', "\r", "\n"], '', (string)($envelope['from'] ?? config_value('MAIL_USER')));
         $commands = [['MAIL FROM:<' . $from . '>', [250]]];
@@ -233,6 +242,7 @@ function smtp_send_raw(string $raw, array $envelope): void {
             $commands[] = ['RCPT TO:<' . $recipient . '>', [250, 251]];
         }
         if (count($commands) === 1) throw new RuntimeException('No recipients in SMTP envelope');
+        $step = microtime(true);
         if (isset($capabilities['PIPELINING'])) {
             $payload = implode("\r\n", array_column($commands, 0)) . "\r\n";
             smtp_write_all($socket, $payload);
@@ -241,12 +251,21 @@ function smtp_send_raw(string $raw, array $envelope): void {
             foreach ($commands as [$command, $codes]) smtp_command($socket, $command, $codes);
         }
         smtp_command($socket, 'DATA', [354]);
+        $timing['envelopeMs'] = $ms($step);
+        $step = microtime(true);
         $raw = preg_replace('/(?m)^\./', '..', str_replace(["\r\n", "\r"], "\n", $raw));
         smtp_write_all($socket, str_replace("\n", "\r\n", rtrim($raw, "\n")) . "\r\n.\r\n");
+        $timing['uploadMs'] = $ms($step);
+        $step = microtime(true);
         smtp_command($socket, '', [250]);
+        $timing['acceptMs'] = $ms($step);
+        $step = microtime(true);
         try { smtp_command($socket, 'QUIT', [221]); } catch (Throwable $ignored) {}
-
+        $timing['quitMs'] = $ms($step);
     } finally { fclose($socket); }
+    $timing['totalMs'] = $ms($start);
+    $timing['bytes'] = strlen($raw);
+    return $timing;
 }
 
 function handle(array $body): array {
@@ -261,14 +280,21 @@ function handle(array $body): array {
         return ['imap' => true, 'smtp' => true, 'folders' => array_map(fn($f) => preg_replace('/^\{[^}]+\}/', '', $f->name), $folders)];
     }
     if ($action === 'sync') {
+        // Milliseconds per mailbox step, returned so the app can show where a check's time goes.
+        $t = microtime(true);
+        $lap = static function () use (&$t): int { $now = microtime(true); $ms = (int)round(($now - $t) * 1000); $t = $now; return $ms; };
+        $timing = [];
         $folder = (string)($body['folder'] ?? 'inbox');
         [$imap, $box] = imap_open_folder($folder);
+        $timing['openMs'] = $lap();
         $status = imap_status($imap, $box, SA_UIDVALIDITY | SA_MESSAGES);
+        $timing['statusMs'] = $lap();
         if ($status === false) throw new RuntimeException('Could not read IMAP mailbox status');
         $known = (string)($body['knownUidValidity'] ?? '') === (string)$status->uidvalidity
             ? array_fill_keys(array_map('intval', $body['knownUids'] ?? []), true)
             : [];
         $all = imap_search_uids($imap, 'ALL');
+        $timing['listMs'] = $lap();
         $messages = [];
         $newUids = array_values(array_filter(array_map('intval', $all), fn($uid) => $uid > 0 && !isset($known[$uid])));
         // Fetch newest headers first and finish large mailbox imports over short requests.
@@ -291,11 +317,15 @@ function handle(array $body): array {
             $messages[] = [
                 'uid' => $uid, 'raw' => base64_encode($header), 'size' => (int)($item->size ?? strlen($header)),
                 'hasAttachments' => structure_has_attachments(@imap_fetchstructure($imap, $uid, FT_UID)),
+                // When it reached this mailbox (the server's own arrival time), for delivery timing.
+                'arrived' => (int)($item->udate ?? 0),
             ];
         }
+        $timing['newMs'] = $lap();
         $seenUids = imap_search_uids($imap, 'SEEN');
+        $timing['seenMs'] = $lap();
         imap_release($imap);
-        return ['hasMore' => count($newUids) > count($messages), 'seenUids' => array_map('intval', $seenUids), 'uidValidity' => (string)$status->uidvalidity, 'uids' => array_map('intval', $all), 'messages' => $messages];
+        return ['hasMore' => count($newUids) > count($messages), 'seenUids' => array_map('intval', $seenUids), 'uidValidity' => (string)$status->uidvalidity, 'uids' => array_map('intval', $all), 'messages' => $messages, 'timing' => $timing];
     }
     if ($action === 'fetchMany') {
         $uids = array_values(array_unique(array_filter(array_map('intval', $body['uids'] ?? []), fn($uid) => $uid > 0)));
@@ -379,8 +409,7 @@ function handle(array $body): array {
     if ($action === 'sendRaw') {
         $raw = base64_decode((string)($body['raw'] ?? ''), true);
         if ($raw === false) throw new RuntimeException('Invalid message payload');
-        smtp_send_raw($raw, (array)($body['envelope'] ?? []));
-        return ['ok' => true];
+        return ['ok' => true, 'timing' => smtp_send_raw($raw, (array)($body['envelope'] ?? []))];
     }
     if ($action === 'saveSent') {
         $raw = base64_decode((string)($body['raw'] ?? ''), true);
