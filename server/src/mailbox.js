@@ -289,6 +289,102 @@ export async function attachmentContent(att, uid, folder = 'inbox') {
   return { ...att, content: file.content, size: file.content.length };
 }
 
+// Large attachments fetched once (by a click, or ahead of time when their message is opened) stay
+// in memory a while, so downloading them is mostly instant. Least recently used go first.
+const partCache = new Map(); // key -> Buffer
+const PART_CACHE_BYTES = 150 * 1024 * 1024;
+const PART_MAX_BYTES = 25 * 1024 * 1024;
+let partCacheBytes = 0;
+const partInFlight = new Map();
+const partKey = (folder, uid, part) => JSON.stringify([folder, cacheOf(folder).uidValidity, Number(uid), part]);
+const leftOutBytes = (att) => Math.round(Number(/size=(\d+)/.exec(att.headers?.get('x-aliasmail-part') || '')?.[1] || 0) * 0.74);
+
+function rememberPart(key, buffer) {
+  if (buffer.length > PART_MAX_BYTES) return;
+  partCache.set(key, buffer);
+  partCacheBytes += buffer.length;
+  for (const [oldest, old] of partCache) {
+    if (partCacheBytes <= PART_CACHE_BYTES) break;
+    partCache.delete(oldest);
+    partCacheBytes -= old.length;
+  }
+}
+
+/**
+ * The bytes of an attachment left out by fetchLite. Comes from the bridge's download.php as plain
+ * binary (no base64, nothing to parse); `onChunk` sees each piece as it arrives so a download can
+ * be passed on to the browser at the same time. Falls back to fetchPart when that isn't possible.
+ */
+function loadPart(att, uid, folder, onChunk) {
+  const key = partKey(folder, uid, leftOutPart(att));
+  const cached = partCache.get(key);
+  if (cached) {
+    partCache.delete(key); // move to the newest end
+    partCache.set(key, cached);
+    return Promise.resolve(cached);
+  }
+  if (partInFlight.has(key)) return partInFlight.get(key);
+  const job = (async () => {
+    const url = await attachmentLink(att, uid, folder);
+    if (url) {
+      let streamed = false;
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(180_000) });
+        // The hosting's bot check answers with a web page instead of the file.
+        if (res.ok && !String(res.headers.get('content-type')).includes('text/html')) {
+          const chunks = [];
+          for await (const chunk of res.body) {
+            const piece = Buffer.from(chunk);
+            chunks.push(piece);
+            streamed = true;
+            onChunk?.(piece);
+          }
+          return Buffer.concat(chunks);
+        }
+      } catch (err) {
+        if (streamed) throw err; // half sent already: can't start again on another route
+        console.warn('[mail] Direct attachment download failed, using fetchPart:', err.message);
+      }
+    }
+    return (await attachmentContent(att, uid, folder)).content;
+  })();
+  partInFlight.set(key, job);
+  job.then((buffer) => rememberPart(key, buffer), () => {}).finally(() => partInFlight.delete(key));
+  return job;
+}
+
+/** Send an attachment to the browser, streaming a large one as it comes from the bridge. */
+export async function sendPart(res, att, uid, folder = 'inbox') {
+  res.attachment(att.filename || 'attachment');
+  res.type(att.contentType || 'application/octet-stream');
+  if (!leftOutPart(att)) return res.send(att.content);
+  let wrote = false;
+  try {
+    const buffer = await loadPart(att, uid, folder, (piece) => {
+      wrote = true;
+      res.write(piece);
+    });
+    if (wrote) res.end();
+    else res.end(buffer);
+  } catch (err) {
+    if (!res.headersSent) throw err;
+    res.destroy(err);
+  }
+}
+
+// Attachments of an opened message start downloading here in the background, one at a time,
+// so a click on one usually finds it ready.
+let partQueue = Promise.resolve();
+export function warmAttachments(parsed, uid, folder = 'inbox') {
+  if (!parsed || !config.mailBridge.configured) return;
+  for (const att of parsed.attachments) {
+    if (!leftOutPart(att) || leftOutBytes(att) > PART_MAX_BYTES) continue;
+    const key = partKey(folder, uid, leftOutPart(att));
+    if (partCache.has(key) || partInFlight.has(key)) continue;
+    partQueue = partQueue.then(() => loadPart(att, uid, folder).catch((err) => console.warn('[mail] Attachment preload failed:', err.message)));
+  }
+}
+
 /** Read memory, then durable cache, and only then download from the mail server. */
 export function fetchParsed(uid, folder = 'inbox', { background = false } = {}) {
   uid = Number(uid);

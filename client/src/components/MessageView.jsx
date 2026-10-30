@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { download, getMessage, preview, previewType } from '../api.js';
+import { api, download, getMessage, preview, previewType } from '../api.js';
 import { displayName, formatDate, formatSize, personLabel, timeAgo } from '../format.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
@@ -228,6 +228,9 @@ export default function MessageView({
         if (!alive) return;
         setMsg(data);
         loaded.current?.(data);
+        // On screen now (not just preloaded on hover): have the server fetch its large
+        // attachments in the background, so a click on one finds it ready.
+        if (/^\/mail\/(messages\/\d+|sent\/s\d+)$/.test(url) && data.attachments?.some((a) => !a.unavailable)) api(`${url}/warm`).catch(() => {});
       })
       .catch((err) => alive && setError(err.message));
     return () => {

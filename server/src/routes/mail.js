@@ -15,9 +15,9 @@ import { audit } from '../audit.js';
 // Guessing the current password from a signed-in browser: 5 tries per 15 minutes.
 const passwordChecks = limiter('password-change', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 import { requireAuth } from '../auth.js';
-import { attachmentContent, attachmentLink, deleteFromServer, fetchParsed, forwardableAttachment, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
+import { attachmentLink, deleteFromServer, fetchParsed, sendPart, warmAttachments, forwardableAttachment, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
 import { deliver, queueInOutbox, runScheduled } from '../outbox.js';
-import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
+import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
 import { announceChange, mailEvents } from '../mail-events.js';
 import { liveSync, noteActivity } from '../live-sync.js';
@@ -377,6 +377,19 @@ router.get('/messages/:uid', async (req, res) => {
   res.json({ ...summary(msg, me), replyTo: msg.replyTo, messageId: msg.messageId, ...bodyOf(parsed) });
 });
 
+// Called once a message is actually on screen (not on hover): its large attachments start
+// downloading in the background so a click finds them ready.
+router.get('/messages/:uid/warm', async (req, res) => {
+  const msg = ownMessage(req);
+  warmAttachments(await fetchParsed(msg.uid), msg.uid, 'inbox');
+  res.json({ ok: true });
+});
+router.get('/sent/:id/warm', async (req, res) => {
+  const msg = ownSent(req);
+  warmAttachments(await fetchParsed(msg.uid, 'sent'), msg.uid, 'sent');
+  res.json({ ok: true });
+});
+
 // A direct download link for a large attachment ({ url: null } means: use the route below).
 router.get('/messages/:uid/attachments/:index/link', async (req, res) => {
   const msg = ownMessage(req);
@@ -389,7 +402,7 @@ router.get('/messages/:uid/attachments/:index', async (req, res) => {
   const msg = ownMessage(req);
   const att = (await fetchParsed(msg.uid))?.attachments[Number(req.params.index)];
   if (!att) throw new HttpError(404, 'Attachment not found');
-  sendAttachment(res, await attachmentContent(att, msg.uid));
+  await sendPart(res, att, msg.uid, 'inbox');
 });
 
 /** Per-account state changes. Each returns a patch for one message's state. */
@@ -482,7 +495,7 @@ router.get('/sent/:id/attachments/:index', async (req, res) => {
   const msg = ownSent(req);
   const att = (await fetchParsed(msg.uid, 'sent'))?.attachments[Number(req.params.index)];
   if (!att) throw new HttpError(404, 'Attachment not found');
-  sendAttachment(res, await attachmentContent(att, msg.uid, 'sent'));
+  await sendPart(res, att, msg.uid, 'sent');
 });
 
 router.post('/sent/delete', async (req, res) => {

@@ -75,8 +75,3 @@ export function bodyOf(parsed) {
   };
 }
 
-export function sendAttachment(res, att) {
-  res.attachment(att.filename || 'attachment');
-  res.type(att.contentType || 'application/octet-stream');
-  res.send(att.content);
-}

@@ -6,8 +6,8 @@ import { endSessions, signOutAccount } from '../sessions.js';
 import { audit } from '../audit.js';
 import { PALETTE, aliasesOf, createAlias, createRole, deleteAlias, deleteRole, findAliasById, typeOf, updateAlias, updateRole, withCounts } from '../aliases.js';
 import { requireAuth } from '../auth.js';
-import { attachmentContent, cacheOf, deleteFromServer, fetchParsed, prefetch, syncInbox, testConnection } from '../mailbox.js';
-import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
+import { cacheOf, deleteFromServer, sendPart, fetchParsed, prefetch, syncInbox, testConnection } from '../mailbox.js';
+import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
 import { liveSync } from '../live-sync.js';
 import { revokeToken } from '../google-auth.js';
@@ -224,7 +224,7 @@ for (const [route, folder] of [['messages', 'inbox'], ['sent', 'sent']]) {
   router.get(`/${route}/:uid/attachments/:index`, async (req, res) => {
     const att = (await fetchParsed(req.params.uid, folder))?.attachments[Number(req.params.index)];
     if (!att) throw new HttpError(404, 'Attachment not found');
-    sendAttachment(res, await attachmentContent(att, req.params.uid, folder));
+    await sendPart(res, att, req.params.uid, folder);
   });
 }
 
