@@ -1,7 +1,11 @@
 <?php
 declare(strict_types=1);
 
-const UPLOAD_CHUNK_BYTES = 128 * 1024;
+// Browser uploads are plain binary bodies, which the host accepts in large pieces (1 MiB is far
+// below post_max_size). Staged messages arrive as JSON, which the host's firewall caps near 1 MB,
+// so those stay small.
+const UPLOAD_CHUNK_BYTES = 1024 * 1024;
+const RAW_CHUNK_BYTES = 128 * 1024;
 const UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
 const UPLOAD_TTL = 3600;
 const COMPLETED_UPLOAD_TTL = 31 * 86400;
@@ -100,7 +104,7 @@ function raw_start(int $size,string $hash): array {
     file_put_contents(upload_path($id,'.json'),json_encode($s,JSON_THROW_ON_ERROR),LOCK_EX); return ['rawId'=>$id];
 }
 function raw_append(string $id,string $encoded): array {
-    $bytes=base64_decode($encoded,true); if($bytes===false||strlen($bytes)>UPLOAD_CHUNK_BYTES) throw new RuntimeException('Invalid staged message chunk');
+    $bytes=base64_decode($encoded,true); if($bytes===false||strlen($bytes)>RAW_CHUNK_BYTES) throw new RuntimeException('Invalid staged message chunk');
     $path=upload_path($id,'.json'); $s=json_decode((string)@file_get_contents($path),true);
     if(!is_array($s)||($s['kind']??'')!=='raw'||(int)$s['expires']<time()||(int)$s['received']+strlen($bytes)>(int)$s['size']) throw new RuntimeException('Staged message not found');
     if(file_put_contents(upload_path($id,'.raw'),$bytes,FILE_APPEND|LOCK_EX)!==strlen($bytes)) throw new RuntimeException('Could not stage message');
@@ -110,5 +114,32 @@ function raw_read(string $id): string {
     $s=json_decode((string)@file_get_contents(upload_path($id,'.json')),true); $path=upload_path($id,'.raw');
     if(!is_array($s)||($s['kind']??'')!=='raw'||(int)$s['received']!==(int)$s['size']||!is_file($path)||!hash_equals((string)$s['sha256'],hash_file('sha256',$path))) throw new RuntimeException('Staged message verification failed');
     $raw=file_get_contents($path); if($raw===false) throw new RuntimeException('Staged message unavailable'); return $raw;
+}
+/** Keeps a finished message (for the Sent copy) the same way a staged one is kept. */
+function raw_store(string $bytes): string {
+    $id=bin2hex(random_bytes(24));
+    if(file_put_contents(upload_path($id,'.raw'),$bytes,LOCK_EX)!==strlen($bytes)) throw new RuntimeException('Could not keep the sent message');
+    $s=['kind'=>'raw','id'=>$id,'size'=>strlen($bytes),'sha256'=>hash('sha256',$bytes),'received'=>strlen($bytes),'expires'=>time()+UPLOAD_TTL];
+    file_put_contents(upload_path($id,'.json'),json_encode($s,JSON_THROW_ON_ERROR),LOCK_EX);
+    return $id;
+}
+/**
+ * The app sends attachments that are already here as a placeholder: the base64 of "AMU:<uploadId>"
+ * in place of the file. Swap each for the uploaded file, so the file never travels back and forth.
+ */
+function upload_splice(string $raw, array $ids, string $owner): string {
+    foreach ($ids as $id) {
+        $id = (string)$id;
+        $encoded = with_upload($id, function (&$s) use ($id, $owner): array {
+            if (!$s['complete'] || !hash_equals((string)$s['owner'], strtolower($owner))) throw new RuntimeException('Attachment is not available');
+            $bytes = file_get_contents(upload_path($id, '.bin'));
+            if ($bytes === false) throw new RuntimeException('Attachment file is unavailable');
+            return ['base64' => rtrim(chunk_split(base64_encode($bytes), 76, "\r\n"))];
+        })['base64'];
+        $token = base64_encode('AMU:' . $id);
+        if (substr_count($raw, $token) !== 1) throw new RuntimeException('Attachment placeholder not found');
+        $raw = str_replace($token, $encoded, $raw);
+    }
+    return $raw;
 }
 function raw_delete(string $id): void { @unlink(upload_path($id,'.raw')); @unlink(upload_path($id,'.json')); @unlink(upload_path($id,'.lock')); }

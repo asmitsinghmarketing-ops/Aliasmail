@@ -45,8 +45,25 @@ export async function uploadAttachment(file) {
   return { uploadId: session.uploadId, filename: file.name, contentType: file.type || 'application/octet-stream', size: file.size, _file: file };
 }
 
+// Uploads start as soon as a file is attached (like Gmail), so Send usually finds them done.
+const pending = new WeakMap();
+
+/** Start uploading an attached file in the background; errors surface when sending. */
+export function preuploadAttachment(item) {
+  if (!item._file || item.uploadId || pending.has(item)) return;
+  const upload = uploadAttachment(item._file);
+  upload.catch(() => {});
+  pending.set(item, upload);
+}
+
 export async function uploadAttachments(files) {
-  const uploaded = [];
-  for (const item of files) uploaded.push(item._file ? await uploadAttachment(item._file) : item);
-  return uploaded;
+  return Promise.all(files.map(async (item) => {
+    if (!item._file || item.uploadId) return item;
+    try {
+      return await (pending.get(item) || uploadAttachment(item._file));
+    } catch (err) {
+      pending.delete(item); // the next Send tries this file again
+      throw err;
+    }
+  }));
 }

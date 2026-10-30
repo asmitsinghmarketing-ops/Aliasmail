@@ -134,6 +134,7 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
 
   // Repeating these can't change anything twice. Sending, moving and deleting are never retried:
   // a dropped connection doesn't prove the first attempt failed.
+  const SEND_ACTIONS = new Set(['sendRaw', 'sendStagedRaw', 'sendWithUploads']);
   const SAFE_TO_RETRY = new Set(['health', 'test', 'sync', 'fetch', 'fetchMany', 'workerStatus', 'flag']);
 
   async function bridgePost(action, data) {
@@ -149,11 +150,11 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
       const reason = error.cause?.code || error.cause?.message || error.message;
       console.error(`[mail] PHP bridge ${action} failed: ${error.name}: ${reason}`);
       if (error.name === 'TimeoutError') {
-        return new HttpError(504, action === 'sendRaw' || action === 'sendStagedRaw'
+        return new HttpError(504, SEND_ACTIONS.has(action)
           ? 'The mail bridge didn’t answer in time. The message may still have been sent: check Sent before trying again.'
           : 'The mail bridge didn’t answer in time. Try again in a moment.');
       }
-      return new HttpError(502, action === 'sendRaw' || action === 'sendStagedRaw'
+      return new HttpError(502, SEND_ACTIONS.has(action)
         ? `Lost the connection to the mail bridge (${reason}). The message may still have been sent: check Sent before trying again.`
         : `Couldn’t reach the mail bridge (${reason}). Try again in a moment.`);
     };
@@ -186,13 +187,14 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
   async function bridge(action, data) {
     // Large raw MIME JSON requests are rejected by some shared-hosting proxies. Stage the
     // decoded message in 128 KiB pieces, then trigger SMTP with a small request.
-    if (action === 'sendRaw' && String(data.raw || '').length > 96 * 1024) {
-      const raw = Buffer.from(data.raw, 'base64');
+    if ((action === 'sendRaw' || action === 'sendWithUploads') && String(data.raw || '').length > 96 * 1024) {
+      const { raw: encoded, ...rest } = data;
+      const raw = Buffer.from(encoded, 'base64');
       const started = await bridgePost('startRaw', { size: raw.length, sha256: crypto.createHash('sha256').update(raw).digest('hex') });
       for (let offset = 0; offset < raw.length; offset += 128 * 1024) {
         await bridgePost('appendRaw', { rawId: started.rawId, chunk: raw.subarray(offset, offset + 128 * 1024).toString('base64') });
       }
-      return bridgePost('sendStagedRaw', { rawId: started.rawId, envelope: data.envelope });
+      return bridgePost(action === 'sendRaw' ? 'sendStagedRaw' : 'sendWithUploads', { ...rest, rawId: started.rawId });
     }
     return bridgePost(action, data);
   }
@@ -220,7 +222,7 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
 
   return {
     async request(action, data = {}) {
-      if (settings.mailBridge.configured && ['startUpload', 'consumeUpload', 'deleteUpload', 'saveStagedSent'].includes(action)) return bridge(action, data);
+      if (settings.mailBridge.configured && ['startUpload', 'consumeUpload', 'deleteUpload', 'saveStagedSent', 'sendWithUploads'].includes(action)) return bridge(action, data);
       const transport = await selected();
       // A bridge can still send SMTP on hosts where only direct IMAP is enabled.
       if (transport === 'direct' && action === 'sendRaw' && settings.mailBridge.configured) return bridge(action, data);

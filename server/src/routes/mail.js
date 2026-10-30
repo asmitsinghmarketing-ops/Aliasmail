@@ -680,11 +680,14 @@ router.post('/send', async (req, res) => {
   try {
     await deliver(me, mail);
   } catch (err) {
+    // A connection that failed on every address (localhost is both ::1 and 127.0.0.1) has no
+    // message of its own, only the per-address errors.
+    const reason = err.response || err.message || (err.errors || []).map((e) => e.message).filter(Boolean).join('; ') || err.code || err.name;
     // Only the browser saw the reason before; keep it in the host's log too (no message content).
-    console.warn(`[send] from ${me} to ${to.length + cc.length + bcc.length} recipient(s) failed: ${err.message}`);
+    console.warn(`[send] from ${me} to ${to.length + cc.length + bcc.length} recipient(s) failed via ${config.mailBridge.configured ? 'PHP bridge' : `direct SMTP ${config.smtp.host}:${config.smtp.port}`}: ${reason}`);
     if (err instanceof HttpError) throw err;
     // Pass on the mail server's reason (e.g. "sender address rejected").
-    throw new HttpError(502, `The mail server didn't accept the message: ${err.response || err.message}`);
+    throw new HttpError(502, `The mail server didn't accept the message: ${reason}`);
   }
   removeDraft();
   save();

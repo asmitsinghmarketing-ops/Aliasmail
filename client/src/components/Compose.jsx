@@ -6,7 +6,7 @@ import Icon from './Icon.jsx';
 import { Popover, TimeMenu, scheduleOptions } from './Menus.jsx';
 import RichEditor, { htmlFromText, sanitizeHtml } from './RichEditor.jsx';
 import { pickDriveFiles } from '../drivePicker.js';
-import { uploadAttachments } from '../attachmentUpload.js';
+import { preuploadAttachment, uploadAttachments } from '../attachmentUpload.js';
 
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
@@ -179,6 +179,7 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
     try {
       const added = [...list].map(readFile);
       setFiles((current) => [...current, ...added]);
+      added.forEach(preuploadAttachment);
     } catch (err) {
       setError(err.message);
     }

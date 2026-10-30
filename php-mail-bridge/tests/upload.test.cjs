@@ -40,3 +40,30 @@ test('signed direct upload is reconstructed, verified, and read by its owner', {
   const consumed = await fetch(base + '/index.php', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' }, body: JSON.stringify({ action: 'consumeUpload', owner: 'test@example.com', uploadId: session.uploadId }) });
   assert.equal(consumed.status, 200); assert.deepEqual(Buffer.from((await consumed.json()).content, 'base64'), file);
 });
+
+test('uploaded files are put into a message in place of their placeholders', { timeout: 15000 }, async (t) => {
+  const { execFileSync } = require('node:child_process');
+  const MailComposer = require(require.resolve('nodemailer/lib/mail-composer', { paths: [path.resolve('server')] }));
+  const { simpleParser } = require(require.resolve('mailparser', { paths: [path.resolve('server')] }));
+  const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'aliasmail-splice-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const files = path.join(dir, 'files'); await fs.mkdir(files);
+  const settings = path.join(dir, 'settings.php');
+  await fs.writeFile(settings, `<?php $GLOBALS['aliasmailSettings']=['MAIL_UPLOAD_DIR'=>${JSON.stringify(files.replaceAll('\\', '/'))}];`);
+  const pdf = { id: crypto.randomBytes(24).toString('hex'), filename: 'Quote ₹.pdf', bytes: crypto.randomBytes(150000) };
+  await fs.writeFile(path.join(files, `${pdf.id}.bin`), pdf.bytes);
+  await fs.writeFile(path.join(files, `${pdf.id}.json`), JSON.stringify({ kind: 'attachment', id: pdf.id, owner: 'a@example.com', complete: true, expires: Math.floor(Date.now() / 1000) + 600 }));
+  const raw = await new MailComposer({ from: 'a@example.com', to: 'b@example.com', subject: 'Quote', text: 'Attached.',
+    attachments: [{ filename: pdf.filename, contentType: 'application/pdf', content: Buffer.from(`AMU:${pdf.id}`), contentTransferEncoding: 'base64' }] }).compile().build();
+  await fs.writeFile(path.join(dir, 'in.eml'), raw);
+  // -n: no php.ini, so a broken local extension can't print warnings into the message.
+  const php = (owner) => execFileSync('php', ['-n', '-r', `require 'php-mail-bridge/bridge-core.php'; require 'php-mail-bridge/upload-common.php';
+    echo upload_splice(file_get_contents($argv[1]), [$argv[2]], $argv[3]);`, path.join(dir, 'in.eml'), pdf.id, owner],
+  { env: { ...process.env, ALIASMAIL_SETTINGS_FILE: settings }, maxBuffer: 10 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  const parsed = await simpleParser(php('A@example.com'));
+  assert.equal(parsed.attachments.length, 1);
+  assert.equal(parsed.attachments[0].filename, pdf.filename);
+  assert.deepEqual(parsed.attachments[0].content, pdf.bytes);
+  assert.equal(parsed.text.trim(), 'Attached.');
+  assert.throws(() => php('someone-else@example.com'), (err) => /Attachment is not available/.test(`${err.stdout}${err.stderr}`));
+});

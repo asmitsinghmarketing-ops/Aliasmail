@@ -151,6 +151,14 @@ const config = {
 if (!['bridge', 'direct', 'auto'].includes(config.mailTransport)) throw new Error('MAIL_TRANSPORT must be bridge, direct, or auto');
 
 if (!config.configured) console.warn('[config] MAIL_USER or PHP mail bridge settings missing - mailbox sync is disabled.');
+// Which way mail goes, so a missing or misnamed variable shows up in the host's log at startup.
+if (config.mailBridge.configured) {
+  let where = 'an invalid MAIL_BRIDGE_URL';
+  try { where = new URL(config.mailBridge.url).origin; } catch {}
+  console.log(`[config] Mail goes through the PHP bridge at ${where} (MAIL_TRANSPORT=${config.mailTransport})`);
+} else {
+  console.warn(`[config] PHP bridge NOT used (MAIL_BRIDGE_URL ${mailBridgeUrl ? 'set' : 'missing'}, MAIL_BRIDGE_TOKEN ${mailBridgeToken ? 'set' : 'missing'}): sending directly to ${config.smtp.host}:${config.smtp.port}`);
+}
 if (!config.admin.password) console.warn('[config] ADMIN_PASSWORD missing - admin login is disabled.');
 
 export default config;

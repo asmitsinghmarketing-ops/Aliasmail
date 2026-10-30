@@ -386,10 +386,36 @@ export async function setServerSeen(uids, seen, folder = 'inbox') {
   }
 }
 
+/**
+ * Attachments already uploaded to the bridge stay there: the message goes out with a placeholder
+ * per file (the base64 of "AMU:<uploadId>", one short line) and the bridge puts the files in. That
+ * saves downloading each file to this app and uploading it again.
+ */
+async function sendWithUploads(mail, uploadIds) {
+  const attachments = mail.attachments.map((a) => (a.uploadId
+    ? { filename: a.filename, contentType: a.contentType, content: Buffer.from(`AMU:${a.uploadId}`), contentTransferEncoding: 'base64' }
+    : a));
+  const compiled = new MailComposer({ ...mail, attachments }).compile();
+  const raw = await compiled.build();
+  const sent = await bridge('sendWithUploads', { raw: raw.toString('base64'), envelope: compiled.getEnvelope(), uploads: uploadIds, owner: mail.from.address });
+  void bridge('saveStagedSent', { rawId: sent.rawId })
+    .catch((err) => console.warn('[mail] Sent copy save failed:', err.message))
+    .finally(() => syncInbox().catch((err) => console.warn('[mail] post-send sync failed:', err.message)));
+  return compiled.messageId();
+}
+
 /** Send through SMTP; save the Sent copy in the background so it doesn't delay the send response. */
 export async function sendMail(mail) {
   assertConfigured();
   const uploadIds = (mail.attachments || []).map((a) => a.uploadId).filter(Boolean);
+  if (uploadIds.length) {
+    try {
+      return await sendWithUploads(mail, uploadIds);
+    } catch (err) {
+      // A bridge from before sendWithUploads: nothing was sent, so send the slower way below.
+      if (!/Unsupported bridge action/.test(err.message)) throw err;
+    }
+  }
   const attachments = await Promise.all((mail.attachments || []).map(async (attachment) => {
     if (!attachment.uploadId) return attachment;
     const stored = await bridge('consumeUpload', { uploadId: attachment.uploadId, owner: mail.from.address });

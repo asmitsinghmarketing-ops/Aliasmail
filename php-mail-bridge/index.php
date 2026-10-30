@@ -36,6 +36,19 @@ try {
         smtp_send_raw(raw_read($rawId), (array)($body['envelope'] ?? []));
         reply(200, ['ok' => true, 'rawId' => $rawId]);
     }
+    // A message whose attachments were uploaded here: the files are put in on this side, sent,
+    // then deleted. The finished message is kept briefly for saveStagedSent (the Sent copy).
+    if ($action === 'sendWithUploads') {
+        $stagedId = (string)($body['rawId'] ?? '');
+        $raw = $stagedId !== '' ? raw_read($stagedId) : base64_decode((string)($body['raw'] ?? ''), true);
+        if ($raw === false || $raw === '') throw new RuntimeException('Invalid message');
+        $owner = (string)($body['owner'] ?? ''); $uploads = array_map('strval', (array)($body['uploads'] ?? []));
+        $full = upload_splice($raw, $uploads, $owner);
+        smtp_send_raw($full, (array)($body['envelope'] ?? []));
+        if ($stagedId !== '') raw_delete($stagedId);
+        foreach ($uploads as $uploadId) { try { upload_delete($uploadId, $owner); } catch (Throwable $ignored) {} }
+        reply(200, ['ok' => true, 'rawId' => raw_store($full), 'uploadsDeleted' => true]);
+    }
     if ($action === 'saveStagedSent') {
         $rawId = (string)($body['rawId'] ?? ''); $raw = raw_read($rawId);
         [$imap] = imap_open_folder('sent', false);
