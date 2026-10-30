@@ -49,6 +49,15 @@ try {
         foreach ($uploads as $uploadId) { try { upload_delete($uploadId, $owner); } catch (Throwable $ignored) {} }
         reply(200, ['ok' => true, 'rawId' => raw_store($full), 'uploadsDeleted' => true]);
     }
+    // Forwarding a large attachment: copied from the mailbox straight into an upload here, so
+    // it is attached by sendWithUploads without travelling to the app and back.
+    if ($action === 'uploadFromPart') {
+        [$imap] = imap_open_folder((string)($body['folder'] ?? 'inbox'));
+        try { $bytes = imap_part_bytes($imap, (int)($body['uid'] ?? 0), (string)($body['part'] ?? '')); }
+        finally { imap_release($imap); }
+        if ($bytes === null) throw new RuntimeException('This message was deleted from the mailbox');
+        reply(200, upload_store_completed($bytes, (string)($body['owner'] ?? ''), (string)($body['filename'] ?? ''), (string)($body['contentType'] ?? '')));
+    }
     if ($action === 'saveStagedSent') {
         $rawId = (string)($body['rawId'] ?? ''); $raw = raw_read($rawId);
         [$imap] = imap_open_folder('sent', false);

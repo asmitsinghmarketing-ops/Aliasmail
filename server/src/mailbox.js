@@ -240,9 +240,30 @@ async function download(folder, uid, background = false) {
   return raw ? Buffer.from(raw, 'base64') : null;
 }
 
+const leftOutPart = (att) => /^([\d.]+);/.exec(String(att.headers?.get('x-aliasmail-part') || ''))?.[1];
+
+/**
+ * An attachment of a message, ready to send again (forwarding). One left out by fetchLite is
+ * copied on the bridge into an upload, so it never travels to this app and back.
+ */
+export async function forwardableAttachment(att, uid, folder, owner) {
+  const part = leftOutPart(att);
+  if (part && config.mailBridge.configured) {
+    try {
+      const { uploadId, size } = await bridge('uploadFromPart', { folder, uid: Number(uid), part, owner, filename: att.filename || '', contentType: att.contentType || '' });
+      return { uploadId, filename: att.filename || 'attachment', contentType: att.contentType, size };
+    } catch (err) {
+      // A bridge from before uploadFromPart: bring the file here instead.
+      if (!/Unsupported bridge action/.test(err.message)) throw err;
+    }
+  }
+  const full = await attachmentContent(att, uid, folder);
+  return { filename: full.filename || 'attachment', contentType: full.contentType, content: full.content.toString('base64'), size: full.content.length };
+}
+
 /** An attachment with its content, downloading it now if the message was opened without it. */
 export async function attachmentContent(att, uid, folder = 'inbox') {
-  const part = /^([\d.]+);/.exec(String(att.headers?.get('x-aliasmail-part') || ''))?.[1];
+  const part = leftOutPart(att);
   if (!part) return att;
   const { raw } = await bridge('fetchPart', { folder, uid: Number(uid), part });
   if (!raw) throw new HttpError(404, 'This message was deleted from the mailbox');

@@ -123,6 +123,18 @@ function raw_read(string $id): string {
     if(!is_array($s)||($s['kind']??'')!=='raw'||(int)$s['received']!==(int)$s['size']||!is_file($path)||!hash_equals((string)$s['sha256'],hash_file('sha256',$path))) throw new RuntimeException('Staged message verification failed');
     $raw=file_get_contents($path); if($raw===false) throw new RuntimeException('Staged message unavailable'); return $raw;
 }
+/** A finished upload made here rather than by a browser (an attachment being forwarded). */
+function upload_store_completed(string $bytes, string $owner, string $filename, string $type): array {
+    $owner = strtolower(trim($owner)); $filename = trim($filename);
+    if ($owner === '' || $bytes === '' || strlen($bytes) > UPLOAD_MAX_BYTES) throw new RuntimeException('Attachment is not available');
+    if ($filename === '' || strlen($filename) > 255 || str_contains($filename, "\0")) $filename = 'attachment';
+    $id = bin2hex(random_bytes(24));
+    if (file_put_contents(upload_path($id, '.bin'), $bytes, LOCK_EX) !== strlen($bytes)) throw new RuntimeException('Could not keep the attachment');
+    $s = ['kind'=>'attachment','id'=>$id,'owner'=>$owner,'filename'=>$filename,'contentType'=>substr(trim($type) ?: 'application/octet-stream',0,200),
+        'size'=>strlen($bytes),'sha256'=>hash('sha256',$bytes),'expires'=>time()+COMPLETED_UPLOAD_TTL,'complete'=>true];
+    file_put_contents(upload_path($id, '.json'), json_encode($s, JSON_THROW_ON_ERROR), LOCK_EX);
+    return ['uploadId'=>$id, 'size'=>strlen($bytes)];
+}
 /** Keeps a finished message (for the Sent copy) the same way a staged one is kept. */
 function raw_store(string $bytes): string {
     $id=bin2hex(random_bytes(24));

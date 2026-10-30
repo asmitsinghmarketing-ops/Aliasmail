@@ -15,7 +15,7 @@ import { audit } from '../audit.js';
 // Guessing the current password from a signed-in browser: 5 tries per 15 minutes.
 const passwordChecks = limiter('password-change', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 import { requireAuth } from '../auth.js';
-import { attachmentContent, deleteFromServer, fetchParsed, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
+import { attachmentContent, deleteFromServer, fetchParsed, forwardableAttachment, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
 import { deliver } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
@@ -627,6 +627,29 @@ router.post('/attachments/start', async (req, res) => {
   res.json(await startAttachmentUpload({ owner: req.me, filename, contentType, size, sha256, publicKey }));
 });
 
+/**
+ * An attachment of a message being forwarded ({ kind: 'inbox' | 'sent', id, index }), checked
+ * against what this account may open, the same way as downloading it.
+ */
+async function forwardedAttachment(me, from) {
+  let uid;
+  let folder;
+  if (from?.kind === 'inbox') {
+    const msg = db().messages[from.id];
+    if (!msg || !isVisibleTo(msg, me)) throw new HttpError(404, 'A forwarded attachment is no longer available');
+    [uid, folder] = [msg.uid, 'inbox'];
+  } else if (from?.kind === 'sent' && SENT_ID.test(String(from.id))) {
+    const msg = db().sentBox.messages[String(from.id).match(SENT_ID)[1]];
+    if (!msg || !(isOwner(me) || msg.from.address === me)) throw new HttpError(404, 'A forwarded attachment is no longer available');
+    [uid, folder] = [msg.uid, 'sent'];
+  } else {
+    throw new HttpError(400, 'This attachment can’t be forwarded');
+  }
+  const att = (await fetchParsed(uid, folder))?.attachments[Number(from.index)];
+  if (!att) throw new HttpError(404, 'A forwarded attachment is no longer in the mailbox');
+  return forwardableAttachment(att, uid, folder, me);
+}
+
 router.post('/send', async (req, res) => {
   const me = req.me;
   const body = req.body ?? {};
@@ -653,11 +676,13 @@ router.post('/send', async (req, res) => {
     html: typeof body.html === 'string' && body.html.trim() ? body.html.slice(0, 2_000_000) : undefined,
     inReplyTo: body.inReplyTo || undefined,
     references: Array.isArray(body.references) ? body.references.map(String) : undefined,
-    attachments: attachmentInput.map((a) => ({
-      filename: String(a.filename || 'file'),
-      contentType: a.contentType || 'application/octet-stream',
-      ...(a.uploadId ? { uploadId: String(a.uploadId), size: Number(a.size) || 0 } : { content: String(a.content || '') }),
-    })),
+    attachments: await Promise.all(attachmentInput.map((a) => (a.forward
+      ? forwardedAttachment(me, a.forward)
+      : {
+          filename: String(a.filename || 'file'),
+          contentType: a.contentType || 'application/octet-stream',
+          ...(a.uploadId ? { uploadId: String(a.uploadId), size: Number(a.size) || 0 } : { content: String(a.content || '') }),
+        }))),
   };
   const removeDraft = () => {
     if (body.draftId) db().drafts = db().drafts.filter((d) => !(d.id === body.draftId && d.alias === me));

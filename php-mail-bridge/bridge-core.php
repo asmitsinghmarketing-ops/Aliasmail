@@ -124,6 +124,19 @@ function lite_multipart($imap, int $uid, $part, string $section, int &$left): st
     }
     return $out . '--' . $boundary . "--\r\n";
 }
+/** The decoded contents of one part of a message (for forwarding an attachment as it is). */
+function imap_part_bytes($imap, int $uid, string $section): ?string {
+    if (!preg_match('/^\d+(\.\d+)*$/', $section)) throw new RuntimeException('Invalid message part');
+    if (!imap_msgno($imap, $uid)) return null;
+    $part = @imap_fetchstructure($imap, $uid, FT_UID);
+    foreach (explode('.', $section) as $n) {
+        $part = $part->parts[(int)$n - 1] ?? null;
+        if (!$part) throw new RuntimeException('Message part not found');
+    }
+    $body = imap_fetchbody($imap, $uid, $section, FT_UID | FT_PEEK);
+    if ($body === false) throw new RuntimeException('IMAP part download failed');
+    return match ((int)($part->encoding ?? 0)) { ENCBASE64 => (string)base64_decode($body), ENCQUOTEDPRINTABLE => quoted_printable_decode($body), default => $body };
+}
 /** One part of a message (its MIME headers and body), for an attachment left out by fetchLite. */
 function imap_message_part($imap, int $uid, string $section): ?string {
     if (!preg_match('/^\d+(\.\d+)*$/', $section)) throw new RuntimeException('Invalid message part');

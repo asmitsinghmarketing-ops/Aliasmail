@@ -606,8 +606,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     });
   }
 
+  // Like Gmail, a forward carries the original's attachments (removable in compose). The server
+  // fetches them from the mailbox when sending, so nothing is downloaded here.
   const forward = (msg) =>
     setDraft({
+      files: (msg.attachments || [])
+        .filter((a) => !a.unavailable && (msg.kind === 'inbox' || msg.kind === 'sent'))
+        .map((a) => ({ filename: a.filename, contentType: a.contentType, size: a.size || 0, forward: { kind: msg.kind, id: msg.id, index: a.index } })),
       subject: /^fwd?:/i.test(msg.subject) ? msg.subject : `Fwd: ${msg.subject}`,
       text: withSignature(
         `\n\n---------- Forwarded message ----------\nFrom: ${displayName(msg.from)} <${msg.from.address}>\nDate: ${formatDate(msg.date, true)}\nSubject: ${msg.subject}\nTo: ${(msg.to || []).map((a) => a.address).join(', ')}\n\n${msg.text}`,
@@ -633,7 +638,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     const body = {
       ...rest,
       ...withDriveLinks(payload, driveFiles),
-      attachments: files.map(({ uploadId, filename, contentType, size }) => ({ uploadId, filename, contentType, size })),
+      attachments: files.map(({ uploadId, filename, contentType, size, forward }) => ({ uploadId, filename, contentType, size, forward })),
     };
     // Sharing Drive files with the recipients happens after sending; say if any couldn't be shared.
     const sharedNote = (result) => {

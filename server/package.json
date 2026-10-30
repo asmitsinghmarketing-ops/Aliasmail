@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test test/mail-performance.test.js test/storage-config.test.js test/read-sync.test.js test/roles.test.js test/device-location.test.js test/live-sync.test.js test/google-signin.test.js test/google-drive.test.js test/login-codes.test.js"
+    "test": "node --test test/mail-performance.test.js test/storage-config.test.js test/read-sync.test.js test/roles.test.js test/device-location.test.js test/live-sync.test.js test/google-signin.test.js test/google-drive.test.js test/login-codes.test.js test/forward.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
