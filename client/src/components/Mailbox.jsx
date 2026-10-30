@@ -224,9 +224,6 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   // Messages on their way out from this page (attachments uploading, then sending), shown at
   // the top of the Outbox with their progress until they have gone.
   const [sending, setSending] = useState([]);
-  const [justSent, setJustSent] = useState(null); // { key, subject } shown as "Sent" briefly
-  const justSentTimer = useRef(null);
-  const [trayMin, setTrayMin] = useState(false);
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!sending.length) return undefined;
@@ -671,7 +668,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     const bodyWith = (uploaded) => ({
       ...rest,
       ...withDriveLinks(payload, driveFiles),
-      attachments: uploaded.map(({ uploadId, filename, contentType, size, forward }) => ({ uploadId, filename, contentType, size, forward })),
+      attachments: uploaded.map(({ uploadId, filename, contentType, size, forward, content }) => ({ uploadId, filename, contentType, size, forward, content })),
     });
     // Sharing Drive files with the recipients happens after sending; say if any couldn't be shared.
     const sharedNote = (result) => {
@@ -726,11 +723,6 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         if (cancelled) return;
         phase('sending');
         const result = await api('/mail/send', { method: 'POST', body: bodyWith(uploaded) });
-        if (!result.queued) {
-          setJustSent({ key, subject });
-          clearTimeout(justSentTimer.current);
-          justSentTimer.current = setTimeout(() => setJustSent(null), 3500);
-        }
         if (result.queued) {
           // Not sent, but not lost: it waits in the Outbox (retried by itself unless refused).
           flash(
@@ -759,9 +751,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         done();
       }
     }, UNDO_SEND_MS);
-    // The sending card shows progress and Undo; clear any older pop-up out of its way.
+    // "Message sent" with Undo replaces any older pop-up.
     setToast(null);
-    setTrayMin(false);
   }
 
   /* ----- keyboard shortcuts (Gmail style) ----- */
@@ -966,7 +957,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const drawerVisiblyOpen = !collapsed || (drawerDrag !== null && drawerDrag > 0);
 
   return (
-    <div className={`app ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.length || justSent ? 'has-send-tray' : ''}`} style={{ '--alias': user.color }}>
+    <div className={`app ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.some((m) => m.phase === 'waiting') ? 'has-send-tray' : ''}`} style={{ '--alias': user.color }}>
       <header className="topbar">
         <div className="brand">
           <button
@@ -1502,13 +1493,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         </div>
       )}
 
-      <SendingTray
-        items={sending}
-        justSent={justSent}
-        minimized={trayMin}
-        onToggle={() => setTrayMin((m) => !m)}
-        onView={() => goTo('outbox')}
-      />
+      <SendingTray items={sending} onView={() => goTo('outbox')} />
       {toast && (
         <div className={`toast ${toast.tone ? `toast-card toast-${toast.tone}` : ''}`} role={toast.tone === 'error' ? 'alert' : 'status'}>
           {toast.tone && (

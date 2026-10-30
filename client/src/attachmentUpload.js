@@ -8,9 +8,14 @@ const base64 = (value) => {
 };
 const hex = (value) => [...new Uint8Array(value)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 
+// The hosting's bot check can answer in the bridge's place with a web page ("One moment,
+// please…") and status 200: that is a failed upload, not a successful one.
+const BLOCKED = 'The mail server’s security check held up the upload. Wait a minute and send again.';
+
 async function responseJson(response) {
   const data = response.headers.get('content-type')?.includes('json') ? await response.json() : null;
   if (!response.ok) throw new Error(data?.error || `Attachment upload failed (${response.status})`);
+  if (!data?.ok) throw new Error(BLOCKED);
   return data;
 }
 
@@ -24,7 +29,8 @@ function sendPiece(url, headers, body, onBytes) {
     xhr.onload = () => {
       let data = null;
       try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      if (xhr.status >= 200 && xhr.status < 300 && data?.ok) resolve(data);
+      else if (xhr.status >= 200 && xhr.status < 300) reject(new Error(BLOCKED));
       else reject(new Error(data?.error || `Attachment upload failed (${xhr.status})`));
     };
     xhr.onerror = () => reject(new TypeError('Attachment upload failed: network error'));
@@ -99,7 +105,12 @@ export async function uploadAttachments(files) {
       return done;
     } catch (err) {
       pending.delete(item); // the next Send tries this file again
-      throw err;
+      if (!(item._file instanceof File)) throw err;
+      // The direct upload didn't get through (for example the hosting's bot check answered):
+      // send the file through the app instead, as attachments went before direct uploads.
+      console.warn('Direct attachment upload failed, sending it through the app:', err.message);
+      uploadedSoFar.set(item, item.size || 0);
+      return { filename: item.filename, contentType: item.contentType, size: item.size, content: base64(await item._file.arrayBuffer()) };
     }
   }));
 }

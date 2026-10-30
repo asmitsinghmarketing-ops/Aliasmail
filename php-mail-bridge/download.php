@@ -26,6 +26,15 @@ const DOWNLOAD_INLINE = ['application/pdf', 'image/png', 'image/jpeg', 'image/gi
 
 try {
     $link = download_link_read((string)($_GET['id'] ?? ''));
+    // "?check=1": the app asks whether this page is reachable from the browser (the hosting's
+    // bot check can answer instead); it then uses the link, or else downloads the file itself.
+    if (!empty($_GET['check'])) {
+        $origin = config_value('MAIL_UPLOAD_ORIGIN');
+        if ($origin !== '') header('Access-Control-Allow-Origin: ' . $origin);
+        header('Content-Type: application/json');
+        echo '{"ok":true}';
+        exit;
+    }
     $bytes = null;
     $request = ['action' => 'fetchPartBytes', 'folder' => $link['folder'], 'uid' => $link['uid'], 'part' => $link['part']];
     if (config_value('MAIL_WORKER_ENABLED', 'true') === 'true') {

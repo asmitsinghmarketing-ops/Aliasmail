@@ -121,7 +121,12 @@ async function directLink(path) {
   try {
     const res = await request(`${path}/link`);
     if (!res.ok) return null;
-    return (await res.json()).url || null;
+    const url = (await res.json()).url;
+    if (!url) return null;
+    // The hosting's bot check ("One moment, please…") can answer in the bridge's place; then the
+    // file comes through the app instead, slower but without the wait.
+    const check = await fetch(`${url}&check=1`, { signal: AbortSignal.timeout(4000) });
+    return check.ok && (await check.json().catch(() => null))?.ok ? url : null;
   } catch {
     return null;
   }
@@ -155,8 +160,10 @@ export async function preview(path, filename) {
 export async function download(path, filename) {
   const link = await directLink(path);
   if (link) {
-    // A normal browser download (Content-Disposition: attachment), with its own progress bar.
-    Object.assign(document.createElement('a'), { href: link, rel: 'noreferrer' }).click();
+    // A normal browser download (Content-Disposition: attachment), with its own progress bar. In a
+    // new tab, so a page shown instead (e.g. the hosting's bot check) never replaces AliasMail;
+    // the browser closes the tab again once the download starts.
+    Object.assign(document.createElement('a'), { href: link, rel: 'noreferrer', target: '_blank' }).click();
     return;
   }
   const res = await request(path);
