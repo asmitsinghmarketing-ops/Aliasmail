@@ -75,8 +75,10 @@ try {
     // Only idempotent reads can fall back after a worker timeout. Mutations and
     // SMTP stay on the original bridge, so a lost response never duplicates them.
     if (config_value('MAIL_WORKER_ENABLED', 'true') === 'true' && in_array($action, ['sync', 'fetch', 'fetchMany', 'fetchLite', 'fetchPart'], true)) {
-        // Opening a message is foreground; sync, prefetch and anything marked background are not.
-        $lane = in_array($action, ['fetch', 'fetchLite', 'fetchPart'], true) && empty($body['background']) ? 'foreground' : 'background';
+        // Opening a message and the quick every-few-seconds inbox check are foreground, so new mail
+        // never waits behind preloading; full syncs, prefetch and anything marked background are not.
+        $lane = (in_array($action, ['fetch', 'fetchLite', 'fetchPart'], true) && empty($body['background'])) || ($action === 'sync' && !empty($body['quick']))
+            ? 'foreground' : 'background';
         try {
             $result = aliasmail_worker_request($lane, $body);
             if ($result !== null) reply(200, $result + ['transport' => 'worker', 'workerLane' => $lane]);

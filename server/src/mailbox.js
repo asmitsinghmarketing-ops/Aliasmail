@@ -87,9 +87,12 @@ async function recordFromSource(item) {
 }
 
 /** Update local metadata from the selected transport. */
-async function syncFolder(folder, cache) {
+async function syncFolder(folder, cache, quick = false) {
   const knownUids = Object.keys(cache.messages).map(Number);
-  const result = await bridge('sync', { folder, knownUids, knownUidValidity: cache.uidValidity });
+  const started = Date.now();
+  // Quick checks go to the bridge's foreground worker, so they never queue behind preloading.
+  const result = await bridge('sync', { folder, knownUids, knownUidValidity: cache.uidValidity, ...(quick && { quick: true }) });
+  const bridgeMs = Date.now() - started;
   const uidValidity = String(result.uidValidity || '');
   if (cache.uidValidity !== uidValidity) {
     for (const uid of Object.keys(cache.messages)) evict(folder, Number(uid));
@@ -123,7 +126,7 @@ async function syncFolder(folder, cache) {
     save();
     announceChange();
   }
-  return { hasMore: result.hasMore === true, changed };
+  return { hasMore: result.hasMore === true, changed, bridgeMs, via: result.transport || 'bridge', fetched: records.length, total: (result.uids || []).length };
 }
 
 let running = null;
@@ -134,22 +137,25 @@ let continuation = null;
  * `{ inboxOnly: true }` is the quick check made every few seconds while someone has the app open.
  */
 export function syncInbox({ inboxOnly = false } = {}) {
-  running ??= runSync(inboxOnly ? ['inbox'] : SYNCED_FOLDERS).finally(() => {
+  running ??= runSync(inboxOnly ? ['inbox'] : SYNCED_FOLDERS, inboxOnly).finally(() => {
     running = null;
   });
   return running;
 }
 
-async function runSync(folders) {
+async function runSync(folders, quick = false) {
   clearTimeout(continuation);
   let hasMore = false;
   let changed = false;
   const data = db();
+  const started = Date.now();
+  const steps = [];
   try {
     for (const folder of folders) {
-      const result = await syncFolder(folder, cacheOf(folder));
+      const result = await syncFolder(folder, cacheOf(folder), quick);
       hasMore = result.hasMore || hasMore;
       changed = result.changed || changed;
+      steps.push({ folder, bridgeMs: result.bridgeMs, via: result.via, fetched: result.fetched, total: result.total, hasMore: result.hasMore });
     }
     data.sync.lastError = null;
     if (hasMore) {
@@ -170,6 +176,9 @@ async function runSync(folders) {
     throw err;
   } finally {
     data.sync.lastSyncAt = new Date().toISOString();
+    // How long the last check took and where, for the admin overview (slow new mail).
+    data.sync.lastRun = { quick, ms: Date.now() - started, steps };
+    if (Date.now() - started > 10_000) console.warn('[sync] slow check:', JSON.stringify(data.sync.lastRun));
     save();
   }
   return data.sync;
