@@ -6,22 +6,11 @@ import Icon from './Icon.jsx';
 import { Popover, TimeMenu, scheduleOptions } from './Menus.jsx';
 import RichEditor, { htmlFromText, sanitizeHtml } from './RichEditor.jsx';
 import { pickDriveFiles } from '../drivePicker.js';
+import { uploadAttachments } from '../attachmentUpload.js';
 
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
-const readFile = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () =>
-      resolve({
-        filename: file.name,
-        contentType: file.type || 'application/octet-stream',
-        size: file.size,
-        content: String(reader.result).split(',')[1] ?? '',
-      });
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
+const readFile = (file) => ({ filename: file.name, contentType: file.type || 'application/octet-stream', size: file.size, _file: file });
 
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `d${Date.now()}${Math.random().toString(36).slice(2)}`);
 
@@ -188,7 +177,7 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
 
   async function addFiles(list) {
     try {
-      const added = await Promise.all([...list].map(readFile));
+      const added = [...list].map(readFile);
       setFiles((current) => [...current, ...added]);
     } catch (err) {
       setError(err.message);
@@ -281,6 +270,16 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
 
     clearTimeout(saveTimer.current);
     sending.current = true;
+    let uploaded;
+    try {
+      setSaveState(files.length ? 'Uploading attachments…' : saveState);
+      uploaded = await uploadAttachments(files);
+    } catch (err) {
+      sending.current = false;
+      setSaveState('');
+      setError(err.message);
+      return;
+    }
     // The Drive links are added to the body by the mailbox (see driveLinks) so an undone send
     // reopens without them doubled.
     onSend({
@@ -289,7 +288,7 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
       draftId: id,
       inReplyTo: draft.inReplyTo || undefined,
       references: draft.references,
-      files,
+      files: uploaded,
       driveFiles,
       driveAccess,
       drive: driveFiles.length ? { files: driveFiles.map(({ id: fileId, name }) => ({ id: fileId, name })), access: driveAccess } : undefined,

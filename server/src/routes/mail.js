@@ -15,7 +15,7 @@ import { audit } from '../audit.js';
 // Guessing the current password from a signed-in browser: 5 tries per 15 minutes.
 const passwordChecks = limiter('password-change', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 import { requireAuth } from '../auth.js';
-import { deleteFromServer, fetchParsed, moveMessages, prefetch, setServerSeen, syncInbox } from '../mailbox.js';
+import { deleteFromServer, fetchParsed, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
 import { deliver } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, sendAttachment, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
@@ -585,7 +585,7 @@ router.get('/scheduled/:id', (req, res) => {
     bcc: asAddresses(item.mail.bcc),
     html: null,
     text: item.mail.text,
-    attachments: item.mail.attachments.map((a, index) => ({ index, filename: a.filename, size: Buffer.byteLength(a.content, 'base64'), unavailable: true })),
+    attachments: item.mail.attachments.map((a, index) => ({ index, filename: a.filename, size: a.size || Buffer.byteLength(a.content || '', 'base64'), unavailable: true })),
   });
 });
 
@@ -616,6 +616,17 @@ router.post('/scheduled/cancel', (req, res) => {
 
 /* ---------------------------------- send ---------------------------------- */
 
+router.post('/attachments/start', async (req, res) => {
+  const size = Number(req.body?.size);
+  const filename = String(req.body?.filename || '').trim();
+  const contentType = String(req.body?.contentType || 'application/octet-stream');
+  const sha256 = String(req.body?.sha256 || '').toLowerCase();
+  const publicKey = String(req.body?.publicKey || '');
+  if (!filename || filename.length > 255 || !Number.isSafeInteger(size) || size < 1 || size > 20 * 1024 * 1024) throw new HttpError(400, 'Invalid attachment');
+  if (!/^[a-f0-9]{64}$/.test(sha256) || publicKey.length > 1000) throw new HttpError(400, 'Invalid attachment signature');
+  res.json(await startAttachmentUpload({ owner: req.me, filename, contentType, size, sha256, publicKey }));
+});
+
 router.post('/send', async (req, res) => {
   const me = req.me;
   const body = req.body ?? {};
@@ -626,6 +637,11 @@ router.post('/send', async (req, res) => {
   if (!to.length && !cc.length && !bcc.length) throw new HttpError(400, 'Add at least one recipient');
   const invalid = [...to, ...cc, ...bcc].find((a) => !EMAIL_RE.test(a));
   if (invalid) throw new HttpError(400, `"${invalid}" is not a valid email address`);
+  const attachmentInput = Array.isArray(body.attachments) ? body.attachments : [];
+  if (attachmentInput.reduce((total, a) => total + (Number(a.size) || Buffer.byteLength(String(a.content || ''), 'base64')), 0) > 20 * 1024 * 1024) {
+    throw new HttpError(413, 'Attachments are larger than 20 MB in total');
+  }
+  if (attachmentInput.some((a) => a.uploadId && !/^[a-f0-9]{48}$/.test(String(a.uploadId)))) throw new HttpError(400, 'Invalid attachment ID');
 
   const mail = {
     to,
@@ -637,10 +653,10 @@ router.post('/send', async (req, res) => {
     html: typeof body.html === 'string' && body.html.trim() ? body.html.slice(0, 2_000_000) : undefined,
     inReplyTo: body.inReplyTo || undefined,
     references: Array.isArray(body.references) ? body.references.map(String) : undefined,
-    attachments: (body.attachments || []).map((a) => ({
+    attachments: attachmentInput.map((a) => ({
       filename: String(a.filename || 'file'),
       contentType: a.contentType || 'application/octet-stream',
-      content: String(a.content || ''),
+      ...(a.uploadId ? { uploadId: String(a.uploadId), size: Number(a.size) || 0 } : { content: String(a.content || '') }),
     })),
   };
   const removeDraft = () => {

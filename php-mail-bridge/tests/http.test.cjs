@@ -11,14 +11,14 @@ test('bridge HTTP authentication, fallback, and private worker scripts', { timeo
   const parent = await fs.realpath(os.tmpdir());
   const dir = await fs.mkdtemp(path.join(parent, 'aliasmail-worker-http-'));
   const settings = path.join(dir, 'settings.php');
-  await fs.writeFile(settings, "<?php $GLOBALS['aliasmailSettings']=['MAIL_USER'=>'test','MAIL_PASSWORD'=>'test','MAIL_BRIDGE_TOKEN'=>'worker-test-token','MAIL_WORKER_DIR'=>getenv('TEST_WORKER_DIR')];");
+  await fs.writeFile(settings, "<?php $GLOBALS['aliasmailSettings']=['MAIL_USER'=>'test','MAIL_PASSWORD'=>'test','MAIL_BRIDGE_TOKEN'=>'worker-test-token','MAIL_WORKER_DIR'=>getenv('TEST_WORKER_DIR'),'MAIL_UPLOAD_DIR'=>getenv('TEST_UPLOAD_DIR'),'MAIL_UPLOAD_URL'=>'https://upload.test/upload.php','MAIL_UPLOAD_ORIGIN'=>'https://mail.test'];");
   const reserve = net.createServer();
   reserve.listen(0, '127.0.0.1');
   await once(reserve, 'listening');
   const port = reserve.address().port;
   await new Promise((resolve) => reserve.close(resolve));
   const proc = spawn('php', ['-n', '-S', '127.0.0.1:' + port, '-t', path.resolve('php-mail-bridge')], {
-    env: { ...process.env, ALIASMAIL_SETTINGS_FILE: settings, TEST_WORKER_DIR: path.join(dir, 'private') },
+    env: { ...process.env, ALIASMAIL_SETTINGS_FILE: settings, TEST_WORKER_DIR: path.join(dir, 'private'), TEST_UPLOAD_DIR: path.join(dir, 'uploads') },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   let logs = '';
@@ -52,6 +52,7 @@ test('bridge HTTP authentication, fallback, and private worker scripts', { timeo
   const failedRead = await post('fetch');
   assert.equal(failedRead.status, 502);
   assert.match((await failedRead.json()).error, /IMAP extension is not enabled/);
+
   for (const script of ['worker.php', 'worker-common.php', 'bridge-core.php']) {
     assert.equal((await fetch(base + '/' + script)).status, 403, script + ' must not run over HTTP');
   }

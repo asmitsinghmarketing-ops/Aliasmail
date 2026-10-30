@@ -80,8 +80,20 @@ function structure_has_attachments($part): bool {
     return false;
 }
 
+function smtp_write_all($socket, string $data): void {
+    $offset = 0; $length = strlen($data);
+    while ($offset < $length) {
+        $written = @fwrite($socket, substr($data, $offset, 65536));
+        if ($written === false || $written === 0) {
+            $meta = stream_get_meta_data($socket);
+            throw new RuntimeException(!empty($meta['timed_out']) ? 'SMTP write timed out' : 'SMTP connection closed while writing');
+        }
+        $offset += $written;
+    }
+}
+
 function smtp_command($socket, string $command, array $codes): string {
-    if ($command !== '') fwrite($socket, $command . "\r\n");
+    if ($command !== '') smtp_write_all($socket, $command . "\r\n");
     $reply = '';
     do {
         $line = fgets($socket, 2048);
@@ -147,14 +159,14 @@ function smtp_send_raw(string $raw, array $envelope): void {
         if (count($commands) === 1) throw new RuntimeException('No recipients in SMTP envelope');
         if (isset($capabilities['PIPELINING'])) {
             $payload = implode("\r\n", array_column($commands, 0)) . "\r\n";
-            if (fwrite($socket, $payload) === false) throw new RuntimeException('SMTP envelope write failed');
+            smtp_write_all($socket, $payload);
             foreach ($commands as [, $codes]) smtp_command($socket, '', $codes);
         } else {
             foreach ($commands as [$command, $codes]) smtp_command($socket, $command, $codes);
         }
         smtp_command($socket, 'DATA', [354]);
         $raw = preg_replace('/(?m)^\./', '..', str_replace(["\r\n", "\r"], "\n", $raw));
-        fwrite($socket, str_replace("\n", "\r\n", rtrim($raw, "\n")) . "\r\n.\r\n");
+        smtp_write_all($socket, str_replace("\n", "\r\n", rtrim($raw, "\n")) . "\r\n.\r\n");
         smtp_command($socket, '', [250]);
         try { smtp_command($socket, 'QUIT', [221]); } catch (Throwable $ignored) {}
 
@@ -287,4 +299,3 @@ function handle(array $body): array {
     }
     throw new RuntimeException('Unsupported bridge action');
 }
-

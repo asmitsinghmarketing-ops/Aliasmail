@@ -12,7 +12,7 @@ export async function deliver(address, mail) {
   const account = accountOf(address);
   if (!account) throw new Error('This account no longer exists');
   const from = { name: account.displayName || '', address };
-  const attachments = (mail.attachments || []).map((a) => ({ ...a, encoding: 'base64' }));
+  const attachments = (mail.attachments || []).map((a) => ({ ...a, ...(a.content && { encoding: 'base64' }) }));
 
   const messageId = await sendMail({ ...mail, from, attachments });
 
@@ -27,7 +27,7 @@ export async function deliver(address, mail) {
     subject: mail.subject,
     text: mail.text,
     date: new Date().toISOString(),
-    attachments: attachments.map((f, index) => ({ index, filename: f.filename, contentType: f.contentType, size: Buffer.byteLength(f.content, 'base64') })),
+    attachments: attachments.map((f, index) => ({ index, filename: f.filename, contentType: f.contentType, size: f.size || Buffer.byteLength(f.content || '', 'base64') })),
   });
   save();
   return messageId;

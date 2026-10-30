@@ -4,6 +4,10 @@ $GLOBALS['aliasmailSettings'] = [
     'MAIL_USER' => 'mailbox@example.com',
     'MAIL_PASSWORD' => 'replace-with-mailbox-password',
     'MAIL_BRIDGE_TOKEN' => 'replace-with-a-long-random-token',
+    // Direct signed attachment uploads. The directory must stay outside public_html.
+    'MAIL_UPLOAD_URL' => 'https://api.example.com/aliasmail-bridge/upload.php',
+    'MAIL_UPLOAD_ORIGIN' => 'https://mail.example.com',
+    // 'MAIL_UPLOAD_DIR' => '/home/YOUR_ACCOUNT/.aliasmail-uploads',
     'IMAP_HOST' => 'imap.secureserver.net',
     'IMAP_PORT' => '993',
     'IMAP_SECURE' => 'true',
@@ -20,4 +24,3 @@ $GLOBALS['aliasmailSettings'] = [
     // Default: ~/.aliasmail-worker outside public_html.
     // 'MAIL_WORKER_DIR' => '/home/YOUR_ACCOUNT/.aliasmail-worker',
 ];
-

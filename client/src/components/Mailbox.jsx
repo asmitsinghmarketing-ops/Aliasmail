@@ -630,7 +630,11 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   function handleSend(payload) {
     setDraft(null);
     const { files, driveFiles, driveAccess, ...rest } = payload;
-    const body = { ...rest, ...withDriveLinks(payload, driveFiles), attachments: files.map(({ size, ...f }) => f) };
+    const body = {
+      ...rest,
+      ...withDriveLinks(payload, driveFiles),
+      attachments: files.map(({ uploadId, filename, contentType, size }) => ({ uploadId, filename, contentType, size })),
+    };
     // Sharing Drive files with the recipients happens after sending; say if any couldn't be shared.
     const sharedNote = (result) => {
       const failed = result?.drive?.failed || [];

@@ -38,11 +38,25 @@ export async function pickDriveFiles({ accessToken, apiKey, appId }) {
   await loadPicker();
   const g = window.google.picker;
   return new Promise((resolve) => {
-    const files = new g.DocsView(g.ViewId.DOCS).setIncludeFolders(true).setSelectFolderEnabled(false);
+    // Gmail-like tabs: recent files first, then My Drive, shared, starred, shared drives, upload.
+    const docs = () => new g.DocsView(g.ViewId.DOCS).setMode(g.DocsViewMode.GRID);
+    const recent = docs().setLabel('Recent');
+    const myDrive = docs().setLabel('My Drive').setParent('root').setIncludeFolders(true).setSelectFolderEnabled(false);
+    const shared = docs().setLabel('Shared with me').setOwnedByMe(false);
+    const starred = docs().setLabel('Starred').setStarred(true);
+    const drives = docs().setLabel('Shared drives').setEnableDrives(true).setIncludeFolders(true).setSelectFolderEnabled(false);
+    const width = Math.min(1051, window.innerWidth - 16);
+    const height = Math.min(650, window.innerHeight - 16);
     new g.PickerBuilder()
-      .addView(files)
+      .addView(recent)
+      .addView(myDrive)
+      .addView(shared)
+      .addView(starred)
+      .addView(drives)
       .addView(new g.DocsUploadView())
       .enableFeature(g.Feature.MULTISELECT_ENABLED)
+      .enableFeature(g.Feature.SUPPORT_DRIVES)
+      .setSize(width, height)
       .setOAuthToken(accessToken)
       .setDeveloperKey(apiKey)
       .setAppId(appId)

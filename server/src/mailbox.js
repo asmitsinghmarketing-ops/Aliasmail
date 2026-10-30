@@ -28,6 +28,10 @@ const bridge = (action, data = {}) => {
   return mailTransport.request(action, data);
 };
 
+export function startAttachmentUpload(data) {
+  return bridge('startUpload', data);
+}
+
 /** The local cache of a folder: { uidValidity, lastUid, messages } */
 export function cacheOf(folder) {
   const data = db();
@@ -385,12 +389,23 @@ export async function setServerSeen(uids, seen, folder = 'inbox') {
 /** Send through SMTP; save the Sent copy in the background so it doesn't delay the send response. */
 export async function sendMail(mail) {
   assertConfigured();
-  const compiled = new MailComposer(mail).compile();
+  const uploadIds = (mail.attachments || []).map((a) => a.uploadId).filter(Boolean);
+  const attachments = await Promise.all((mail.attachments || []).map(async (attachment) => {
+    if (!attachment.uploadId) return attachment;
+    const stored = await bridge('consumeUpload', { uploadId: attachment.uploadId, owner: mail.from.address });
+    return { filename: stored.filename, contentType: stored.contentType, content: stored.content, encoding: 'base64' };
+  }));
+  const compiled = new MailComposer({ ...mail, attachments }).compile();
   const raw = await compiled.build();
   const encodedRaw = raw.toString('base64');
   const envelope = compiled.getEnvelope();
-  await bridge('sendRaw', { raw: encodedRaw, envelope });
-  void bridge('saveSent', { raw: encodedRaw })
+  const sent = await bridge('sendRaw', { raw: encodedRaw, envelope });
+  await Promise.all(uploadIds.map((uploadId) => bridge('deleteUpload', { uploadId, owner: mail.from.address }).catch((err) => {
+    console.warn('[mail] Temporary attachment cleanup failed:', err.message);
+  })));
+  const saveAction = sent.rawId ? 'saveStagedSent' : 'saveSent';
+  const savePayload = sent.rawId ? { rawId: sent.rawId } : { raw: encodedRaw };
+  void bridge(saveAction, savePayload)
     .catch((err) => console.warn('[mail] Sent copy save failed:', err.message))
     .finally(() => syncInbox().catch((err) => console.warn('[mail] post-send sync failed:', err.message)));
 

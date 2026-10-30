@@ -4,6 +4,7 @@ ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 require __DIR__ . '/bridge-core.php';
 require __DIR__ . '/worker-common.php';
+require __DIR__ . '/upload-common.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -25,6 +26,25 @@ if (!is_array($body)) reply(400, ['error' => 'Invalid JSON']);
 try {
     $action = (string)($body['action'] ?? '');
     if ($action === 'workerStatus') reply(200, aliasmail_worker_status());
+    if ($action === 'startUpload') reply(200, upload_start($body));
+    if ($action === 'consumeUpload') reply(200, upload_consume((string)($body['uploadId'] ?? ''), (string)($body['owner'] ?? '')));
+    if ($action === 'deleteUpload') reply(200, upload_delete((string)($body['uploadId'] ?? ''), (string)($body['owner'] ?? '')));
+    if ($action === 'startRaw') reply(200, raw_start((int)($body['size'] ?? 0), (string)($body['sha256'] ?? '')));
+    if ($action === 'appendRaw') reply(200, raw_append((string)($body['rawId'] ?? ''), (string)($body['chunk'] ?? '')));
+    if ($action === 'sendStagedRaw') {
+        $rawId = (string)($body['rawId'] ?? '');
+        smtp_send_raw(raw_read($rawId), (array)($body['envelope'] ?? []));
+        reply(200, ['ok' => true, 'rawId' => $rawId]);
+    }
+    if ($action === 'saveStagedSent') {
+        $rawId = (string)($body['rawId'] ?? ''); $raw = raw_read($rawId);
+        [$imap] = imap_open_folder('sent', false);
+        try {
+            $box = '{'.config_value('IMAP_HOST','imap.secureserver.net').':'.config_value('IMAP_PORT','993').'/imap/ssl}'.mailbox_name('sent');
+            if (!imap_append($imap, $box, $raw, '\\Seen')) throw new RuntimeException('Could not append message to Sent: '.(imap_last_error() ?: 'unknown error'));
+        } finally { imap_release($imap); }
+        raw_delete($rawId); reply(200, ['ok' => true]);
+    }
     // Only idempotent reads can fall back after a worker timeout. Mutations and
     // SMTP stay on the original bridge, so a lost response never duplicates them.
     if (config_value('MAIL_WORKER_ENABLED', 'true') === 'true' && in_array($action, ['sync', 'fetch', 'fetchMany'], true)) {
