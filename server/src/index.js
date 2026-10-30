@@ -124,7 +124,9 @@ app.use((err, req, res, next) => {
   if (!(err instanceof HttpError) && status >= 500) console.error(err);
   // Don't leak internal error details to the browser.
   const message = err instanceof HttpError || status < 500 ? err.message : 'Something went wrong on the server';
-  res.status(status).json({ error: message || 'Something went wrong' });
+  // The host's CDN replaces 502/503/504 answers with its own "Bad gateway" page, which would
+  // hide the reason ("waking up" in the browser). Mail server problems go out as 500 instead.
+  res.status([502, 503, 504].includes(status) ? 500 : status).json({ error: message || 'Something went wrong' });
 });
 
 app.listen(config.port, () => console.log(`AliasMail API running on http://localhost:${config.port}`));
