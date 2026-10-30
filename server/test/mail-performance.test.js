@@ -154,7 +154,7 @@ test('a connection dropped while idle is retried for reads, never for sending', 
   const send = flaky();
   const sender = createMailTransport(settings, { fetcher: send.fetcher });
   t.after(() => sender.close());
-  await assert.rejects(sender.request('sendRaw', { raw: 'eA==', envelope: { from: 'a@example.com', to: ['b@example.com'] } }), /fetch failed/);
+  await assert.rejects(sender.request('sendRaw', { raw: 'eA==', envelope: { from: 'a@example.com', to: ['b@example.com'] } }), /mail bridge \(other side closed\).*check Sent/);
   assert.equal(send.calls(), 1);
 });
 
@@ -249,4 +249,36 @@ test('a fresh server process opens a persisted message without a bridge request'
   assert.equal(second.subject, 'Cache test');
   const changed = JSON.parse((await run(process.execPath, [driver], { env: { ...env, TEST_UID_VALIDITY: '456' } })).stdout.trim().split(String.fromCharCode(10)).at(-1));
   assert.equal(changed.calls, 1, 'UIDVALIDITY change must not reuse an old message body');
+});
+
+test('a bridge that rejects the token is a server error, never a sign-out', async (t) => {
+  const { Client } = mockClients();
+  const transport = createMailTransport({ ...settings, mailTransport: 'bridge' }, {
+    Client, fetcher: async () => ({ ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) }),
+  });
+  t.after(() => transport.close());
+  const originalError = console.error;
+  console.error = () => {};
+  t.after(() => { console.error = originalError; });
+  await assert.rejects(transport.request('sendRaw', { raw: 'eA==', envelope: {} }), (err) => {
+    assert.equal(err.status, 502);
+    assert.match(err.message, /MAIL_BRIDGE_TOKEN/);
+    return true;
+  });
+});
+
+test('an unreachable or slow bridge gives a readable error, not a bare 500', async (t) => {
+  const { Client } = mockClients();
+  const originalError = console.error;
+  console.error = () => {};
+  t.after(() => { console.error = originalError; });
+  const failing = (error) => createMailTransport({ ...settings, mailTransport: 'bridge' }, { Client, fetcher: async () => { throw error; } });
+  const down = failing(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }));
+  t.after(() => down.close());
+  await assert.rejects(down.request('sendRaw', { raw: 'eA==', envelope: {} }), (err) => err.status === 502 && /ECONNREFUSED/.test(err.message));
+  const timeout = new Error('timed out');
+  timeout.name = 'TimeoutError';
+  const slow = failing(timeout);
+  t.after(() => slow.close());
+  await assert.rejects(slow.request('sendRaw', { raw: 'eA==', envelope: {} }), (err) => err.status === 504 && /check Sent/.test(err.message));
 });

@@ -144,18 +144,41 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.mailBridge.token}` },
       body: JSON.stringify({ action, ...data }), signal: AbortSignal.timeout(45_000),
     });
+    // Network failures and timeouts become errors the user can read, instead of a bare 500.
+    const unreachable = (error) => {
+      const reason = error.cause?.code || error.cause?.message || error.message;
+      console.error(`[mail] PHP bridge ${action} failed: ${error.name}: ${reason}`);
+      if (error.name === 'TimeoutError') {
+        return new HttpError(504, action === 'sendRaw' || action === 'sendStagedRaw'
+          ? 'The mail bridge didn’t answer in time. The message may still have been sent: check Sent before trying again.'
+          : 'The mail bridge didn’t answer in time. Try again in a moment.');
+      }
+      return new HttpError(502, action === 'sendRaw' || action === 'sendStagedRaw'
+        ? `Lost the connection to the mail bridge (${reason}). The message may still have been sent: check Sent before trying again.`
+        : `Couldn’t reach the mail bridge (${reason}). Try again in a moment.`);
+    };
     let response;
     try {
       response = await post();
     } catch (error) {
       // After a quiet period the bridge's web server has usually closed the reused connection
       // ("fetch failed: other side closed"); a second attempt opens a new one.
-      if (!SAFE_TO_RETRY.has(action) || error.name === 'TimeoutError') throw error;
-      response = await post();
+      if (!SAFE_TO_RETRY.has(action) || error.name === 'TimeoutError') throw unreachable(error);
+      try {
+        response = await post();
+      } catch (retryError) {
+        throw unreachable(retryError);
+      }
     }
     let result;
     try { result = await response.json(); } catch { throw new HttpError(502, 'Mail bridge returned an invalid response. Check the deployed PHP bridge and its server logs.'); }
     if (!result || typeof result !== 'object' || Array.isArray(result)) throw new HttpError(502, 'Mail bridge returned an invalid response');
+    // The bridge refusing this app (wrong token) is a server setup problem, not the user's session:
+    // passing its 401 on would sign the user out of AliasMail.
+    if (response.status === 401 || response.status === 403) {
+      console.error(`[mail] PHP bridge refused the request (${response.status}): MAIL_BRIDGE_TOKEN differs from the bridge's aliasmail-settings.php`);
+      throw new HttpError(502, 'The mail bridge rejected this app’s token. Ask the administrator to make MAIL_BRIDGE_TOKEN match on both servers.');
+    }
     if (!response.ok || result.error) throw new HttpError(response.status >= 500 || response.ok ? 502 : response.status, result.error || `PHP mail bridge failed (${response.status})`);
     return result;
   }
