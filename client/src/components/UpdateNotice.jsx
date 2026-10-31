@@ -39,7 +39,7 @@ export default function UpdateNotice() {
   if (!ready) return null;
   return (
     <div className="update-notice" role="status">
-      <span>A new version of AliasMail is ready.</span>
+      <span>A new version of Nextspace is ready.</span>
       <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>
         Reload
       </button>

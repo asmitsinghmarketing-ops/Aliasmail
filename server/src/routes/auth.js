@@ -43,7 +43,7 @@ const loginByIp = limiter('login-ip', { max: 30, windowMs: 15 * 60e3, lockMs: 30
 // 5 wrong codes lock 2-step verification for that account for 15 minutes.
 const codeLimiter = limiter('mfa', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 
-const ISSUER = () => `AliasMail (${config.mailbox.split('@')[1] || 'mail'})`;
+const ISSUER = () => `Nextspace (${config.mailbox.split('@')[1] || 'mail'})`;
 // Compared against when the address is unknown (and for the admin), so every wrong sign-in takes
 // the same time and response times don't reveal which addresses exist.
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 12);

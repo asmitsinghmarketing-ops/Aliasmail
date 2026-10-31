@@ -38,7 +38,7 @@ export function createLocator({ enabled = true, fetcher = (...args) => fetch(...
     if (hit) return hit.value;
     try {
       const res = await fetcher(`https://ipapi.co/${encodeURIComponent(ip)}/json/`, {
-        headers: { Accept: 'application/json', 'User-Agent': 'AliasMail' },
+        headers: { Accept: 'application/json', 'User-Agent': 'Nextspace' },
         signal: AbortSignal.timeout(4000),
       });
       if (!res.ok) return null;
@@ -64,7 +64,7 @@ export function createPlaceFinder({ fetcher = (...args) => fetch(...args), maxEn
     if (hit) return hit.value;
     try {
       const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&addressdetails=1&accept-language=en&lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`;
-      const res = await fetcher(url, { headers: { Accept: 'application/json', 'User-Agent': 'AliasMail self-hosted webmail' }, signal: AbortSignal.timeout(6000) });
+      const res = await fetcher(url, { headers: { Accept: 'application/json', 'User-Agent': 'Nextspace self-hosted webmail' }, signal: AbortSignal.timeout(6000) });
       if (!res.ok) return null;
       const a = (await res.json()).address || {};
       const value = join(a.city || a.town || a.village || a.suburb || a.county || a.state_district, a.state, a.country);

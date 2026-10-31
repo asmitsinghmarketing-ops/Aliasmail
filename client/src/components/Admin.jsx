@@ -174,7 +174,7 @@ function Overview({ overview, onReload }) {
           {overview.configured && sync.checking?.running && (
             <div className="muted small">
               New mail is checked every {sync.checking.everySeconds}s
-              {sync.checking.live ? ' (someone is using AliasMail)' : ' (nobody is using AliasMail right now)'}
+              {sync.checking.live ? ' (someone is using Nextspace)' : ' (nobody is using Nextspace right now)'}
               {sync.checking.lastCheckAt && ` · last check ${timeAgo(sync.checking.lastCheckAt)}`}
             </div>
           )}

@@ -129,7 +129,7 @@ app.use((err, req, res, next) => {
   res.status([502, 503, 504].includes(status) ? 500 : status).json({ error: message || 'Something went wrong' });
 });
 
-app.listen(config.port, () => console.log(`AliasMail API running on http://localhost:${config.port}`));
+app.listen(config.port, () => console.log(`Nextspace API running on http://localhost:${config.port}`));
 checkDeployment();
 
 if (config.configured) {
@@ -180,7 +180,7 @@ function checkDeployment() {
     const other = Number(fs.readFileSync(lockFile, 'utf8'));
     if (other && other !== process.pid) {
       process.kill(other, 0); // throws if that process is gone
-      warn(`Another AliasMail process (pid ${other}) is using ${path.dirname(config.dataFile)}. Run only ONE instance, or data will be lost.`);
+      warn(`Another Nextspace process (pid ${other}) is using ${path.dirname(config.dataFile)}. Run only ONE instance, or data will be lost.`);
     }
   } catch {
     /* no lock, or a stale one */

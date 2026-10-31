@@ -48,7 +48,7 @@ async function request(path, { method = 'GET', body, signInFlow = false } = {}) 
       if (!RETRY_STATUS.has(res.status) || attempt >= retries.length) break;
     } catch (err) {
       if (attempt >= retries.length) {
-        const offline = new Error(navigator.onLine === false ? 'You’re offline. AliasMail will catch up when you’re back online.' : 'Couldn’t reach AliasMail. Check your connection and try again.');
+        const offline = new Error(navigator.onLine === false ? 'You’re offline. Nextspace will catch up when you’re back online.' : 'Couldn’t reach Nextspace. Check your connection and try again.');
         offline.network = true;
         throw offline;
       }
@@ -67,7 +67,7 @@ export async function api(path, options) {
   const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
   if (options?.signInFlow && res.ok) clearMailCaches();
   if (!res.ok) {
-    const fallback = RETRY_STATUS.has(res.status) ? 'AliasMail is waking up. Try again in a moment.' : `Request failed (${res.status})`;
+    const fallback = RETRY_STATUS.has(res.status) ? 'Nextspace is waking up. Try again in a moment.' : `Request failed (${res.status})`;
     const error = new Error(data?.error || fallback);
     error.status = res.status;
     // The role giving access to this shared mailbox was removed: go back to the own mailbox.

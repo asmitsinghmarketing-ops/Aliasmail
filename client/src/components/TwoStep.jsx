@@ -141,7 +141,7 @@ export function AuthenticatorSetup({ start, confirm, onDone, onCancel }) {
 /** One-time backup codes, with copy and download. */
 export function BackupCodes({ codes, account, onDone, doneLabel = 'I’ve saved them' }) {
   const [copied, setCopied] = useState(false);
-  const text = `AliasMail backup codes for ${account}\nEach code works once.\n\n${codes.join('\n')}\n`;
+  const text = `Nextspace backup codes for ${account}\nEach code works once.\n\n${codes.join('\n')}\n`;
 
   const download = () => {
     const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));

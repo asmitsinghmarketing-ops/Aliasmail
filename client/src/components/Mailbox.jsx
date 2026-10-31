@@ -329,21 +329,21 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     window.history.replaceState(null, '', window.location.pathname);
     const said = {
       linked: 'Google account connected. You can now sign in with Google.',
-      'in-use': 'That Google account is already connected to another AliasMail account.',
+      'in-use': 'That Google account is already connected to another Nextspace account.',
       cancelled: 'Connecting Google was cancelled.',
       'drive-linked': 'Google Drive connected. Open your draft and choose Insert from Drive.',
       'drive-denied': 'Drive wasn’t connected: allow access to the files you pick, then try again.',
-      'drive-other-account': 'Use the same Google account that is connected to AliasMail for Drive.',
+      'drive-other-account': 'Use the same Google account that is connected to Nextspace for Drive.',
       'meet-linked': 'Google Meet connected. Start or schedule a meeting from “New meeting”.',
-      'meet-denied': 'Google Meet wasn’t connected: allow AliasMail to add events to your calendar, then try again.',
-      'meet-other-account': 'Use the same Google account that is connected to AliasMail for Meet.',
+      'meet-denied': 'Google Meet wasn’t connected: allow Nextspace to add events to your calendar, then try again.',
+      'meet-other-account': 'Use the same Google account that is connected to Nextspace for Meet.',
       'all-linked': 'Google apps connected. Insert Drive files and Meet links in Compose, or start a meeting from the apps menu.',
       'some-linked': 'Some Google apps were connected. Tick every box on Google’s screen to connect the rest.',
       'all-denied': 'Nothing was connected: tick the boxes on Google’s screen, then try again.',
-      'all-other-account': 'Use the same Google account that is connected to AliasMail.',
+      'all-other-account': 'Use the same Google account that is connected to Nextspace.',
       'chat-linked': 'Google Chat connected. Run the test in Google apps to see whether Google allows it for your account.',
       'chat-denied': 'Google Chat wasn’t connected: tick the box on Google’s screen, then try again.',
-      'chat-other-account': 'Use the same Google account that is connected to AliasMail for Chat.',
+      'chat-other-account': 'Use the same Google account that is connected to Nextspace for Chat.',
     };
     if (outcome === 'continue' || outcome === 'not-linked') return;
     setSettingsTab(/^(drive|meet|chat|all|some)-/.test(outcome) ? 'google' : 'security');
@@ -453,7 +453,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   useEffect(() => {
     document.title = `${folderLabel}${counts.inbox ? ` (${counts.inbox})` : ''} - ${me}`;
     return () => {
-      document.title = 'AliasMail';
+      document.title = 'Nextspace';
     };
   }, [folderLabel, counts.inbox, me]);
 
@@ -755,14 +755,14 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         const clientTiming = { undoMs: UNDO_SEND_MS, uploadWaitMs: Date.now() - waitStarted };
         const postStarted = Date.now();
         const result = await api('/mail/send', { method: 'POST', body: { ...bodyWith(uploaded), clientTiming } });
-        if (result.timing) console.info('[AliasMail] send timing', { ...clientTiming, requestMs: Date.now() - postStarted, ...result.timing });
+        if (result.timing) console.info('[Nextspace] send timing', { ...clientTiming, requestMs: Date.now() - postStarted, ...result.timing });
         if (result.queued) {
           // Not sent, but not lost: it waits in the Outbox (retried by itself unless refused).
           flash(
             result.uncertain
               ? 'The connection dropped while sending, so it may already have gone out. Check Sent before retrying from the Outbox.'
               : result.retrying
-                ? `${friendlyReason(result.error)} AliasMail will keep trying in the background.`
+                ? `${friendlyReason(result.error)} Nextspace will keep trying in the background.`
                 : friendlyReason(result.error),
             null,
             20000,

@@ -7,7 +7,7 @@ import Icon from './Icon.jsx';
 
 const HOPS = {
   uploadWait: { label: 'Attachment upload (wait)', color: '#adb5bd' },
-  app: { label: 'AliasMail builds the email', color: '#7048e8' },
+  app: { label: 'Nextspace builds the email', color: '#7048e8' },
   network: { label: 'Network: app ↔ bridge', color: '#1c7ed6' },
   attach: { label: 'Bridge adds attachments', color: '#0c8599' },
   connect: { label: 'Relay: connect', color: '#2b8a3e' },
@@ -17,7 +17,7 @@ const HOPS = {
   quit: { label: 'Relay: goodbye', color: '#868e96' },
   local: { label: 'Straight into your mailbox (own aliases)', color: '#12b886' },
   delivery: { label: 'Sender → your mailbox', color: '#1c7ed6' },
-  notice: { label: 'Mailbox → AliasMail notices it', color: '#e8590c' },
+  notice: { label: 'Mailbox → Nextspace notices it', color: '#e8590c' },
   open: { label: 'Open folder', color: '#1c7ed6' },
   status: { label: 'Folder status', color: '#0c8599' },
   list: { label: 'List messages', color: '#7048e8' },
@@ -112,7 +112,7 @@ function SmtpCheck() {
         </button>
       </div>
       <p className="muted small">
-        Tries GoDaddy’s mail server from the server AliasMail runs on. It only connects and reads the greeting: nothing is sent.
+        Tries GoDaddy’s mail server from the server Nextspace runs on. It only connects and reads the greeting: nothing is sent.
       </p>
       {state?.error && <div className="alert">{state.error}</div>}
       {state?.results && (
@@ -128,7 +128,7 @@ function SmtpCheck() {
           </ul>
           <p className={`small ${open.length ? '' : 'muted'}`}>
             {open.length
-              ? `✅ ${open.map((r) => r.target).join(', ')} can be reached from here, so AliasMail could send through GoDaddy's mail server directly, skipping the slow relay.`
+              ? `✅ ${open.map((r) => r.target).join(', ')} can be reached from here, so Nextspace could send through GoDaddy's mail server directly, skipping the slow relay.`
               : 'All blocked from here too: GoDaddy only allows sending through the cPanel relay.'}
           </p>
         </>
@@ -223,7 +223,7 @@ export default function AdminSpeed() {
       <section className="card speed-card">
         <h2 className="card-title">Recently received</h2>
         {receives.length === 0 ? (
-          <p className="muted">No new mail since the app last restarted. When some arrives, it shows here: how long it took to reach your mailbox, and how long until AliasMail noticed it.</p>
+          <p className="muted">No new mail since the app last restarted. When some arrives, it shows here: how long it took to reach your mailbox, and how long until Nextspace noticed it.</p>
         ) : (
           <>
             <Legend hops={['delivery', 'notice']} />
@@ -236,7 +236,7 @@ export default function AdminSpeed() {
                   </div>
                   <HopBar parts={[{ hop: 'delivery', ms: Math.max(0, (r.sentToMailboxSec || 0) * 1000) }, { hop: 'notice', ms: Math.max(0, (r.mailboxToAliasMailSec || 0) * 1000) }]} scale={receiveScale} />
                   <div className="muted small">
-                    reached the mailbox {formatDate(r.arrivedAt, true)} · AliasMail saw it {r.mailboxToAliasMailSec} s later
+                    reached the mailbox {formatDate(r.arrivedAt, true)} · Nextspace saw it {r.mailboxToAliasMailSec} s later
                   </div>
                 </li>
               ))}

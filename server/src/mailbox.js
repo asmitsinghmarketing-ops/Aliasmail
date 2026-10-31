@@ -697,7 +697,7 @@ function noteReceive(record, checkMs) {
     sentToMailboxSec: seconds(record.date, record.arrivedAt), mailboxToAliasMailSec: seconds(record.arrivedAt, record.detectedAt),
   };
   keepLast(recentReceives, entry);
-  console.log(`[receive-timing] sent → mailbox ${entry.sentToMailboxSec} s · mailbox → AliasMail ${entry.mailboxToAliasMailSec} s (check took ${checkMs} ms)`);
+  console.log(`[receive-timing] sent → mailbox ${entry.sentToMailboxSec} s · mailbox → Nextspace ${entry.mailboxToAliasMailSec} s (check took ${checkMs} ms)`);
 }
 
 /** Log in the interactive connection ahead of time (and keep it alive) so no click pays for the login. */

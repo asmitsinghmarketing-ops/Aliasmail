@@ -8,7 +8,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // What to say when Google sends the browser back with ?google=<outcome>.
 const GOOGLE_OUTCOMES = {
-  'not-linked': 'That Google account isn’t connected to AliasMail yet. Sign in with your password, then connect Google in Settings → Security.',
+  'not-linked': 'That Google account isn’t connected to Nextspace yet. Sign in with your password, then connect Google in Settings → Security.',
   disabled: 'This alias has been disabled by the administrator.',
   cancelled: 'Google sign-in was cancelled.',
   expired: 'Google sign-in took too long. Try again.',
@@ -364,7 +364,7 @@ export default function Login({ onLogin }) {
       </div>
 
       <footer className="login-footer">
-        <span>{domain ? `${domain} mail` : 'AliasMail'}</span>
+        <span>{domain ? `${domain} mail` : 'Nextspace'}</span>
         <span className="muted">Protected sign-in · 2-Step Verification with Google Authenticator</span>
       </footer>
     </div>

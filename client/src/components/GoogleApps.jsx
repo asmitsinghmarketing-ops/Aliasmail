@@ -14,7 +14,7 @@ const APPS = [
     name: 'Google Drive',
     icon: 'drive',
     color: '#1a73e8',
-    about: 'Insert Drive files in your emails; they’re shared with the recipients when you send. AliasMail only sees the files you pick.',
+    about: 'Insert Drive files in your emails; they’re shared with the recipients when you send. Nextspace only sees the files you pick.',
     open: ['https://drive.google.com/', 'Open Drive'],
     leaving: 'Files you already shared stay shared. You can reconnect any time.',
   },
@@ -156,7 +156,7 @@ export default function GoogleApps() {
 
   if (error) return <div className="alert">{error}</div>;
   if (!status) return <div className="muted">Loading…</div>;
-  if (!status.googleEnabled) return <p className="muted">Google apps aren’t set up for this AliasMail. Ask your administrator.</p>;
+  if (!status.googleEnabled) return <p className="muted">Google apps aren’t set up for this Nextspace. Ask your administrator.</p>;
 
   const apps = APPS.filter((a) => status[`${a.id}Enabled`]);
   const connected = (id) => Boolean(status.google?.[id]);
@@ -180,7 +180,7 @@ export default function GoogleApps() {
           <p className="muted small">
             {status.google
               ? <>Using <strong>{status.google.email || 'your Google account'}</strong>. {missing.length ? 'Connect the rest in one step, or one at a time below.' : 'Everything is connected.'}</>
-              : 'Use Drive and Meet from AliasMail with your Google account. Connect them all at once, or one at a time.'}
+              : 'Use Drive and Meet from Nextspace with your Google account. Connect them all at once, or one at a time.'}
           </p>
         </div>
         {missing.length > 0 && (
@@ -220,7 +220,7 @@ export default function GoogleApps() {
         })}
       </div>
       <p className="muted small">
-        Google may show “Google hasn’t verified this app” the first time: choose <strong>Advanced → Go to AliasMail</strong>, and keep the boxes ticked.
+        Google may show “Google hasn’t verified this app” the first time: choose <strong>Advanced → Go to Nextspace</strong>, and keep the boxes ticked.
       </p>
     </div>
   );
