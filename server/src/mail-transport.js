@@ -196,6 +196,15 @@ export function createMailTransport(settings, { Client = ImapFlow, fetcher = (..
       }
       return bridgePost(action === 'sendRaw' ? 'sendStagedRaw' : 'sendWithUploads', { ...rest, rawId: started.rawId });
     }
+    // A large Sent copy (a message that went out another way) is staged the same way.
+    if (action === 'saveSent' && String(data.raw || '').length > 96 * 1024 && settings.mailBridge.configured) {
+      const raw = Buffer.from(data.raw, 'base64');
+      const started = await bridgePost('startRaw', { size: raw.length, sha256: crypto.createHash('sha256').update(raw).digest('hex') });
+      for (let offset = 0; offset < raw.length; offset += 128 * 1024) {
+        await bridgePost('appendRaw', { rawId: started.rawId, chunk: raw.subarray(offset, offset + 128 * 1024).toString('base64') });
+      }
+      return bridgePost('saveStagedSent', { rawId: started.rawId });
+    }
     return bridgePost(action, data);
   }
 

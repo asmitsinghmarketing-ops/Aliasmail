@@ -16,6 +16,7 @@ const HOPS = {
   accept: { label: 'Relay: spam & virus scan', color: '#e03131' },
   quit: { label: 'Relay: goodbye', color: '#868e96' },
   local: { label: 'Straight into your mailbox (own aliases)', color: '#12b886' },
+  gateway: { label: 'GoDaddy Node gateway', color: '#0b7285' },
   delivery: { label: 'Sender → your mailbox', color: '#1c7ed6' },
   notice: { label: 'Mailbox → Nextspace notices it', color: '#e8590c' },
   open: { label: 'Open folder', color: '#1c7ed6' },
@@ -69,6 +70,7 @@ function sendParts(s) {
     { hop: 'accept', ms: r.acceptMs || 0 },
     { hop: 'quit', ms: r.quitMs || 0 },
     { hop: 'local', ms: r.localMs || 0 },
+    { hop: 'gateway', ms: t.gatewayMs || 0 },
   ];
 }
 
@@ -92,6 +94,74 @@ function checkParts(run) {
  * Which of GoDaddy's mail servers the AliasMail app's own host can reach. If one is open, mail
  * could go out from here, signed in, instead of through the bridge's slow relay.
  */
+/** Outside mail through GoDaddy's Node gateway: a test send, then the switch. */
+function GatewayCard() {
+  const [settings, setSettings] = useState(null);
+  const [to, setTo] = useState('');
+  const [test, setTest] = useState(null); // null | 'sending' | result
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api('/admin/sending').then(setSettings).catch((err) => setError(err.message));
+  }, []);
+  const change = async (patch) => {
+    setError('');
+    try {
+      setSettings(await api('/admin/sending', { method: 'PATCH', body: patch }));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  const run = async (e) => {
+    e.preventDefault();
+    setTest('sending');
+    try {
+      setTest(await api('/admin/sending/test', { method: 'POST', body: { to } }));
+    } catch (err) {
+      setTest({ ok: false, reason: err.message });
+    }
+  };
+  if (!settings) return error ? <div className="alert">{error}</div> : null;
+  return (
+    <section className="card speed-card">
+      <h2 className="card-title">Faster sending to outside addresses</h2>
+      <p className="muted small">
+        GoDaddy’s Node hosting has its own email gateway. Mail to people outside your company can go out through it instead of
+        the cPanel relay, which holds each message for about a minute. Send a test first: if it arrives quickly, switch it on.
+      </p>
+      <form className="gateway-test" onSubmit={run}>
+        <input type="email" required placeholder="Send a test to (e.g. your Gmail)" value={to} onChange={(e) => setTo(e.target.value)} />
+        <button className="btn btn-outline" disabled={test === 'sending'}>{test === 'sending' ? 'Sending…' : 'Send test'}</button>
+      </form>
+      {test && test !== 'sending' && (
+        <p className={`small gateway-result ${test.ok ? 'ok' : 'bad'}`}>
+          {test.ok
+            ? <>✅ The gateway accepted it in {secs(test.ms)}. Check the inbox: note when it arrives (sent {formatDate(test.sentAt, true)}).</>
+            : <>❌ {test.reason}{test.notSent ? ' Nothing was sent.' : ''}</>}
+        </p>
+      )}
+      <label className="gateway-switch">
+        <input type="checkbox" checked={settings.gateway} onChange={(e) => change({ gateway: e.target.checked })} />
+        <span>
+          <strong>Send outside mail through the gateway</strong>
+          <span className="muted small">If the gateway is unavailable or refuses a message, that message goes the usual way.</span>
+        </span>
+      </label>
+      <label className="gateway-switch">
+        <input type="checkbox" checked={settings.gatewayReplies} disabled={!settings.gateway} onChange={(e) => change({ gatewayReplies: e.target.checked })} />
+        <span>
+          <strong>Replies too</strong>
+          <span className="muted small">The gateway can’t add the headers that tie a reply to its conversation, so some mail apps may show it on its own.</span>
+        </span>
+      </label>
+      <p className="muted small">
+        Stays the usual way: mail only to your own aliases (already instant), and mail with more than 10 attachments, one over 2 MB or over 5 MB in all.
+        {!settings.picturesLinkable && ' Mail with pictures in it (like a signature logo) also stays the usual way until APP_URL is set on the server.'}
+      </p>
+      {error && <div className="alert">{error}</div>}
+    </section>
+  );
+}
+
 function SmtpCheck() {
   const [state, setState] = useState(null); // null | 'checking' | { results } | { error }
   const run = async () => {
@@ -263,6 +333,7 @@ export default function AdminSpeed() {
         )}
       </section>
 
+      <GatewayCard />
       <SmtpCheck />
 
       <p className="muted small speed-note">

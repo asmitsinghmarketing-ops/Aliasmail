@@ -19,6 +19,7 @@ const empty = () => ({
   sessions: [], // signed-in browsers
   devices: [], // browsers trusted to skip the authenticator code
   security: { requireMfa: false },
+  sending: { gateway: false, gatewayReplies: false }, // outside mail through GoDaddy's Node gateway (Admin → Speed)
   audit: [], // security activity log
   sync: { lastSyncAt: null, lastError: null },
 });

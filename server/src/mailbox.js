@@ -3,6 +3,8 @@
 import crypto from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import MailComposer from 'nodemailer/lib/mail-composer';
+import { publishImage } from './avatars.js';
+import { GATEWAY_LIMITS, GatewayError, gatewaySend } from './godaddy-gateway.js';
 import config from './config.js';
 import { mailTransport } from './mail-transport.js';
 import { messageCache } from './message-cache.js';
@@ -628,9 +630,101 @@ export function embedDataImages(mail) {
   return inline.length ? { ...mail, html, attachments: [...(mail.attachments || []), ...inline] } : mail;
 }
 
+/* ----- outside mail through GoDaddy's Node gateway (switched on in Admin → Speed) ----- */
+
+export const gatewayOn = () => Boolean(db().sending?.gateway);
+const formatSender = (from) => (from.name ? `"${from.name.replace(/["\\]/g, '')}" <${from.address}>` : from.address);
+
+/** The gateway can't embed pictures: they're stored here and the HTML links to them. Null when that isn't possible. */
+async function linkDataImages(html) {
+  if (!html || !html.includes('data:image/')) return html;
+  if (!config.appUrl) return null;
+  const found = [...html.matchAll(/data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)/gi)];
+  let out = html;
+  for (const [whole, type, data] of found) {
+    const file = await publishImage(type.toLowerCase(), Buffer.from(data.replace(/\s+/g, ''), 'base64'));
+    if (!file) return null;
+    out = out.replace(whole, `${config.appUrl}/api/avatars/${file}`);
+  }
+  return out;
+}
+
+/** The attachments as base64, if they fit the gateway's limits; null if they don't. */
+async function gatewayAttachments(mail) {
+  const list = mail.attachments || [];
+  const sizeOf = (a) => (a.uploadId ? Number(a.size) || 0 : Buffer.byteLength(a.content || '', 'base64'));
+  if (list.length > GATEWAY_LIMITS.attachments) return null;
+  if (list.some((a) => (a.uploadId && !a.size) || sizeOf(a) > GATEWAY_LIMITS.attachmentBytes)) return null;
+  if (list.reduce((total, a) => total + sizeOf(a), 0) > GATEWAY_LIMITS.totalBytes) return null;
+  return Promise.all(list.map(async (a) => {
+    if (!a.uploadId) return { filename: a.filename, contentType: a.contentType, content: Buffer.isBuffer(a.content) ? a.content.toString('base64') : a.content, encoding: 'base64' };
+    const stored = await bridge('consumeUpload', { uploadId: a.uploadId, owner: mail.from.address });
+    return { filename: stored.filename || a.filename, contentType: stored.contentType || a.contentType, content: stored.content, encoding: 'base64', uploadId: a.uploadId };
+  }));
+}
+
+/**
+ * Mail with an outside recipient goes out through the gateway, which skips the cPanel relay's
+ * delay. Returns { messageId } when it went, { mail } (attachments fetched) to send it the usual
+ * way, or null when the gateway doesn't apply. Mail only to our own aliases, replies (unless
+ * switched on: the gateway can't add the headers that keep a conversation together) and mail
+ * over its size limits keep the usual route.
+ */
+async function sendThroughGateway(mail, timing) {
+  if (!gatewayOn() || (mail.inReplyTo && !db().sending.gatewayReplies)) return null;
+  const [to, cc, bcc] = [mail.to, mail.cc, mail.bcc].map((list) => (list || []).map(String));
+  const everyone = [...to, ...cc, ...bcc];
+  if (!everyone.length || localRecipients({ to: everyone }).length === everyone.length) return null;
+  const html = await linkDataImages(mail.html);
+  if (html === null) return null;
+  const attachments = await gatewayAttachments(mail).catch((err) => {
+    console.warn('[mail] gateway: attachments not available:', err.message);
+    return null;
+  });
+  if (!attachments) return null;
+  const consumed = attachments.filter((a) => a.uploadId).map((a) => a.uploadId);
+  const cleanUp = () => consumed.forEach((uploadId) => void bridge('deleteUpload', { uploadId, owner: mail.from.address }).catch(() => {}));
+  const asUsual = { ...mail, attachments: attachments.map(({ uploadId, ...a }) => a) };
+
+  const started = Date.now();
+  try {
+    const { messageId } = await gatewaySend({
+      to, ...(cc.length && { cc }), ...(bcc.length && { bcc }),
+      subject: mail.subject || '',
+      ...(mail.text && { text: mail.text }), ...(html && { html }),
+      ...(mail.replyTo && { replyTo: String(mail.replyTo) }),
+      from: formatSender(mail.from),
+      ...(attachments.length && { attachments: attachments.map(({ filename, contentType, content }) => ({ filename, contentType, content })) }),
+    });
+    Object.assign(timing, { route: 'GoDaddy Node gateway', gatewayMs: Date.now() - started });
+    // The Sent copy is built here (the gateway's own copy isn't available).
+    void (async () => {
+      const raw = await new MailComposer(embedDataImages(asUsual)).compile().build();
+      await bridge('saveSent', { raw: raw.toString('base64') });
+    })()
+      .catch((err) => console.warn('[mail] Sent copy save failed:', err.message))
+      .finally(() => {
+        cleanUp();
+        syncInbox().catch((err) => console.warn('[mail] post-send sync failed:', err.message));
+      });
+    return { messageId: messageId || `gateway-${crypto.randomUUID()}` };
+  } catch (err) {
+    if (err instanceof GatewayError && err.notSent) {
+      console.warn('[mail] gateway not used, sending the usual way:', err.message);
+      cleanUp();
+      return { mail: asUsual };
+    }
+    cleanUp();
+    throw err;
+  }
+}
+
 /** Send through SMTP; save the Sent copy in the background so it doesn't delay the send response. */
 export async function sendMail(mail, timing = {}) {
   assertConfigured();
+  const gateway = await sendThroughGateway(mail, timing);
+  if (gateway?.messageId) return gateway.messageId;
+  if (gateway?.mail) mail = gateway.mail;
   mail = embedDataImages(mail);
   const started = Date.now();
   const uploadIds = (mail.attachments || []).map((a) => a.uploadId).filter(Boolean);

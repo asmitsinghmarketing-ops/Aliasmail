@@ -8,6 +8,7 @@ import { endSessions, signOutAccount } from '../sessions.js';
 import { audit } from '../audit.js';
 import { PALETTE, aliasesOf, createAlias, createRole, deleteAlias, deleteRole, findAliasById, typeOf, updateAlias, updateRole, withCounts } from '../aliases.js';
 import { requireAuth } from '../auth.js';
+import { GatewayError, gatewaySend } from '../godaddy-gateway.js';
 import { cacheOf, deleteFromServer, fetchParsed, prefetch, recentReceives, recentSends, sendPart, syncInbox, testConnection } from '../mailbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
@@ -70,6 +71,37 @@ function probe({ host, port, tls: secure }) {
 }
 router.get('/smtp-check', async (req, res) => {
   res.json({ results: await Promise.all(SMTP_TARGETS.map(probe)) });
+});
+
+/* ----- outside mail through GoDaddy's Node gateway ----- */
+
+router.get('/sending', (req, res) => res.json({ ...db().sending, picturesLinkable: Boolean(config.appUrl) }));
+
+router.patch('/sending', (req, res) => {
+  for (const key of ['gateway', 'gatewayReplies']) {
+    if (typeof req.body?.[key] === 'boolean') db().sending[key] = req.body[key];
+  }
+  save();
+  audit(req, 'admin-changed-sending', req.user.email, `gateway ${db().sending.gateway ? 'on' : 'off'}, replies ${db().sending.gatewayReplies ? 'on' : 'off'}`);
+  res.json({ ...db().sending, picturesLinkable: Boolean(config.appUrl) });
+});
+
+/** Send one test email through the gateway, to see whether it works here and how fast. */
+router.post('/sending/test', async (req, res) => {
+  const to = String(req.body?.to || '').trim().toLowerCase();
+  if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(to)) throw new HttpError(400, 'Enter the email address to send the test to');
+  const started = Date.now();
+  try {
+    const { messageId } = await gatewaySend({
+      to: [to],
+      subject: 'Nextspace test: sending through GoDaddy’s Node gateway',
+      text: `This test was sent by Nextspace through GoDaddy's Node.js email gateway at ${new Date().toISOString()}.\nIf it arrived quickly, outside mail can go this way.`,
+      from: config.mailbox,
+    });
+    res.json({ ok: true, ms: Date.now() - started, messageId, sentAt: new Date().toISOString() });
+  } catch (err) {
+    res.json({ ok: false, ms: Date.now() - started, reason: err.message, notSent: err instanceof GatewayError ? err.notSent : null });
+  }
 });
 
 router.get('/timings', (req, res) => {

@@ -31,6 +31,20 @@ export async function saveAvatar(dataUrl) {
   return file;
 }
 
+/**
+ * A picture from a sent email, stored so mail apps can load it from this site (the Node gateway
+ * can't embed pictures). The name comes from the picture's content, so each is stored once.
+ * Returns the file name, or null for a type or size that can't be stored.
+ */
+export async function publishImage(type, bytes) {
+  const ext = EXTENSIONS[type];
+  if (!ext || bytes.length > MAX_BYTES || !SIGNATURES[ext](bytes)) return null;
+  const hex = crypto.createHash('sha256').update(bytes).digest('hex');
+  const file = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}.${ext}`;
+  if (!(await persistence().getFile(file))) await persistence().putFile(file, type, bytes);
+  return file;
+}
+
 /** The stored picture, or null: { type, data } */
 export async function readAvatar(file) {
   if (!AVATAR_FILE.test(file)) return null;
