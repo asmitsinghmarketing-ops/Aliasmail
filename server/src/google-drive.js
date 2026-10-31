@@ -8,30 +8,38 @@ import { unseal } from './security.js';
 import { db, save } from './store.js';
 
 export const driveAccess = new Map(); // "role:email" -> { accessToken, expiresAt }
+export const meetAccess = new Map();
 const holderOf = (role, email) => (role === 'admin' ? db().owner : findAlias(email));
+const FEATURES = {
+  drive: { cache: driveAccess, name: 'Google Drive' },
+  meet: { cache: meetAccess, name: 'Google Meet' },
+};
 
-/** A usable access token for this account's Drive: { accessToken, expiresAt }. */
-export async function driveTokenFor(role, email) {
+/** A usable access token for this account's Drive or Calendar (meet): { accessToken, expiresAt }. */
+export async function googleTokenFor(feature, role, email) {
+  const { cache, name } = FEATURES[feature];
   const key = `${role}:${email}`;
-  const hit = driveAccess.get(key);
+  const hit = cache.get(key);
   if (hit && hit.expiresAt - Date.now() > 60_000) return hit;
   const holder = holderOf(role, email);
-  const drive = holder?.google?.drive;
-  if (!drive) throw new HttpError(409, 'Connect Google Drive first, in Settings → Security.');
+  const grant = holder?.google?.[feature];
+  if (!grant) throw new HttpError(409, `Connect ${name} first, in Settings → Security.`);
   let fresh;
   try {
-    fresh = await refreshAccess(unseal(drive.refresh));
+    fresh = await refreshAccess(unseal(grant.refresh), name);
   } catch (err) {
     // Removed from the Google account's "third-party access": forget the dead token.
     if (err.revoked) {
-      delete holder.google.drive;
+      delete holder.google[feature];
       save();
     }
     throw err;
   }
-  driveAccess.set(key, fresh);
+  cache.set(key, fresh);
   return fresh;
 }
+
+export const driveTokenFor = (role, email) => googleTokenFor('drive', role, email);
 
 export const DRIVE_ACCESS = { view: 'reader', comment: 'commenter', edit: 'writer' };
 const FILE_ID = /^[\w-]{10,200}$/;

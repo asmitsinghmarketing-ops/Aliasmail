@@ -12,6 +12,8 @@ import Icon from './Icon.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
 import { LabelMenu, Popover, TimeMenu, shortTime, snoozeOptions } from './Menus.jsx';
 import MessageView from './MessageView.jsx';
+import MeetDialog from './MeetDialog.jsx';
+import { meetingText } from '../meet.js';
 import Pager from './Pager.jsx';
 import Settings from './Settings.jsx';
 
@@ -332,6 +334,9 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       'drive-linked': 'Google Drive connected. Open your draft and choose Insert from Drive.',
       'drive-denied': 'Drive wasn’t connected: allow access to the files you pick, then try again.',
       'drive-other-account': 'Use the same Google account that is connected to AliasMail for Drive.',
+      'meet-linked': 'Google Meet connected. Start or schedule a meeting from “New meeting”.',
+      'meet-denied': 'Google Meet wasn’t connected: allow AliasMail to add events to your calendar, then try again.',
+      'meet-other-account': 'Use the same Google account that is connected to AliasMail for Meet.',
     };
     if (outcome === 'continue' || outcome === 'not-linked') return;
     setSettingsTab('security');
@@ -340,10 +345,14 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [driveOn, setDriveOn] = useState(false);
+  const [meetOn, setMeetOn] = useState(false);
   useEffect(() => {
     loadLabels();
     api('/auth/info')
-      .then((info) => setDriveOn(Boolean(info.drive)))
+      .then((info) => {
+        setDriveOn(Boolean(info.drive));
+        setMeetOn(Boolean(info.meet));
+      })
       .catch(() => {});
     api('/mail/people').then(setPeople).catch(() => {});
     api('/mail/settings')
@@ -1126,6 +1135,29 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             </button>
           </nav>
 
+          {meetOn && (
+            <>
+              <div className="labels-head">
+                <span>Meet</span>
+              </div>
+              <nav>
+                <button
+                  className="nav-item"
+                  onClick={() => {
+                    if (window.matchMedia('(max-width: 800px)').matches) setCollapsed(true);
+                    setModal('meet');
+                  }}
+                  title="Start or schedule a Google Meet meeting"
+                >
+                  <span className="nav-icon" style={{ '--c': '#00897b' }}>
+                    <Icon name="videocam" size={18} />
+                  </span>
+                  <span className="nav-label">New meeting</span>
+                </button>
+              </nav>
+            </>
+          )}
+
           {mailboxes.length > 0 && (
             <div className="drawer-mailboxes mobile-only">
               <div className="labels-head">
@@ -1468,6 +1500,17 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           }}
           onSend={handleSend}
           driveOn={driveOn}
+          meetOn={meetOn}
+        />
+      )}
+
+      {modal === 'meet' && (
+        <MeetDialog
+          onClose={() => setModal(null)}
+          onEmail={(meeting) => {
+            setModal(null);
+            setDraft({ to: meeting.guests.join(', '), subject: meeting.title, text: meetingText(meeting) + withSignature() });
+          }}
         />
       )}
 

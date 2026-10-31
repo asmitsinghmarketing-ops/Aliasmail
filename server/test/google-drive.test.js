@@ -6,18 +6,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-// The real server with stand-ins for Google's token endpoint, the Drive API and the mail bridge.
+// The real server with stand-ins for Google's token endpoint, the Drive and Calendar APIs and the mail bridge.
 const PORT = 5200 + Math.floor(Math.random() * 400);
 const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN = { email: 'owner@example.com', password: 'admin-password-123' };
 const CLIENT_ID = 'drive-client.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 
 let server;
 let fake;
 let dir;
 const nonces = new Map();
-const fakeState = { grantDrive: true, revoked: false, shares: [], revokes: [] };
+const fakeState = { grantDrive: true, revoked: false, shares: [], revokes: [], events: [] };
 
 test.before(async () => {
   fake = http.createServer((req, res) => {
@@ -37,7 +38,7 @@ test.before(async () => {
         return send(200, {
           id_token: `x.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`,
           refresh_token: 'refresh-1',
-          scope: fakeState.grantDrive ? `openid email profile ${DRIVE_SCOPE}` : 'openid email profile',
+          scope: fakeState.grantDrive ? `openid email profile ${DRIVE_SCOPE} ${CALENDAR_SCOPE}` : 'openid email profile',
         });
       }
       if (url.pathname === '/revoke') {
@@ -50,6 +51,11 @@ test.before(async () => {
         fakeState.shares.push({ file: share[1], ...permission, auth: req.headers.authorization, notify: url.searchParams.get('sendNotificationEmail') });
         if (share[1].startsWith('locked')) return send(403, { error: { message: 'The user does not have sufficient permissions for this file.' } });
         return send(200, { id: 'perm' });
+      }
+      if (url.pathname === '/calendar/calendars/primary/events') {
+        const event = JSON.parse(body);
+        fakeState.events.push({ ...event, auth: req.headers.authorization, query: Object.fromEntries(url.searchParams) });
+        return send(200, { id: 'evt1', summary: event.summary, htmlLink: 'https://calendar.google.com/event?eid=evt1', hangoutLink: 'https://meet.google.com/abc-defg-hij' });
       }
       if (url.pathname === '/bridge') {
         const { action } = JSON.parse(body || '{}');
@@ -69,7 +75,7 @@ test.before(async () => {
       JWT_SECRET: 'drive-test-secret', MAIL_USER: ADMIN.email, MAIL_PASSWORD: '', MAIL_BRIDGE_URL: `${at}/bridge`, MAIL_BRIDGE_TOKEN: 'bridge-token', MAIL_TRANSPORT: 'bridge',
       ADMIN_EMAIL: ADMIN.email, ADMIN_PASSWORD: ADMIN.password,
       GOOGLE_CLIENT_ID: CLIENT_ID, GOOGLE_CLIENT_SECRET: 'secret', GOOGLE_TOKEN_URL: `${at}/token`, GOOGLE_REVOKE_URL: `${at}/revoke`,
-      GOOGLE_DRIVE_API_URL: `${at}/drive`, GOOGLE_API_KEY: 'browser-key', GOOGLE_PROJECT_NUMBER: '123456789',
+      GOOGLE_DRIVE_API_URL: `${at}/drive`, GOOGLE_CALENDAR_API_URL: `${at}/calendar`, GOOGLE_API_KEY: 'browser-key', GOOGLE_PROJECT_NUMBER: '123456789',
     },
     stdio: 'ignore',
   });
@@ -103,8 +109,8 @@ function browser() {
     }
     return { status: res.status, location: res.headers.get('location'), data: res.headers.get('content-type')?.includes('json') ? await res.json() : null };
   };
-  const connectDrive = async () => {
-    const start = await call('GET', '/api/auth/google/start?mode=drive');
+  const connectDrive = async (mode = 'drive') => {
+    const start = await call('GET', `/api/auth/google/start?mode=${mode}`);
     const sent = new URL(start.location);
     const code = `code-${Math.random()}`;
     nonces.set(code, sent.searchParams.get('nonce'));
@@ -176,6 +182,44 @@ test('Drive refused on the Google screen, disconnected, or removed at Google', a
   fakeState.revoked = true;
   const gone = await john.call('POST', '/api/mail/drive/token');
   assert.equal(gone.status, 409);
-  assert.match(gone.data.error, /Connect Drive again/);
+  assert.match(gone.data.error, /Google Drive access was removed/);
   assert.equal((await john.call('GET', '/api/auth/mfa')).data.google.drive, false);
+});
+
+test('Google Meet: connected from Settings, then meetings are created in the person\'s calendar', async () => {
+  fakeState.revoked = false;
+  const john = browser();
+  await john.call('POST', '/api/auth/login', { email: 'john@example.com', password: 'john-password' });
+  assert.equal((await john.call('GET', '/api/auth/info')).data.meet, true);
+  assert.equal((await john.call('POST', '/api/mail/meet', {})).status, 409);
+
+  const { sent, back } = await john.connectDrive('meet');
+  assert.match(sent.searchParams.get('scope'), /calendar\.events/);
+  assert.doesNotMatch(sent.searchParams.get('scope'), /drive/);
+  assert.equal(back.location, '/?google=meet-linked');
+  assert.equal((await john.call('GET', '/api/auth/mfa')).data.google.meet, true);
+
+  const now = await john.call('POST', '/api/mail/meet', {});
+  assert.equal(now.status, 201);
+  assert.equal(now.data.link, 'https://meet.google.com/abc-defg-hij');
+  const quick = fakeState.events.at(-1);
+  assert.deepEqual([quick.auth, quick.query.conferenceDataVersion, quick.query.sendUpdates], ['Bearer access-1', '1', 'none']);
+  assert.equal(quick.conferenceData.createRequest.conferenceSolutionKey.type, 'hangoutsMeet');
+  assert.equal(Date.parse(quick.end.dateTime) - Date.parse(quick.start.dateTime), 30 * 60e3);
+
+  const start = new Date(Date.now() + 86400e3).toISOString();
+  const later = await john.call('POST', '/api/mail/meet', { title: 'Kick-off', start, minutes: 45, guests: ['Priya@Example.org', 'ana@example.org'] });
+  assert.equal(later.status, 201);
+  const invite = fakeState.events.at(-1);
+  assert.deepEqual([invite.summary, invite.query.sendUpdates, invite.start.dateTime], ['Kick-off', 'all', start]);
+  assert.deepEqual(invite.attendees, [{ email: 'priya@example.org' }, { email: 'ana@example.org' }]);
+
+  assert.equal((await john.call('POST', '/api/mail/meet', { guests: ['not-an-email'] })).status, 400);
+  assert.equal((await john.call('POST', '/api/mail/meet', { start: 'soon' })).status, 400);
+
+  // Disconnecting Meet leaves the Google sign-in alone.
+  await john.call('POST', '/api/auth/google/meet/disconnect');
+  const status = (await john.call('GET', '/api/auth/mfa')).data.google;
+  assert.deepEqual([status.meet, Boolean(status.email)], [false, true]);
+  assert.equal((await john.call('POST', '/api/mail/meet', {})).status, 409);
 });

@@ -297,6 +297,38 @@ export default function SecurityPanel({ account, owner }) {
               </div>
             </div>
           )}
+
+          {status.google && status.meetEnabled && (
+            <div className="sec-sub">
+              <div className="sec-sub-head">
+                <span>
+                  <strong>Google Meet</strong>
+                  <span className="muted small">
+                    {status.google.meet
+                      ? ` · connected ${formatDate(status.google.meetConnectedAt)}. Start or schedule meetings from “New meeting”; they’re added to your Google Calendar.`
+                      : ' · create Meet links and invite people. AliasMail only adds the meetings you create to your calendar.'}
+                  </span>
+                </span>
+                {status.google.meet ? (
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={async () => {
+                      if (!(await ask({ title: 'Disconnect Google Meet?', message: 'Meetings you already created stay in your calendar. You can reconnect any time.', confirmLabel: 'Disconnect' }))) return;
+                      await api('/auth/google/meet/disconnect', { method: 'POST' });
+                      load();
+                    }}
+                  >
+                    Disconnect
+                  </button>
+                ) : (
+                  <a className="link" href="/api/auth/google/start?mode=meet">
+                    Connect Meet
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
         </section>
       )}
 

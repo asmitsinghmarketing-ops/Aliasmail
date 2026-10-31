@@ -4,8 +4,9 @@ import { formatSize } from '../format.js';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { Popover, TimeMenu, scheduleOptions } from './Menus.jsx';
-import RichEditor, { htmlFromText, sanitizeHtml } from './RichEditor.jsx';
+import RichEditor, { escapeHtml, htmlFromText, sanitizeHtml } from './RichEditor.jsx';
 import { pickDriveFiles } from '../drivePicker.js';
+import { createMeeting } from '../meet.js';
 import RecipientField, { parseAddresses } from './RecipientField.jsx';
 
 // Address suggestions, loaded once per page and shared by every compose window.
@@ -50,7 +51,7 @@ const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `d${Date.now()}${
 let pendingHistoryBack = null;
 
 /** The ⋮ menu of the phone compose screen: Drive, schedule send, or discard. */
-function MoreMenu({ close, onSchedule, onDiscard, onDrive }) {
+function MoreMenu({ close, onSchedule, onDiscard, onDrive, onMeet }) {
   const [scheduling, setScheduling] = useState(false);
   if (scheduling) return <TimeMenu title="Schedule send" options={scheduleOptions()} close={close} onPick={onSchedule} />;
   return (
@@ -65,6 +66,18 @@ function MoreMenu({ close, onSchedule, onDiscard, onDrive }) {
           }}
         >
           <Icon name="drive" size={20} /> Insert from Drive
+        </button>
+      )}
+      {onMeet && (
+        <button
+          type="button"
+          className="menu-item check-item"
+          onClick={() => {
+            close();
+            onMeet();
+          }}
+        >
+          <Icon name="videocam" size={20} /> Insert Meet link
         </button>
       )}
       <button type="button" className="menu-item check-item" onClick={() => setScheduling(true)}>
@@ -99,7 +112,7 @@ const DRIVE_ACCESS = [
  * files to share with the recipients.
  */
 
-export default function Compose({ from, draft, onClose, onSend, driveOn = false }) {
+export default function Compose({ from, draft, onClose, onSend, driveOn = false, meetOn = false }) {
   const initial = {
     to: draft.to || '', cc: draft.cc || '', bcc: draft.bcc || '', subject: draft.subject || '', text: draft.text || '',
     html: draft.html || htmlFromText(draft.text || ''),
@@ -266,6 +279,36 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
     }
   }
 
+  // Insert Meet link: a meeting starting now (named after the subject), its link put in at the
+  // cursor. The first time, Meet has to be connected, so the draft is saved before leaving.
+  const [meetBusy, setMeetBusy] = useState(false);
+  async function insertMeetLink() {
+    if (meetBusy) return;
+    setError('');
+    const selection = window.getSelection();
+    const range = selection?.rangeCount && body.current?.contains(selection.anchorNode) ? selection.getRangeAt(0) : null;
+    setMeetBusy(true);
+    try {
+      const meeting = await createMeeting({ title: form.subject.trim() || 'Meeting' }, { beforeLeave: saveDraft });
+      if (!meeting) return;
+      const el = body.current;
+      el.focus();
+      if (range) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } else {
+        selection.selectAllChildren(el);
+        selection.collapseToStart();
+      }
+      const link = escapeHtml(meeting.link);
+      document.execCommand('insertHTML', false, `Join with Google Meet: <a href="${link}">${link}</a>&nbsp;`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMeetBusy(false);
+    }
+  }
+
   // Closing keeps the draft (like Gmail); the trash button throws it away.
   async function close() {
     if (textChanged) {
@@ -394,7 +437,7 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
           </button>
           <Popover icon="moreVert" title="More options" align="right">
             {(closeMenu) => (
-              <MoreMenu close={closeMenu} onSchedule={(date) => send(null, date)} onDiscard={discard} onDrive={driveOn ? insertFromDrive : undefined} />
+              <MoreMenu close={closeMenu} onSchedule={(date) => send(null, date)} onDiscard={discard} onDrive={driveOn ? insertFromDrive : undefined} onMeet={meetOn ? insertMeetLink : undefined} />
             )}
           </Popover>
         </div>
@@ -532,6 +575,11 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false 
             {driveOn && (
               <button type="button" className="icon-btn" title="Insert files using Drive" disabled={drivePicking} onClick={insertFromDrive}>
                 <Icon name="drive" />
+              </button>
+            )}
+            {meetOn && (
+              <button type="button" className="icon-btn" title="Insert Google Meet link" disabled={meetBusy} onClick={insertMeetLink}>
+                <Icon name="videocam" />
               </button>
             )}
             <span className="muted small hide-sm save-state">{saveState || 'Ctrl+Enter to send'}</span>

@@ -137,6 +137,9 @@ const config = {
     apiKey: env('GOOGLE_API_KEY'),
     appId: env('GOOGLE_PROJECT_NUMBER'),
     driveApiUrl: env('GOOGLE_DRIVE_API_URL', 'https://www.googleapis.com/drive/v3'),
+    // Google Meet (needs the Calendar API on in the Cloud project). GOOGLE_MEET=off hides it.
+    meet: bool('GOOGLE_MEET', true),
+    calendarApiUrl: env('GOOGLE_CALENDAR_API_URL', 'https://www.googleapis.com/calendar/v3'),
   },
   appUrl: env('APP_URL').replace(/\/$/, ''),
   // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.

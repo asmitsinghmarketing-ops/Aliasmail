@@ -17,8 +17,8 @@ import { requireAuth, safeEqual } from '../auth.js';
 import { avatarUrl } from '../avatars.js';
 import { HttpError } from '../errors.js';
 import { clientIp, cookieOptions, hashBackupCode, limiter, newBackupCodes, newTotpSecret, otpauthUrl, readCookie, seal, unseal, verifyTotp } from '../security.js';
-import { DRIVE_SCOPE, authorizationUrl, driveEnabled, exchangeCode, googleEnabled, newAttempt, revokeToken } from '../google-auth.js';
-import { driveAccess } from '../google-drive.js';
+import { CALENDAR_SCOPE, DRIVE_SCOPE, authorizationUrl, driveEnabled, exchangeCode, googleEnabled, meetEnabled, newAttempt, revokeToken } from '../google-auth.js';
+import { driveAccess, meetAccess } from '../google-drive.js';
 import {
   SESSION_COOKIE,
   currentSession,
@@ -169,7 +169,7 @@ function finishSignIn(req, res, account, method) {
 /* ---------------------------------- sign in ---------------------------------- */
 
 // Public: lets the sign-in page show "Use your @domain account". Reveals only the domain.
-router.get('/info', (req, res) => res.json({ domain: config.mailbox.split('@')[1] || '', google: googleEnabled(), drive: driveEnabled() }));
+router.get('/info', (req, res) => res.json({ domain: config.mailbox.split('@')[1] || '', google: googleEnabled(), drive: driveEnabled(), meet: meetEnabled() }));
 
 router.post('/login', async (req, res) => {
   const email = normalize(req.body?.email).slice(0, 254);
@@ -246,12 +246,17 @@ function accountForGoogle(sub) {
 const redirectUriFor = (req) => `${config.appUrl || `${req.protocol}://${req.get('host')}`}/api/auth/google/callback`;
 const backTo = (res, outcome) => res.redirect(303, `/?google=${outcome}`);
 
-// mode=drive connects Google Drive (files picked with AliasMail only) for the signed-in account,
-// connecting the Google account too if it isn't yet.
+// Extra Google access, connected from Settings for the signed-in account (and the Google account
+// too if it isn't yet): Drive (files picked with AliasMail only) and Meet (events in their calendar).
+const FEATURES = {
+  drive: { scope: DRIVE_SCOPE, enabled: driveEnabled, name: 'Google Drive', cache: driveAccess },
+  meet: { scope: CALENDAR_SCOPE, enabled: meetEnabled, name: 'Google Meet', cache: meetAccess },
+};
+
 router.get('/google/start', (req, res) => {
   if (!googleEnabled()) throw new HttpError(404, 'Google sign-in is not set up');
-  const mode = ['link', 'drive'].includes(req.query.mode) ? req.query.mode : 'login';
-  if (mode === 'drive' && !driveEnabled()) throw new HttpError(404, 'Google Drive is not set up');
+  const mode = ['link', ...Object.keys(FEATURES)].includes(req.query.mode) ? req.query.mode : 'login';
+  if (FEATURES[mode] && !FEATURES[mode].enabled()) throw new HttpError(404, `${FEATURES[mode].name} is not set up`);
   const session = mode === 'login' ? null : currentSession(req);
   if (mode !== 'login' && !session) return backTo(res, 'signin-first');
   const attempt = newAttempt();
@@ -263,7 +268,7 @@ router.get('/google/start', (req, res) => {
   );
   const loginHint = session ? holderOf(session.role, session.email)?.google?.email || '' : '';
   res.cookie(GOOGLE_COOKIE, pending, googleCookie(req, 10 * 60e3));
-  res.redirect(303, authorizationUrl({ ...attempt, redirectUri, drive: mode === 'drive', loginHint }));
+  res.redirect(303, authorizationUrl({ ...attempt, redirectUri, scope: FEATURES[mode]?.scope, loginHint }));
 });
 
 router.get('/google/callback', async (req, res) => {
@@ -285,7 +290,7 @@ router.get('/google/callback', async (req, res) => {
     return backTo(res, 'error');
   }
 
-  if (pending.mode === 'link' || pending.mode === 'drive') {
+  if (pending.mode === 'link' || FEATURES[pending.mode]) {
     const session = db().sessions.find((s) => s.id === pending.sid && Date.parse(s.expiresAt) > Date.now());
     if (!session) return backTo(res, 'signin-first');
     const other = accountForGoogle(google.sub);
@@ -296,21 +301,22 @@ router.get('/google/callback', async (req, res) => {
     const holder = holderOf(session.role, session.email);
     if (!holder) return backTo(res, 'error');
     const same = holder.google?.sub === google.sub;
-    if (pending.mode === 'drive' && holder.google && !same) return backTo(res, 'drive-other-account');
-    if (pending.mode === 'drive' && (!google.refreshToken || !google.scope.split(' ').includes(DRIVE_SCOPE))) return backTo(res, 'drive-denied');
+    const feature = FEATURES[pending.mode] ? pending.mode : null;
+    if (feature && holder.google && !same) return backTo(res, `${feature}-other-account`);
+    if (feature && (!google.refreshToken || !google.scope.split(' ').includes(FEATURES[feature].scope))) return backTo(res, `${feature}-denied`);
 
-    const previousDrive = same ? holder.google.drive : null;
+    // Relinking the same Google account keeps the access already connected.
+    const kept = Object.fromEntries(Object.keys(FEATURES).filter((f) => same && holder.google[f]).map((f) => [f, holder.google[f]]));
     holder.google = {
       sub: google.sub, email: google.email, name: google.name,
       linkedAt: same ? holder.google.linkedAt : new Date().toISOString(),
-      ...(pending.mode === 'drive'
-        ? { drive: { refresh: seal(google.refreshToken), connectedAt: new Date().toISOString() } }
-        : previousDrive && { drive: previousDrive }),
+      ...kept,
+      ...(feature && { [feature]: { refresh: seal(google.refreshToken), connectedAt: new Date().toISOString() } }),
     };
-    driveAccess.delete(`${session.role}:${session.email}`);
+    for (const { cache } of Object.values(FEATURES)) cache.delete(`${session.role}:${session.email}`);
     save();
-    audit(req, pending.mode === 'drive' ? 'google-drive-connected' : 'google-connected', session.email, google.email);
-    return backTo(res, pending.mode === 'drive' ? 'drive-linked' : 'linked');
+    audit(req, feature ? `google-${feature}-connected` : 'google-connected', session.email, google.email);
+    return backTo(res, feature ? `${feature}-linked` : 'linked');
   }
 
   const found = accountForGoogle(google.sub);
@@ -351,35 +357,37 @@ router.post('/google/finish', (req, res) => {
   finishSignIn(req, res, account, 'google');
 });
 
-/** Stop AliasMail's Drive access: tell Google to forget the token, then drop it. */
-function dropDrive(req, holder) {
-  if (!holder?.google?.drive) return;
+/** Stop AliasMail's Drive or Meet access: tell Google to forget the token, then drop it. */
+function dropAccess(req, holder, feature) {
+  if (!holder?.google?.[feature]) return;
   try {
-    void revokeToken(unseal(holder.google.drive.refresh));
+    void revokeToken(unseal(holder.google[feature].refresh));
   } catch {
     /* unreadable token: nothing to revoke */
   }
-  delete holder.google.drive;
-  driveAccess.delete(`${req.user.role}:${req.user.email}`);
+  delete holder.google[feature];
+  FEATURES[feature].cache.delete(`${req.user.role}:${req.user.email}`);
 }
 
 router.post('/google/disconnect', requireAuth(), (req, res) => {
   const holder = holderOf(req.user.role, req.user.email);
   if (holder?.google) {
     audit(req, 'google-disconnected', req.user.email, holder.google.email);
-    dropDrive(req, holder);
+    for (const feature of Object.keys(FEATURES)) dropAccess(req, holder, feature);
     delete holder.google;
     save();
   }
   res.json({ ok: true });
 });
 
-router.post('/google/drive/disconnect', requireAuth(), (req, res) => {
+router.post('/google/:feature/disconnect', requireAuth(), (req, res) => {
+  const { feature } = req.params;
+  if (!FEATURES[feature]) throw new HttpError(404, 'Not found');
   const holder = holderOf(req.user.role, req.user.email);
-  if (holder?.google?.drive) {
-    dropDrive(req, holder);
+  if (holder?.google?.[feature]) {
+    dropAccess(req, holder, feature);
     save();
-    audit(req, 'google-drive-disconnected', req.user.email);
+    audit(req, `google-${feature}-disconnected`, req.user.email);
   }
   res.json({ ok: true });
 });
@@ -463,8 +471,10 @@ router.get('/mfa', requireAuth(), (req, res) => {
     thisDeviceTrusted: isTrustedDevice(req, role, email),
     googleEnabled: googleEnabled(),
     driveEnabled: driveEnabled(),
+    meetEnabled: meetEnabled(),
     google: holder?.google
-      ? { email: holder.google.email, name: holder.google.name, linkedAt: holder.google.linkedAt, drive: Boolean(holder.google.drive), driveConnectedAt: holder.google.drive?.connectedAt || null }
+      ? { email: holder.google.email, name: holder.google.name, linkedAt: holder.google.linkedAt, drive: Boolean(holder.google.drive), driveConnectedAt: holder.google.drive?.connectedAt || null,
+          meet: Boolean(holder.google.meet), meetConnectedAt: holder.google.meet?.connectedAt || null }
       : null,
   });
 });

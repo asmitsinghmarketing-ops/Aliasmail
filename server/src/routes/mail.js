@@ -21,7 +21,8 @@ import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.j
 import { HttpError, describeError } from '../errors.js';
 import { announceChange, mailEvents } from '../mail-events.js';
 import { liveSync, noteActivity } from '../live-sync.js';
-import { driveEnabled } from '../google-auth.js';
+import { driveEnabled, meetEnabled } from '../google-auth.js';
+import { createMeeting, readMeeting } from '../google-meet.js';
 import { driveTokenFor, readDriveRequest, shareWithRecipients } from '../google-drive.js';
 import { findLoginCode, mightHaveCode, serviceName } from '../login-codes.js';
 
@@ -793,6 +794,17 @@ router.post('/drive/token', async (req, res) => {
   if (!driveEnabled()) throw new HttpError(404, 'Google Drive is not set up');
   const { accessToken, expiresAt } = await driveTokenFor(req.user.role, req.user.email);
   res.json({ accessToken, expiresAt, apiKey: config.google.apiKey, appId: config.google.appId });
+});
+
+/* ---------------------------------- Google Meet ---------------------------------- */
+
+/** A Meet meeting in the signed-in person's Google Calendar: now, or later with guests invited. */
+router.post('/meet', async (req, res) => {
+  if (!meetEnabled()) throw new HttpError(404, 'Google Meet is not set up');
+  const meeting = readMeeting(req.body ?? {});
+  const created = await createMeeting(req.user.role, req.user.email, meeting);
+  audit(req, 'google-meet-created', req.user.email, `${meeting.guests.length} guest(s)`);
+  res.status(201).json(created);
 });
 
 /* ---------------------------------- settings ---------------------------------- */

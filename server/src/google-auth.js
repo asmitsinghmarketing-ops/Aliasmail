@@ -25,20 +25,23 @@ export function newAttempt() {
 // Drive access is limited to files the person picks with this app (non-sensitive scope, no review).
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 export const driveEnabled = () => googleEnabled() && Boolean(config.google.apiKey && config.google.appId);
+// Google Meet: meetings are events AliasMail creates in the person's own Google Calendar.
+export const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+export const meetEnabled = () => googleEnabled() && config.google.meet;
 
-/** `drive: true` also asks for Drive (picked files only) and a refresh token to use it later. */
-export function authorizationUrl({ state, nonce, challenge, redirectUri, drive = false, loginHint = '' }) {
+/** `scope` (Drive or Calendar) is asked for on top of sign-in, with a refresh token to use it later. */
+export function authorizationUrl({ state, nonce, challenge, redirectUri, scope = '', loginHint = '' }) {
   const url = new URL(config.google.authUrl);
   url.search = new URLSearchParams({
     response_type: 'code',
     client_id: config.google.clientId,
     redirect_uri: redirectUri,
-    scope: drive ? `openid email profile ${DRIVE_SCOPE}` : 'openid email profile',
+    scope: scope ? `openid email profile ${scope}` : 'openid email profile',
     state,
     nonce,
     code_challenge: challenge,
     code_challenge_method: 'S256',
-    ...(drive
+    ...(scope
       ? { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', ...(loginHint && { login_hint: loginHint }) }
       : { prompt: 'select_account' }),
   });
@@ -57,10 +60,10 @@ async function tokenRequest(params, fetcher) {
 }
 
 /** A fresh access token from a stored refresh token: { accessToken, expiresAt }. */
-export async function refreshAccess(refreshToken, fetcher = (...args) => fetch(...args)) {
+export async function refreshAccess(refreshToken, what = 'Google Drive', fetcher = (...args) => fetch(...args)) {
   const { ok, status, data } = await tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken }, fetcher);
   if (!ok || !data.access_token) {
-    const error = new HttpError(data.error === 'invalid_grant' ? 409 : 502, data.error === 'invalid_grant' ? 'Google Drive access was removed. Connect Drive again in Settings → Security.' : `Google Drive is unavailable (${data.error || status})`);
+    const error = new HttpError(data.error === 'invalid_grant' ? 409 : 502, data.error === 'invalid_grant' ? `${what} access was removed. Connect it again in Settings → Security.` : `${what} is unavailable (${data.error || status})`);
     error.revoked = data.error === 'invalid_grant';
     throw error;
   }

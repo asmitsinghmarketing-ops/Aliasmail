@@ -40,7 +40,7 @@ export function sanitizeHtml(html) {
   return out.innerHTML;
 }
 
-const escapeHtml = (text) => text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+export const escapeHtml = (text) => text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 /** Plain text (a signature, a quoted reply) as editor HTML. */
 export const htmlFromText = (text = '') => escapeHtml(text).replace(/\r?\n/g, '<br>');
