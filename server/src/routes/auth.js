@@ -17,8 +17,8 @@ import { requireAuth, safeEqual } from '../auth.js';
 import { avatarUrl } from '../avatars.js';
 import { HttpError } from '../errors.js';
 import { clientIp, cookieOptions, hashBackupCode, limiter, newBackupCodes, newTotpSecret, otpauthUrl, readCookie, seal, unseal, verifyTotp } from '../security.js';
-import { CALENDAR_SCOPE, DRIVE_SCOPE, authorizationUrl, driveEnabled, exchangeCode, googleEnabled, meetEnabled, newAttempt, revokeToken } from '../google-auth.js';
-import { driveAccess, meetAccess } from '../google-drive.js';
+import { CALENDAR_SCOPE, CHAT_SCOPE, DRIVE_SCOPE, authorizationUrl, chatEnabled, driveEnabled, exchangeCode, googleEnabled, meetEnabled, newAttempt, revokeToken } from '../google-auth.js';
+import { chatAccess, driveAccess, meetAccess } from '../google-drive.js';
 import {
   SESSION_COOKIE,
   currentSession,
@@ -169,7 +169,7 @@ function finishSignIn(req, res, account, method) {
 /* ---------------------------------- sign in ---------------------------------- */
 
 // Public: lets the sign-in page show "Use your @domain account". Reveals only the domain.
-router.get('/info', (req, res) => res.json({ domain: config.mailbox.split('@')[1] || '', google: googleEnabled(), drive: driveEnabled(), meet: meetEnabled() }));
+router.get('/info', (req, res) => res.json({ domain: config.mailbox.split('@')[1] || '', google: googleEnabled(), drive: driveEnabled(), meet: meetEnabled(), chat: chatEnabled() }));
 
 router.post('/login', async (req, res) => {
   const email = normalize(req.body?.email).slice(0, 254);
@@ -251,12 +251,17 @@ const backTo = (res, outcome) => res.redirect(303, `/?google=${outcome}`);
 const FEATURES = {
   drive: { scope: DRIVE_SCOPE, enabled: driveEnabled, name: 'Google Drive', cache: driveAccess },
   meet: { scope: CALENDAR_SCOPE, enabled: meetEnabled, name: 'Google Meet', cache: meetAccess },
+  // On trial: left out of "Connect all" until Google is known to allow it for personal accounts.
+  chat: { scope: CHAT_SCOPE, enabled: chatEnabled, name: 'Google Chat', cache: chatAccess, trial: true },
 };
+// mode=all connects every Google app that is set up, on one Google screen.
+const featuresFor = (mode) => (mode === 'all' ? Object.keys(FEATURES).filter((f) => FEATURES[f].enabled() && !FEATURES[f].trial) : FEATURES[mode] ? [mode] : []);
 
 router.get('/google/start', (req, res) => {
   if (!googleEnabled()) throw new HttpError(404, 'Google sign-in is not set up');
-  const mode = ['link', ...Object.keys(FEATURES)].includes(req.query.mode) ? req.query.mode : 'login';
+  const mode = ['link', 'all', ...Object.keys(FEATURES)].includes(req.query.mode) ? req.query.mode : 'login';
   if (FEATURES[mode] && !FEATURES[mode].enabled()) throw new HttpError(404, `${FEATURES[mode].name} is not set up`);
+  if (mode === 'all' && !featuresFor('all').length) throw new HttpError(404, 'No Google apps are set up');
   const session = mode === 'login' ? null : currentSession(req);
   if (mode !== 'login' && !session) return backTo(res, 'signin-first');
   const attempt = newAttempt();
@@ -268,7 +273,7 @@ router.get('/google/start', (req, res) => {
   );
   const loginHint = session ? holderOf(session.role, session.email)?.google?.email || '' : '';
   res.cookie(GOOGLE_COOKIE, pending, googleCookie(req, 10 * 60e3));
-  res.redirect(303, authorizationUrl({ ...attempt, redirectUri, scope: FEATURES[mode]?.scope, loginHint }));
+  res.redirect(303, authorizationUrl({ ...attempt, redirectUri, scope: featuresFor(mode).map((f) => FEATURES[f].scope).join(' '), loginHint }));
 });
 
 router.get('/google/callback', async (req, res) => {
@@ -290,7 +295,7 @@ router.get('/google/callback', async (req, res) => {
     return backTo(res, 'error');
   }
 
-  if (pending.mode === 'link' || FEATURES[pending.mode]) {
+  if (pending.mode === 'link' || pending.mode === 'all' || FEATURES[pending.mode]) {
     const session = db().sessions.find((s) => s.id === pending.sid && Date.parse(s.expiresAt) > Date.now());
     if (!session) return backTo(res, 'signin-first');
     const other = accountForGoogle(google.sub);
@@ -301,9 +306,10 @@ router.get('/google/callback', async (req, res) => {
     const holder = holderOf(session.role, session.email);
     if (!holder) return backTo(res, 'error');
     const same = holder.google?.sub === google.sub;
-    const feature = FEATURES[pending.mode] ? pending.mode : null;
-    if (feature && holder.google && !same) return backTo(res, `${feature}-other-account`);
-    if (feature && (!google.refreshToken || !google.scope.split(' ').includes(FEATURES[feature].scope))) return backTo(res, `${feature}-denied`);
+    const wanted = featuresFor(pending.mode);
+    const granted = google.refreshToken ? wanted.filter((f) => google.scope.split(' ').includes(FEATURES[f].scope)) : [];
+    if (wanted.length && holder.google && !same) return backTo(res, `${pending.mode}-other-account`);
+    if (wanted.length && !granted.length) return backTo(res, `${pending.mode}-denied`);
 
     // Relinking the same Google account keeps the access already connected.
     const kept = Object.fromEntries(Object.keys(FEATURES).filter((f) => same && holder.google[f]).map((f) => [f, holder.google[f]]));
@@ -311,12 +317,13 @@ router.get('/google/callback', async (req, res) => {
       sub: google.sub, email: google.email, name: google.name,
       linkedAt: same ? holder.google.linkedAt : new Date().toISOString(),
       ...kept,
-      ...(feature && { [feature]: { refresh: seal(google.refreshToken), connectedAt: new Date().toISOString() } }),
+      ...Object.fromEntries(granted.map((f) => [f, { refresh: seal(google.refreshToken), connectedAt: new Date().toISOString() }])),
     };
     for (const { cache } of Object.values(FEATURES)) cache.delete(`${session.role}:${session.email}`);
     save();
-    audit(req, feature ? `google-${feature}-connected` : 'google-connected', session.email, google.email);
-    return backTo(res, feature ? `${feature}-linked` : 'linked');
+    audit(req, granted.length ? `google-${granted.join('-')}-connected` : 'google-connected', session.email, google.email);
+    if (pending.mode === 'all') return backTo(res, granted.length === wanted.length ? 'all-linked' : 'some-linked');
+    return backTo(res, wanted.length ? `${pending.mode}-linked` : 'linked');
   }
 
   const found = accountForGoogle(google.sub);
@@ -357,13 +364,19 @@ router.post('/google/finish', (req, res) => {
   finishSignIn(req, res, account, 'google');
 });
 
-/** Stop AliasMail's Drive or Meet access: tell Google to forget the token, then drop it. */
+/**
+ * Stop AliasMail's Drive or Meet access. Google keeps one grant per app, so revoking any token
+ * ends all of them: Google is only told to forget it when no other app still uses it.
+ */
 function dropAccess(req, holder, feature) {
   if (!holder?.google?.[feature]) return;
-  try {
-    void revokeToken(unseal(holder.google[feature].refresh));
-  } catch {
-    /* unreadable token: nothing to revoke */
+  const stillUsed = Object.keys(FEATURES).some((f) => f !== feature && holder.google[f]);
+  if (!stillUsed) {
+    try {
+      void revokeToken(unseal(holder.google[feature].refresh));
+    } catch {
+      /* unreadable token: nothing to revoke */
+    }
   }
   delete holder.google[feature];
   FEATURES[feature].cache.delete(`${req.user.role}:${req.user.email}`);
@@ -472,9 +485,11 @@ router.get('/mfa', requireAuth(), (req, res) => {
     googleEnabled: googleEnabled(),
     driveEnabled: driveEnabled(),
     meetEnabled: meetEnabled(),
+    chatEnabled: chatEnabled(),
     google: holder?.google
       ? { email: holder.google.email, name: holder.google.name, linkedAt: holder.google.linkedAt, drive: Boolean(holder.google.drive), driveConnectedAt: holder.google.drive?.connectedAt || null,
-          meet: Boolean(holder.google.meet), meetConnectedAt: holder.google.meet?.connectedAt || null }
+          meet: Boolean(holder.google.meet), meetConnectedAt: holder.google.meet?.connectedAt || null,
+          chat: Boolean(holder.google.chat), chatConnectedAt: holder.google.chat?.connectedAt || null }
       : null,
   });
 });

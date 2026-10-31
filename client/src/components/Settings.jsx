@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import Avatar, { squareImage } from './Avatar.jsx';
 import Icon from './Icon.jsx';
 import SecurityPanel from './SecurityPanel.jsx';
+import GoogleApps from './GoogleApps.jsx';
 
 const GOOGLE_SIGNUP = 'https://accounts.google.com/signup';
 
@@ -63,6 +64,12 @@ function PrivateTabHelp({ onClose }) {
 export default function Settings({ color, initialTab = 'profile', onClose, onSaved, onAvatarChange }) {
   const [privateHelp, setPrivateHelp] = useState(false);
   const [tab, setTab] = useState(initialTab);
+  const [googleOn, setGoogleOn] = useState(initialTab === 'google');
+  useEffect(() => {
+    api('/auth/info')
+      .then((info) => setGoogleOn(Boolean(info.drive || info.meet || info.chat)))
+      .catch(() => {});
+  }, []);
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -223,6 +230,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
         {[
           ['profile', 'Profile', 'people'],
           ['security', 'Security', 'shield'],
+          ...(googleOn ? [['google', 'Google apps', 'apps']] : []),
         ].map(([id, label, icon]) => (
           <button type="button" role="tab" aria-selected={tab === id} key={id} className={`settings-tab ${tab === id ? 'on' : ''}`} onClick={() => setTab(id)}>
             <Icon name={icon} size={18} /> {label}
@@ -230,7 +238,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
         ))}
       </div>
       <div className="view-enter settings-body" key={tab}>
-        {tab === 'profile' ? profileTab() : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <div className="muted">Loading…</div>}
+        {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <div className="muted">Loading…</div>}
       </div>
       {privateHelp && <PrivateTabHelp onClose={() => setPrivateHelp(false)} />}
     </section>

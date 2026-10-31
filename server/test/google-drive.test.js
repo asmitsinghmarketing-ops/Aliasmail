@@ -13,6 +13,7 @@ const ADMIN = { email: 'owner@example.com', password: 'admin-password-123' };
 const CLIENT_ID = 'drive-client.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+const CHAT_SCOPE = 'https://www.googleapis.com/auth/chat.spaces.readonly';
 
 let server;
 let fake;
@@ -38,7 +39,7 @@ test.before(async () => {
         return send(200, {
           id_token: `x.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`,
           refresh_token: 'refresh-1',
-          scope: fakeState.grantDrive ? `openid email profile ${DRIVE_SCOPE} ${CALENDAR_SCOPE}` : 'openid email profile',
+          scope: fakeState.grantDrive ? `openid email profile ${DRIVE_SCOPE} ${CALENDAR_SCOPE} ${CHAT_SCOPE}` : 'openid email profile',
         });
       }
       if (url.pathname === '/revoke') {
@@ -56,6 +57,10 @@ test.before(async () => {
         const event = JSON.parse(body);
         fakeState.events.push({ ...event, auth: req.headers.authorization, query: Object.fromEntries(url.searchParams) });
         return send(200, { id: 'evt1', summary: event.summary, htmlLink: 'https://calendar.google.com/event?eid=evt1', hangoutLink: 'https://meet.google.com/abc-defg-hij' });
+      }
+      if (url.pathname === '/chat/spaces') {
+        if (fakeState.chatWorkspaceOnly) return send(403, { error: { message: 'Google Chat API is only available to Google Workspace users.' } });
+        return send(200, { spaces: [{ displayName: 'Team', spaceType: 'SPACE' }, { spaceType: 'DIRECT_MESSAGE' }] });
       }
       if (url.pathname === '/bridge') {
         const { action } = JSON.parse(body || '{}');
@@ -75,7 +80,7 @@ test.before(async () => {
       JWT_SECRET: 'drive-test-secret', MAIL_USER: ADMIN.email, MAIL_PASSWORD: '', MAIL_BRIDGE_URL: `${at}/bridge`, MAIL_BRIDGE_TOKEN: 'bridge-token', MAIL_TRANSPORT: 'bridge',
       ADMIN_EMAIL: ADMIN.email, ADMIN_PASSWORD: ADMIN.password,
       GOOGLE_CLIENT_ID: CLIENT_ID, GOOGLE_CLIENT_SECRET: 'secret', GOOGLE_TOKEN_URL: `${at}/token`, GOOGLE_REVOKE_URL: `${at}/revoke`,
-      GOOGLE_DRIVE_API_URL: `${at}/drive`, GOOGLE_CALENDAR_API_URL: `${at}/calendar`, GOOGLE_API_KEY: 'browser-key', GOOGLE_PROJECT_NUMBER: '123456789',
+      GOOGLE_DRIVE_API_URL: `${at}/drive`, GOOGLE_CALENDAR_API_URL: `${at}/calendar`, GOOGLE_CHAT_API_URL: `${at}/chat`, GOOGLE_API_KEY: 'browser-key', GOOGLE_PROJECT_NUMBER: '123456789',
     },
     stdio: 'ignore',
   });
@@ -222,4 +227,44 @@ test('Google Meet: connected from Settings, then meetings are created in the per
   const status = (await john.call('GET', '/api/auth/mfa')).data.google;
   assert.deepEqual([status.meet, Boolean(status.email)], [false, true]);
   assert.equal((await john.call('POST', '/api/mail/meet', {})).status, 409);
+});
+
+test('"Connect all" asks for Drive and Meet on one Google screen; disconnecting one keeps the other', async () => {
+  fakeState.revoked = false;
+  const john = browser();
+  await john.call('POST', '/api/auth/login', { email: 'john@example.com', password: 'john-password' });
+  const { sent, back } = await john.connectDrive('all');
+  assert.match(sent.searchParams.get('scope'), /drive\.file/);
+  assert.match(sent.searchParams.get('scope'), /calendar\.events/);
+  assert.doesNotMatch(sent.searchParams.get('scope'), /chat/);
+  assert.equal(back.location, '/?google=all-linked');
+  let status = (await john.call('GET', '/api/auth/mfa')).data.google;
+  assert.deepEqual([status.drive, status.meet], [true, true]);
+
+  // Google keeps one grant per app: Drive goes here without revoking what Meet still uses.
+  const revokes = fakeState.revokes.length;
+  await john.call('POST', '/api/auth/google/drive/disconnect');
+  assert.equal(fakeState.revokes.length, revokes);
+  assert.equal((await john.call('POST', '/api/mail/meet', {})).status, 201);
+  await john.call('POST', '/api/auth/google/meet/disconnect');
+  assert.equal(fakeState.revokes.length, revokes + 1);
+  status = (await john.call('GET', '/api/auth/mfa')).data.google;
+  assert.deepEqual([status.drive, status.meet], [false, false]);
+});
+
+test('Google Chat on trial: the test lists conversations, or shows why Google refused', async () => {
+  fakeState.revoked = false;
+  const john = browser();
+  await john.call('POST', '/api/auth/login', { email: 'john@example.com', password: 'john-password' });
+  assert.equal((await john.call('GET', '/api/mail/chat/test')).status, 409);
+  const { sent, back } = await john.connectDrive('chat');
+  assert.match(sent.searchParams.get('scope'), /chat\.spaces\.readonly/);
+  assert.equal(back.location, '/?google=chat-linked');
+
+  const works = (await john.call('GET', '/api/mail/chat/test')).data;
+  assert.deepEqual(works, { ok: true, spaces: [{ name: 'Team', type: 'SPACE' }, { name: 'Direct message', type: 'DIRECT_MESSAGE' }] });
+  fakeState.chatWorkspaceOnly = true;
+  const refused = (await john.call('GET', '/api/mail/chat/test')).data;
+  assert.deepEqual([refused.ok, refused.status], [false, 403]);
+  assert.match(refused.reason, /Workspace/);
 });

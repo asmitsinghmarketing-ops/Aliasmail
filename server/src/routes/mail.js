@@ -21,7 +21,8 @@ import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.j
 import { HttpError, describeError } from '../errors.js';
 import { announceChange, mailEvents } from '../mail-events.js';
 import { liveSync, noteActivity } from '../live-sync.js';
-import { driveEnabled, meetEnabled } from '../google-auth.js';
+import { chatEnabled, driveEnabled, meetEnabled } from '../google-auth.js';
+import { googleTokenFor } from '../google-drive.js';
 import { createMeeting, readMeeting } from '../google-meet.js';
 import { driveTokenFor, readDriveRequest, shareWithRecipients } from '../google-drive.js';
 import { findLoginCode, mightHaveCode, serviceName } from '../login-codes.js';
@@ -805,6 +806,27 @@ router.post('/meet', async (req, res) => {
   const created = await createMeeting(req.user.role, req.user.email, meeting);
   audit(req, 'google-meet-created', req.user.email, `${meeting.guests.length} guest(s)`);
   res.status(201).json(created);
+});
+
+/* ---------------------------------- Google Chat (on trial) ---------------------------------- */
+
+/**
+ * Whether Google lets this account use the Chat API: lists a few of its conversations, or
+ * returns Google's own answer when it refuses (e.g. for accounts without Workspace).
+ */
+router.get('/chat/test', async (req, res) => {
+  if (!chatEnabled()) throw new HttpError(404, 'Google Chat is not set up');
+  const { accessToken } = await googleTokenFor('chat', req.user.role, req.user.email);
+  const answer = await fetch(`${config.google.chatApiUrl}/spaces?pageSize=10`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(15_000),
+  }).catch(() => null);
+  const data = answer ? await answer.json().catch(() => ({})) : {};
+  if (!answer?.ok) {
+    return res.json({ ok: false, status: answer?.status || 0, reason: data.error?.message || (answer ? `Google answered ${answer.status}` : 'Google Chat didn’t answer') });
+  }
+  const spaces = (data.spaces || []).map((s) => ({ name: s.displayName || (s.spaceType === 'DIRECT_MESSAGE' ? 'Direct message' : 'Conversation'), type: s.spaceType || '' }));
+  res.json({ ok: true, spaces });
 });
 
 /* ---------------------------------- settings ---------------------------------- */

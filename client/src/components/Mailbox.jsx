@@ -337,21 +337,30 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       'meet-linked': 'Google Meet connected. Start or schedule a meeting from “New meeting”.',
       'meet-denied': 'Google Meet wasn’t connected: allow AliasMail to add events to your calendar, then try again.',
       'meet-other-account': 'Use the same Google account that is connected to AliasMail for Meet.',
+      'all-linked': 'Google apps connected. Insert Drive files and Meet links in Compose, or start a meeting from the apps menu.',
+      'some-linked': 'Some Google apps were connected. Tick every box on Google’s screen to connect the rest.',
+      'all-denied': 'Nothing was connected: tick the boxes on Google’s screen, then try again.',
+      'all-other-account': 'Use the same Google account that is connected to AliasMail.',
+      'chat-linked': 'Google Chat connected. Run the test in Google apps to see whether Google allows it for your account.',
+      'chat-denied': 'Google Chat wasn’t connected: tick the box on Google’s screen, then try again.',
+      'chat-other-account': 'Use the same Google account that is connected to AliasMail for Chat.',
     };
     if (outcome === 'continue' || outcome === 'not-linked') return;
-    setSettingsTab('security');
+    setSettingsTab(/^(drive|meet|chat|all|some)-/.test(outcome) ? 'google' : 'security');
     setModal('settings');
     flash(said[outcome] || 'Couldn’t connect Google. Try again.', null, 8000);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [driveOn, setDriveOn] = useState(false);
   const [meetOn, setMeetOn] = useState(false);
+  const [chatOn, setChatOn] = useState(false);
   useEffect(() => {
     loadLabels();
     api('/auth/info')
       .then((info) => {
         setDriveOn(Boolean(info.drive));
         setMeetOn(Boolean(info.meet));
+        setChatOn(Boolean(info.chat));
       })
       .catch(() => {});
     api('/mail/people').then(setPeople).catch(() => {});
@@ -1021,11 +1030,42 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               <Icon name="shield" size={18} /> <span className="hide-sm">Admin console</span>
             </button>
           )}
+          {(meetOn || driveOn || chatOn) && !shared && (
+            <Popover icon="apps" title="Google apps" align="right">
+              {(close) => (
+                <div className="apps-menu">
+                  {meetOn && (
+                    <button type="button" className="apps-tile" style={{ '--app': '#00897b' }} onClick={() => { close(); setModal('meet'); }}>
+                      <span><Icon name="videocam" /></span>New meeting
+                    </button>
+                  )}
+                  {meetOn && (
+                    <a className="apps-tile" style={{ '--app': '#1a73e8' }} href="https://calendar.google.com/" target="_blank" rel="noreferrer" onClick={close}>
+                      <span><Icon name="event" /></span>Calendar
+                    </a>
+                  )}
+                  {chatOn && (
+                    <a className="apps-tile" style={{ '--app': '#188038' }} href="https://chat.google.com/" target="_blank" rel="noreferrer" onClick={close}>
+                      <span><Icon name="chat" /></span>Chat
+                    </a>
+                  )}
+                  {driveOn && (
+                    <a className="apps-tile" style={{ '--app': '#f9ab00' }} href="https://drive.google.com/" target="_blank" rel="noreferrer" onClick={close}>
+                      <span><Icon name="drive" /></span>Drive
+                    </a>
+                  )}
+                  <button type="button" className="apps-manage" onClick={() => { close(); setSettingsTab('google'); setModal('settings'); }}>
+                    <Icon name="settings" size={18} /> Manage connections
+                  </button>
+                </div>
+              )}
+            </Popover>
+          )}
           <button className="icon-btn hide-sm" title="Keyboard shortcuts (?)" onClick={() => setModal('shortcuts')}>
             <Icon name="keyboard" />
           </button>
           {!shared && (
-            <button className="icon-btn" title="Settings" onClick={() => setModal('settings')}>
+            <button className="icon-btn" title="Settings" onClick={() => { setSettingsTab('profile'); setModal('settings'); }}>
               <Icon name="settings" />
             </button>
           )}
@@ -1134,29 +1174,6 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               <span className="nav-label">Sign out</span>
             </button>
           </nav>
-
-          {meetOn && (
-            <>
-              <div className="labels-head">
-                <span>Meet</span>
-              </div>
-              <nav>
-                <button
-                  className="nav-item"
-                  onClick={() => {
-                    if (window.matchMedia('(max-width: 800px)').matches) setCollapsed(true);
-                    setModal('meet');
-                  }}
-                  title="Start or schedule a Google Meet meeting"
-                >
-                  <span className="nav-icon" style={{ '--c': '#00897b' }}>
-                    <Icon name="videocam" size={18} />
-                  </span>
-                  <span className="nav-label">New meeting</span>
-                </button>
-              </nav>
-            </>
-          )}
 
           {mailboxes.length > 0 && (
             <div className="drawer-mailboxes mobile-only">

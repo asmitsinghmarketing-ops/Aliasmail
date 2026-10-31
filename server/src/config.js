@@ -140,6 +140,10 @@ const config = {
     // Google Meet (needs the Calendar API on in the Cloud project). GOOGLE_MEET=off hides it.
     meet: bool('GOOGLE_MEET', true),
     calendarApiUrl: env('GOOGLE_CALENDAR_API_URL', 'https://www.googleapis.com/calendar/v3'),
+    // Google Chat, on trial: Google documents its API for Workspace accounts only, so Settings
+    // offers a test with the person's own account first. GOOGLE_CHAT=off hides it.
+    chat: bool('GOOGLE_CHAT', true),
+    chatApiUrl: env('GOOGLE_CHAT_API_URL', 'https://chat.googleapis.com/v1'),
   },
   appUrl: env('APP_URL').replace(/\/$/, ''),
   // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.

@@ -266,68 +266,8 @@ export default function SecurityPanel({ account, owner }) {
             )}
           </div>
 
-          {status.google && status.driveEnabled && (
-            <div className="sec-sub">
-              <div className="sec-sub-head">
-                <span>
-                  <strong>Google Drive</strong>
-                  <span className="muted small">
-                    {status.google.drive
-                      ? ` · connected ${formatDate(status.google.driveConnectedAt)}. Insert Drive files in Compose; they’re shared with the recipients when you send.`
-                      : ' · insert Drive files in your emails. AliasMail only sees the files you pick.'}
-                  </span>
-                </span>
-                {status.google.drive ? (
-                  <button
-                    type="button"
-                    className="link"
-                    onClick={async () => {
-                      if (!(await ask({ title: 'Disconnect Google Drive?', message: 'Files you already shared stay shared. You can reconnect any time.', confirmLabel: 'Disconnect' }))) return;
-                      await api('/auth/google/drive/disconnect', { method: 'POST' });
-                      load();
-                    }}
-                  >
-                    Disconnect
-                  </button>
-                ) : (
-                  <a className="link" href="/api/auth/google/start?mode=drive">
-                    Connect Drive
-                  </a>
-                )}
-              </div>
-            </div>
-          )}
-
-          {status.google && status.meetEnabled && (
-            <div className="sec-sub">
-              <div className="sec-sub-head">
-                <span>
-                  <strong>Google Meet</strong>
-                  <span className="muted small">
-                    {status.google.meet
-                      ? ` · connected ${formatDate(status.google.meetConnectedAt)}. Start or schedule meetings from “New meeting”; they’re added to your Google Calendar.`
-                      : ' · create Meet links and invite people. AliasMail only adds the meetings you create to your calendar.'}
-                  </span>
-                </span>
-                {status.google.meet ? (
-                  <button
-                    type="button"
-                    className="link"
-                    onClick={async () => {
-                      if (!(await ask({ title: 'Disconnect Google Meet?', message: 'Meetings you already created stay in your calendar. You can reconnect any time.', confirmLabel: 'Disconnect' }))) return;
-                      await api('/auth/google/meet/disconnect', { method: 'POST' });
-                      load();
-                    }}
-                  >
-                    Disconnect
-                  </button>
-                ) : (
-                  <a className="link" href="/api/auth/google/start?mode=meet">
-                    Connect Meet
-                  </a>
-                )}
-              </div>
-            </div>
+          {status.google && (status.driveEnabled || status.meetEnabled) && (
+            <p className="muted small sec-sub">Google Drive and Google Meet are in <strong>Settings → Google apps</strong>.</p>
           )}
         </section>
       )}
