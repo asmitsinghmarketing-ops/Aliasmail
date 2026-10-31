@@ -16,6 +16,7 @@ const ADMIN = { email: 'owner@example.com', password: 'admin-password-123' };
 const pdf = crypto.randomBytes(40_000);
 const sent = [];
 let sendMode = 'ok'; // ok | spam | down
+let lastLocal = null; // recipients the app asked the bridge to deliver straight into the mailbox
 
 let server;
 let bridge;
@@ -42,6 +43,7 @@ test.before(async () => {
         if (sendMode === 'spam') { res.statusCode = 502; return reply({ error: 'SMTP rejected command: 550 This message was classified as SPAM and may not be delivered' }); }
         if (sendMode === 'down') { res.statusCode = 502; return reply({ error: 'SMTP connection failed: Connection timed out (110)' }); }
         sent.push(Buffer.from(data.raw, 'base64'));
+        lastLocal = data.local;
         return reply({ ok: true });
       }
       reply({ ok: true });
@@ -182,4 +184,12 @@ test('admins can check which of GoDaddy\'s mail ports the app server reaches; ot
   console.log('  from this machine:', res.data.results.map((r) => `${r.target}=${r.open ? 'open' : r.error}`).join(', '));
   const john = await signIn({ email: 'john@example.com', password: 'john-password' });
   assert.equal((await john('GET', '/api/admin/smtp-check')).status, 403);
+});
+
+test('own aliases are handed to the bridge for delivery straight into the mailbox', async () => {
+  const john = await signIn({ email: 'john@example.com', password: 'john-password' });
+  sendMode = 'ok';
+  const res = await john('POST', '/api/mail/send', { to: 'Mary@Example.com, someone@outside.test', cc: 'owner@example.com', subject: 'Team note', text: 'Hi all' });
+  assert.equal(res.status, 201);
+  assert.deepEqual([...lastLocal].map((a) => a.toLowerCase()).sort(), ['mary@example.com', 'owner@example.com']);
 });

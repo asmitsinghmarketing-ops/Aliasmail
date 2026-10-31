@@ -33,7 +33,7 @@ try {
     if ($action === 'appendRaw') reply(200, raw_append((string)($body['rawId'] ?? ''), (string)($body['chunk'] ?? '')));
     if ($action === 'sendStagedRaw') {
         $rawId = (string)($body['rawId'] ?? '');
-        $timing = smtp_send_raw(raw_read($rawId), (array)($body['envelope'] ?? []));
+        $timing = send_out(raw_read($rawId), (array)($body['envelope'] ?? []), (array)($body['local'] ?? []));
         reply(200, ['ok' => true, 'rawId' => $rawId, 'timing' => $timing]);
     }
     // A message whose attachments were uploaded here: the files are put in on this side, sent,
@@ -46,7 +46,7 @@ try {
         $spliceStart = microtime(true);
         $full = upload_splice($raw, $uploads, $owner);
         $spliceMs = (int)round((microtime(true) - $spliceStart) * 1000);
-        $timing = ['attachMs' => $spliceMs] + smtp_send_raw($full, (array)($body['envelope'] ?? []));
+        $timing = ['attachMs' => $spliceMs] + send_out($full, (array)($body['envelope'] ?? []), (array)($body['local'] ?? []));
         if ($stagedId !== '') raw_delete($stagedId);
         foreach ($uploads as $uploadId) { try { upload_delete($uploadId, $owner); } catch (Throwable $ignored) {} }
         reply(200, ['ok' => true, 'rawId' => raw_store($full), 'uploadsDeleted' => true, 'timing' => $timing]);

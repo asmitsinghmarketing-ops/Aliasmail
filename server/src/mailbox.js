@@ -573,6 +573,17 @@ export async function setServerSeen(uids, seen, folder = 'inbox') {
 }
 
 /**
+ * Recipients whose mail lands in this same mailbox anyway: AliasMail's aliases (group mailboxes
+ * included) and the mailbox itself. The bridge delivers to them straight into the INBOX (a few
+ * seconds instead of a minute or more through the relay); everyone else still goes through the relay.
+ * An older bridge ignores the list and sends everything through the relay, as before.
+ */
+function localRecipients(envelope) {
+  const mine = new Set([...db().aliases.map((a) => normalize(a.address)), normalize(config.mailbox)].filter(Boolean));
+  return (envelope.to || []).filter((address) => mine.has(normalize(address)));
+}
+
+/**
  * Attachments already uploaded to the bridge stay there: the message goes out with a placeholder
  * per file (the base64 of "AMU:<uploadId>", one short line) and the bridge puts the files in. That
  * saves downloading each file to this app and uploading it again.
@@ -586,7 +597,8 @@ async function sendWithUploads(mail, uploadIds, timing) {
   const raw = await compiled.build();
   timing.buildMs = Date.now() - started;
   const bridgeStarted = Date.now();
-  const sent = await bridge('sendWithUploads', { raw: raw.toString('base64'), envelope: compiled.getEnvelope(), uploads: uploadIds, owner: mail.from.address });
+  const envelope = compiled.getEnvelope();
+  const sent = await bridge('sendWithUploads', { raw: raw.toString('base64'), envelope, local: localRecipients(envelope), uploads: uploadIds, owner: mail.from.address });
   Object.assign(timing, { route: 'attachments on the bridge', bridgeMs: Date.now() - bridgeStarted, relay: sent.timing || null });
   const saveStarted = Date.now();
   void bridge('saveStagedSent', { rawId: sent.rawId })
@@ -620,7 +632,7 @@ export async function sendMail(mail, timing = {}) {
   const envelope = compiled.getEnvelope();
   timing.buildMs = Date.now() - started;
   const bridgeStarted = Date.now();
-  const sent = await bridge('sendRaw', { raw: encodedRaw, envelope });
+  const sent = await bridge('sendRaw', { raw: encodedRaw, envelope, local: localRecipients(envelope) });
   // Over 96 KB (base64) the message goes to the bridge in pieces first (see mail-transport.js).
   Object.assign(timing, { route: encodedRaw.length > 96 * 1024 ? 'through the app, in pieces' : 'through the app', bridgeMs: Date.now() - bridgeStarted, relay: sent.timing || null });
   await Promise.all(uploadIds.map((uploadId) => bridge('deleteUpload', { uploadId, owner: mail.from.address }).catch((err) => {

@@ -268,6 +268,42 @@ function smtp_send_raw(string $raw, array $envelope): array {
     return $timing;
 }
 
+/**
+ * Put a message straight into this mailbox's INBOX, for recipients whose mail lands here anyway
+ * (AliasMail's own aliases): a few seconds, instead of a minute or more through the relay. A
+ * Delivered-To line per recipient tells AliasMail whose it is (also for Bcc, which isn't in the
+ * headers).
+ */
+function deliver_local(string $raw, array $recipients): array {
+    $start = microtime(true);
+    $lines = '';
+    foreach (array_unique($recipients) as $recipient) {
+        $recipient = str_replace(['<', '>', "\r", "\n"], '', (string)$recipient);
+        if ($recipient !== '') $lines .= "Delivered-To: {$recipient}\r\n";
+    }
+    $raw = str_replace("\n", "\r\n", str_replace(["\r\n", "\r"], "\n", $raw));
+    [$imap, $box] = imap_open_folder('inbox', false);
+    try {
+        if (!imap_append($imap, $box, $lines . $raw)) throw new RuntimeException('Could not deliver to the mailbox: ' . (imap_last_error() ?: 'unknown error'));
+    } finally { imap_release($imap); }
+    return ['localMs' => (int)round((microtime(true) - $start) * 1000), 'localDelivered' => count(array_unique($recipients))];
+}
+
+/**
+ * Send a finished message: recipients listed in $local (this mailbox's own aliases) get it
+ * delivered straight into the INBOX, everyone else through the relay. An app that doesn't send
+ * `local` gets everything through the relay, as before.
+ */
+function send_out(string $raw, array $envelope, array $local): array {
+    $local = array_values(array_unique(array_map(static fn($a) => strtolower(trim((string)$a)), $local)));
+    $outside = array_values(array_filter((array)($envelope['to'] ?? []), static fn($a) => !in_array(strtolower(trim((string)$a)), $local, true)));
+    $timing = [];
+    if ($outside) $timing = smtp_send_raw($raw, ['to' => $outside] + $envelope);
+    if ($local) $timing += deliver_local($raw, $local);
+    if (!$outside && !$local) throw new RuntimeException('No recipients in SMTP envelope');
+    return $timing;
+}
+
 function handle(array $body): array {
     $action = (string)($body['action'] ?? '');
     if ($action === 'health') return ['ok' => true, 'imapExtension' => function_exists('imap_open')];
@@ -409,7 +445,7 @@ function handle(array $body): array {
     if ($action === 'sendRaw') {
         $raw = base64_decode((string)($body['raw'] ?? ''), true);
         if ($raw === false) throw new RuntimeException('Invalid message payload');
-        return ['ok' => true, 'timing' => smtp_send_raw($raw, (array)($body['envelope'] ?? []))];
+        return ['ok' => true, 'timing' => send_out($raw, (array)($body['envelope'] ?? []), (array)($body['local'] ?? []))];
     }
     if ($action === 'saveSent') {
         $raw = base64_decode((string)($body['raw'] ?? ''), true);

@@ -15,6 +15,7 @@ const HOPS = {
   upload: { label: 'Relay: message upload', color: '#f08c00' },
   accept: { label: 'Relay: spam & virus scan', color: '#e03131' },
   quit: { label: 'Relay: goodbye', color: '#868e96' },
+  local: { label: 'Straight into your mailbox (own aliases)', color: '#12b886' },
   delivery: { label: 'Sender → your mailbox', color: '#1c7ed6' },
   notice: { label: 'Mailbox → AliasMail notices it', color: '#e8590c' },
   open: { label: 'Open folder', color: '#1c7ed6' },
@@ -56,7 +57,7 @@ function Legend({ hops }) {
 function sendParts(s) {
   const t = s.timing || {};
   const r = t.relay || {};
-  const relay = (r.totalMs || 0) + (r.attachMs || 0);
+  const relay = (r.totalMs || 0) + (r.attachMs || 0) + (r.localMs || 0);
   return [
     { hop: 'uploadWait', ms: s.browser?.uploadWaitMs || 0 },
     { hop: 'app', ms: t.buildMs || 0 },
@@ -67,6 +68,7 @@ function sendParts(s) {
     { hop: 'upload', ms: r.uploadMs || 0 },
     { hop: 'accept', ms: r.acceptMs || 0 },
     { hop: 'quit', ms: r.quitMs || 0 },
+    { hop: 'local', ms: r.localMs || 0 },
   ];
 }
 
@@ -195,7 +197,7 @@ export default function AdminSpeed() {
           <p className="muted">Nothing sent since the app last restarted. Send an email and it appears here with each hop.</p>
         ) : (
           <>
-            <Legend hops={['uploadWait', 'app', 'network', 'attach', 'connect', 'envelope', 'upload', 'accept', 'quit']} />
+            <Legend hops={['uploadWait', 'app', 'network', 'attach', 'connect', 'envelope', 'upload', 'accept', 'quit', 'local']} />
             <ul className="hop-rows">
               {sends.map((s, i) => (
                 <li key={s.at + i}>
