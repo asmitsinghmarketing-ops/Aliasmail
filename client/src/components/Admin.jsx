@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { displayName, formatDate, formatSize, timeAgo } from '../format.js';
+import AdminSpeed from './AdminSpeed.jsx';
 import Avatar from './Avatar.jsx';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
@@ -13,6 +14,7 @@ const TABS = [
   { id: 'aliases', label: 'Aliases', icon: 'people' },
   { id: 'roles', label: 'Roles', icon: 'shield' },
   { id: 'mail', label: 'All mail', icon: 'inbox' },
+  { id: 'speed', label: 'Speed', icon: 'clock' },
 ];
 
 export default function Admin({ user, onLogout, onOpenMail, onRolesChanged }) {
@@ -92,6 +94,7 @@ export default function Admin({ user, onLogout, onOpenMail, onRolesChanged }) {
                 />
               )}
               {tab === 'mail' && <AllMail overview={overview} onChanged={reload} />}
+              {tab === 'speed' && <AdminSpeed />}
             </div>
           )}
         </main>
