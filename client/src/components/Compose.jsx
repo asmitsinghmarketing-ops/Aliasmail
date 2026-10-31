@@ -4,9 +4,10 @@ import { formatSize } from '../format.js';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { Popover, TimeMenu, scheduleOptions } from './Menus.jsx';
-import RichEditor, { escapeHtml, htmlFromText, sanitizeHtml } from './RichEditor.jsx';
+import RichEditor, { escapeHtml, htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
 import { pickDriveFiles } from '../drivePicker.js';
 import { createMeeting } from '../meet.js';
+import { canShrink, shrinkPhoto } from '../photoResize.js';
 import RecipientField, { parseAddresses } from './RecipientField.jsx';
 
 // Address suggestions, loaded once per page and shared by every compose window.
@@ -114,7 +115,7 @@ const DRIVE_ACCESS = [
 
 export default function Compose({ from, draft, onClose, onSend, driveOn = false, meetOn = false }) {
   const initial = {
-    to: draft.to || '', cc: draft.cc || '', bcc: draft.bcc || '', subject: draft.subject || '', text: draft.text || '',
+    to: draft.to || '', cc: draft.cc || '', bcc: draft.bcc || '', subject: draft.subject || '', text: draft.text || (draft.html ? textFromHtml(draft.html) : ''),
     html: draft.html || htmlFromText(draft.text || ''),
   };
   const [form, setForm] = useState(initial);
@@ -240,12 +241,27 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false,
 
   async function addFiles(list) {
     try {
-      const added = [...list].map(readFile);
+      const added = [...list].map((file) => ({ ...readFile(file), ...(canShrink(file) && { shrinking: true }) }));
       setFiles((current) => [...current, ...added]);
-      added.forEach(preuploadAttachment);
+      added.filter((item) => !item.shrinking).forEach(preuploadAttachment);
+      added.filter((item) => item.shrinking).forEach(shrinkThenUpload);
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  // Large photos go out resized (like WhatsApp); the pill offers the original instead.
+  async function shrinkThenUpload(item) {
+    const small = await shrinkPhoto(item._file).catch(() => null);
+    const next = small ? { ...readFile(small), original: item._file } : { ...item, shrinking: false };
+    setFiles((current) => current.map((f) => (f === item ? next : f)));
+    preuploadAttachment(next);
+  }
+
+  function useOriginal(item) {
+    const next = readFile(item.original);
+    setFiles((current) => current.map((f) => (f === item ? next : f)));
+    preuploadAttachment(next);
   }
 
   // Insert from Drive: Google's picker on the person's own Drive. The first time, Drive has to be
@@ -391,7 +407,12 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false,
     <div className="compose-files">
       {files.map((f, i) => (
         <span key={i} className="file-pill">
-          {f.filename} <span className="muted">({formatSize(f.size)})</span>
+          {f.filename} <span className="muted">({f.shrinking ? 'making smaller…' : formatSize(f.size)})</span>
+          {f.original && (
+            <button type="button" className="file-pill-original" title={`Resized from ${formatSize(f.original.size)} so it sends faster`} onClick={() => useOriginal(f)}>
+              Send original
+            </button>
+          )}
           <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label={`Remove ${f.filename}`}>
             <Icon name="close" size={14} />
           </button>

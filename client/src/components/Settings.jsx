@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
-import Avatar, { squareImage } from './Avatar.jsx';
+import Avatar, { checkImageFile } from './Avatar.jsx';
+import AvatarCropper from './AvatarCropper.jsx';
 import Icon from './Icon.jsx';
 import SecurityPanel from './SecurityPanel.jsx';
 import GoogleApps from './GoogleApps.jsx';
@@ -73,6 +74,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [cropping, setCropping] = useState(null); // the picked photo, being positioned
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
 
@@ -84,13 +86,24 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
 
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
 
-  // The picture is saved straight away, separately from the Save button.
-  async function changeAvatar(file) {
+  // A picked photo is positioned first (AvatarCropper), then saved straight away, separately
+  // from the Save button.
+  function changeAvatar(file) {
     if (!file) return;
+    setError('');
+    try {
+      checkImageFile(file);
+      setCropping(file);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function saveAvatar(image) {
+    setCropping(null);
     setUploading(true);
     setError('');
     try {
-      const image = await squareImage(file);
       const saved = await api('/mail/settings/avatar', { method: 'POST', body: { image } });
       setForm((f) => ({ ...f, avatarUrl: saved.avatarUrl }));
       onAvatarChange(saved.avatarUrl);
@@ -151,7 +164,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
                 <span className="avatar-picker-overlay">
                   <Icon name="edit" size={20} />
                 </span>
-                <input type="file" accept="image/png,image/jpeg,image/webp,image/*" hidden disabled={uploading} onChange={(e) => changeAvatar(e.target.files[0])} />
+                <input type="file" accept="image/png,image/jpeg,image/webp,image/*" hidden disabled={uploading} onChange={(e) => { changeAvatar(e.target.files[0]); e.target.value = ''; }} />
               </label>
               <div className="avatar-edit-text">
                 <div className="label">Profile picture</div>
@@ -161,7 +174,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
                 <div className="avatar-edit-actions">
                   <label className={`btn btn-outline ${uploading ? 'disabled' : ''}`}>
                     {uploading ? 'Saving…' : form.avatarUrl ? 'Change photo' : 'Upload photo'}
-                    <input type="file" accept="image/png,image/jpeg,image/webp,image/*" hidden disabled={uploading} onChange={(e) => changeAvatar(e.target.files[0])} />
+                    <input type="file" accept="image/png,image/jpeg,image/webp,image/*" hidden disabled={uploading} onChange={(e) => { changeAvatar(e.target.files[0]); e.target.value = ''; }} />
                   </label>
                   {form.avatarUrl && (
                     <button type="button" className="btn btn-ghost" disabled={uploading} onClick={removeAvatar}>
@@ -241,6 +254,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
         {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <div className="muted">Loading…</div>}
       </div>
       {privateHelp && <PrivateTabHelp onClose={() => setPrivateHelp(false)} />}
+      {cropping && <AvatarCropper file={cropping} onCancel={() => setCropping(null)} onDone={saveAvatar} />}
     </section>
   );
 }

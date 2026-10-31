@@ -38,14 +38,24 @@ function sendPiece(url, headers, body, onBytes) {
   });
 }
 
+// The key that signs each upload's manifest is made once per page, not once per file: making an
+// RSA key can take a second or more on a phone. It never leaves this page.
+let signingKeys = null;
+function uploadKeys() {
+  signingKeys ||= crypto.subtle
+    .generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, false, ['sign', 'verify'])
+    .then(async (keys) => ({ keys, publicKey: base64(await crypto.subtle.exportKey('spki', keys.publicKey)) }))
+    .catch((err) => {
+      signingKeys = null;
+      throw err;
+    });
+  return signingKeys;
+}
+
 export async function uploadAttachment(file, onProgress = () => {}) {
   if (!(file instanceof File)) throw new Error('Choose the attachment again');
   const bytes = await file.arrayBuffer();
-  const [digest, keys] = await Promise.all([
-    crypto.subtle.digest('SHA-256', bytes),
-    crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']),
-  ]);
-  const publicKey = base64(await crypto.subtle.exportKey('spki', keys.publicKey));
+  const [digest, { keys, publicKey }] = await Promise.all([crypto.subtle.digest('SHA-256', bytes), uploadKeys()]);
   const session = await api('/mail/attachments/start', {
     method: 'POST',
     body: { filename: file.name, contentType: file.type || 'application/octet-stream', size: file.size, sha256: hex(digest), publicKey },

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, cachedMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
+import { escapeHtml, htmlFromText, sanitizeHtml } from './RichEditor.jsx';
 import { withDriveLinks } from '../drivePicker.js';
 import { uploadAttachments, uploadProgress } from '../attachmentUpload.js';
 import LoginCodes from './LoginCodes.jsx';
@@ -98,11 +99,10 @@ function friendlyReason(reason) {
   return r.trim().replace(/[.\s]*$/, '.');
 }
 
-const quote = (msg) =>
-  (msg.text || '')
-    .split('\n')
-    .map((line) => `> ${line}`)
-    .join('\n');
+// The original as it looked (links, formatting, tables, pictures), quoted like Gmail does.
+const originalHtml = (msg) => (msg.html ? sanitizeHtml(msg.html) : htmlFromText(msg.text || ''));
+const QUOTE_STYLE = 'margin:0 0 0 0.8ex;border-left:1px solid #ccc;padding-left:1ex';
+const person = (p) => (p.name ? `${escapeHtml(p.name)} &lt;${escapeHtml(p.address || '')}&gt;` : escapeHtml(p.address || ''));
 
 const asArray = (v) => (Array.isArray(v) ? v : v ? [v] : []);
 
@@ -628,7 +628,14 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   /* ----- compose & send ----- */
 
   const withSignature = (text = '') => (signature ? `\n\n-- \n${signature}${text}` : text);
-  const quoted = (msg) => `\n\nOn ${formatDate(msg.date, true)}, ${displayName(msg.from)} wrote:\n${quote(msg)}`;
+  // Replies and forwards: the signature, then the original in full (HTML), below the cursor.
+  const quotedHtml = (msg) =>
+    `${htmlFromText(withSignature('\n\n'))}<div>On ${escapeHtml(formatDate(msg.date, true))}, ${person(msg.from)} wrote:</div>` +
+    `<blockquote style="${QUOTE_STYLE}">${originalHtml(msg)}</blockquote>`;
+  const forwardedHtml = (msg) =>
+    `${htmlFromText(withSignature('\n\n'))}<div>---------- Forwarded message ---------<br>From: <b>${person(msg.from)}</b><br>` +
+    `Date: ${escapeHtml(formatDate(msg.date, true))}<br>Subject: ${escapeHtml(msg.subject || '')}<br>` +
+    `To: ${(msg.to || []).map(person).join(', ')}${msg.cc?.length ? `<br>Cc: ${msg.cc.map(person).join(', ')}` : ''}</div><br>${originalHtml(msg)}`;
   const replyHeaders = (msg) => ({
     subject: /^re:/i.test(msg.subject) ? msg.subject : `Re: ${msg.subject}`,
     inReplyTo: msg.messageId,
@@ -637,7 +644,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   const compose = () => setDraft({ text: withSignature() });
 
-  const reply = (msg) => setDraft({ ...replyHeaders(msg), to: (msg.replyTo || msg.from).address, text: withSignature(quoted(msg)) });
+  const reply = (msg) => setDraft({ ...replyHeaders(msg), to: (msg.replyTo || msg.from).address, html: quotedHtml(msg) });
 
   function replyAll(msg) {
     const sender = (msg.replyTo || msg.from).address;
@@ -646,7 +653,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       ...replyHeaders(msg),
       to: [sender, ...others(msg.to || [])].join(', '),
       cc: [...new Set(others(msg.cc || []))].join(', '),
-      text: withSignature(quoted(msg)),
+      html: quotedHtml(msg),
     });
   }
 
@@ -658,9 +665,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         .filter((a) => !a.unavailable && (msg.kind === 'inbox' || msg.kind === 'sent'))
         .map((a) => ({ filename: a.filename, contentType: a.contentType, size: a.size || 0, forward: { kind: msg.kind, id: msg.id, index: a.index } })),
       subject: /^fwd?:/i.test(msg.subject) ? msg.subject : `Fwd: ${msg.subject}`,
-      text: withSignature(
-        `\n\n---------- Forwarded message ----------\nFrom: ${displayName(msg.from)} <${msg.from.address}>\nDate: ${formatDate(msg.date, true)}\nSubject: ${msg.subject}\nTo: ${(msg.to || []).map((a) => a.address).join(', ')}\n\n${msg.text}`,
-      ),
+      html: forwardedHtml(msg),
     });
 
   // A send waiting out its undo delay lives only in this page: leaving now would drop it silently.

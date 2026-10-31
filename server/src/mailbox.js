@@ -1,5 +1,6 @@
 // Everything that talks to the real mailbox: IMAP for reading / moving / deleting,
 // SMTP for sending as an alias.
+import crypto from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import config from './config.js';
@@ -608,9 +609,29 @@ async function sendWithUploads(mail, uploadIds, timing) {
   return compiled.messageId();
 }
 
+// Pictures kept from a quoted message (or pasted in) arrive as data: URLs, which most mail apps
+// (Gmail among them) don't show: they go out as inline attachments the HTML points to instead.
+export function embedDataImages(mail) {
+  if (!mail.html || !mail.html.includes('data:image/')) return mail;
+  const inline = [];
+  const html = mail.html.replace(/(<img\b[^>]*?\bsrc=)(["'])data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)\2/gi, (all, start, quote, type, data) => {
+    const cid = `${crypto.randomUUID()}@aliasmail`;
+    inline.push({
+      cid,
+      filename: `image-${inline.length + 1}.${type.split('/')[1].replace(/\+.*/, '').replace('jpeg', 'jpg')}`,
+      contentType: type,
+      content: Buffer.from(data.replace(/\s+/g, ''), 'base64'),
+      contentDisposition: 'inline',
+    });
+    return `${start}${quote}cid:${cid}${quote}`;
+  });
+  return inline.length ? { ...mail, html, attachments: [...(mail.attachments || []), ...inline] } : mail;
+}
+
 /** Send through SMTP; save the Sent copy in the background so it doesn't delay the send response. */
 export async function sendMail(mail, timing = {}) {
   assertConfigured();
+  mail = embedDataImages(mail);
   const started = Date.now();
   const uploadIds = (mail.attachments || []).map((a) => a.uploadId).filter(Boolean);
   if (uploadIds.length) {

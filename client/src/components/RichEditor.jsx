@@ -1,13 +1,31 @@
 // Formatted message body: bold, italic, underline, lists and links, like Gmail's formatting bar.
-// Content is kept to a short allowlist of tags, so a draft written by a teammate in a shared
-// mailbox can never run script or load anything when it is opened here.
+// Content is kept to an allowlist of tags and attributes, so a draft written by a teammate in a
+// shared mailbox, or a message quoted in a reply, can never run script here. Quoted messages keep
+// their layout (tables, colours, inline styles) and pictures (web and embedded ones only).
 import { useEffect, useRef, useState } from 'react';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 
-const KEEP = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'BR', 'P', 'DIV', 'SPAN', 'UL', 'OL', 'LI', 'A', 'BLOCKQUOTE']);
-const DROP = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'TEMPLATE', 'NOSCRIPT', 'SVG', 'MATH', 'HEAD', 'TITLE', 'META', 'LINK']);
+const KEEP = new Set([
+  'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'BR', 'P', 'DIV', 'SPAN', 'UL', 'OL', 'LI', 'A', 'BLOCKQUOTE',
+  'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR', 'PRE', 'CODE', 'SUB', 'SUP', 'SMALL', 'BIG', 'FONT', 'CENTER', 'IMG',
+  'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'CAPTION', 'COLGROUP', 'COL',
+]);
+const DROP = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'TEMPLATE', 'NOSCRIPT', 'SVG', 'MATH', 'HEAD', 'TITLE', 'META', 'LINK', 'FORM', 'INPUT', 'BUTTON', 'SELECT', 'TEXTAREA']);
 const SAFE_URL = /^(https?:|mailto:)/i;
+const SAFE_IMAGE = /^(https:|data:image\/(png|jpe?g|gif|webp|bmp);base64,)/i;
+// Layout attributes kept as they are; on* handlers and everything else are dropped.
+const ATTRIBUTES = new Set(['align', 'valign', 'width', 'height', 'bgcolor', 'color', 'face', 'size', 'border', 'cellpadding', 'cellspacing', 'colspan', 'rowspan', 'alt', 'title', 'dir']);
+// Inline styles stay, minus anything that could load a resource or cover the page.
+const UNSAFE_STYLE = /url\s*\(|expression|javascript:|behavior|-moz-binding|@import|position\s*:\s*(fixed|absolute|sticky)/i;
+
+function safeStyle(style) {
+  return style
+    .split(';')
+    .filter((rule) => rule.includes(':') && !UNSAFE_STYLE.test(rule))
+    .join(';')
+    .trim();
+}
 
 /** Rebuild HTML from allowed tags only; every other tag keeps just its text. */
 export function sanitizeHtml(html) {
@@ -22,7 +40,13 @@ export function sanitizeHtml(html) {
           copy(node, to);
           continue;
         }
+        if (node.tagName === 'IMG' && !SAFE_IMAGE.test(node.getAttribute('src')?.trim() || '')) continue;
         const el = document.createElement(node.tagName.toLowerCase());
+        for (const { name, value } of node.attributes) {
+          if (ATTRIBUTES.has(name)) el.setAttribute(name, value);
+          else if (name === 'style' && safeStyle(value)) el.setAttribute('style', safeStyle(value));
+        }
+        if (node.tagName === 'IMG') el.setAttribute('src', node.getAttribute('src').trim());
         if (node.tagName === 'A') {
           const href = node.getAttribute('href')?.trim() || '';
           if (SAFE_URL.test(href)) {
@@ -44,6 +68,12 @@ export const escapeHtml = (text) => text.replace(/[&<>"]/g, (c) => ({ '&': '&amp
 
 /** Plain text (a signature, a quoted reply) as editor HTML. */
 export const htmlFromText = (text = '') => escapeHtml(text).replace(/\r?\n/g, '<br>');
+
+/** The plain-text version of editor HTML, for a draft that starts as HTML (a reply or forward). */
+export function textFromHtml(html = '') {
+  const marked = sanitizeHtml(html).replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|tr|h[1-6]|blockquote|table)>/gi, '$&\n');
+  return new DOMParser().parseFromString(`<body>${marked}</body>`, 'text/html').body.textContent.replace(/\n{3,}/g, '\n\n').trimEnd();
+}
 
 const TOOLS = [
   ['bold', 'bold', 'Bold (Ctrl+B)'],
