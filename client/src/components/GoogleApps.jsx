@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { formatDate } from '../format.js';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
+import RecipientField from './RecipientField.jsx';
 
 const START = '/api/auth/google/start?mode=';
 
@@ -69,7 +70,77 @@ function ChatTest() {
           <span>{result.reason}</span>
         </div>
       )}
+      <NewSpace />
     </div>
+  );
+}
+
+/** Create a Chat space and add people to it by their Google (e.g. Gmail) addresses. */
+function NewSpace() {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [members, setMembers] = useState('');
+  const [contacts, setContacts] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    if (open && !contacts.length) api('/mail/contacts').then(setContacts).catch(() => {});
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function create(e) {
+    e.preventDefault();
+    setBusy(true);
+    setResult(null);
+    try {
+      const list = members.split(',').map((m) => m.replace(/.*<([^>]+)>.*/, '$1').trim()).filter(Boolean);
+      const made = await api('/mail/chat/spaces', { method: 'POST', body: { name, members: list } });
+      setResult(made);
+      if (made.ok) {
+        setName('');
+        setMembers('');
+      }
+    } catch (err) {
+      setResult({ ok: false, reason: err.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className="btn btn-outline" onClick={() => setOpen(true)}>
+        <Icon name="add" size={18} /> Create a space
+      </button>
+    );
+  }
+  return (
+    <form className="new-space" onSubmit={create}>
+      <label>
+        Space name
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Project team" maxLength={128} required autoFocus />
+      </label>
+      <div className="new-space-people">
+        <span>People (their Google / Gmail addresses)</span>
+        <RecipientField fieldKey="space" label="" value={members} onChange={setMembers} contacts={contacts} placeholder="Add people by email" />
+      </div>
+      <div className="new-space-actions">
+        <button type="button" className="link" onClick={() => { setOpen(false); setResult(null); }}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy || !name.trim()}>{busy ? 'Creating…' : 'Create space'}</button>
+      </div>
+      {result?.ok && (
+        <div className="chat-test-result ok">
+          <strong>“{result.space.name}” created{result.members.length ? ` with ${result.members.length} ${result.members.length === 1 ? 'person' : 'people'}` : ''}.</strong>
+          {result.space.link && <a href={result.space.link} target="_blank" rel="noreferrer">Open it in Google Chat</a>}
+        </div>
+      )}
+      {result && !result.ok && (
+        <div className="chat-test-result">
+          <strong>Google refused{result.status ? ` (${result.status})` : ''}.</strong>
+          <span>{result.reason}</span>
+        </div>
+      )}
+    </form>
   );
 }
 

@@ -1730,3 +1730,11 @@ a.btn { color: inherit; text-decoration: none; }
 .chat-test { display: grid; gap: 8px; justify-items: start; }
 .chat-test-result { display: grid; gap: 2px; width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; font-size: 13px; background: #fff4e6; color: #a6420d; }
 .chat-test-result.ok { background: #ebfbee; color: #2b8a3e; }
+
+.new-space { display: grid; gap: 10px; width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 12px; box-sizing: border-box; }
+.new-space label, .new-space-people { display: grid; gap: 4px; font-size: 13px; font-weight: 500; }
+.new-space-people > .recipient-field { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; min-height: 42px; align-items: center; }
+.new-space-people .recipient-label:empty { display: none; }
+.new-space-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.chat-test-result a { color: inherit; font-weight: 600; }
+.gapps-card .chat-test { margin-top: 4px; }

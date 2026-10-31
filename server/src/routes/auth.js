@@ -307,7 +307,7 @@ router.get('/google/callback', async (req, res) => {
     if (!holder) return backTo(res, 'error');
     const same = holder.google?.sub === google.sub;
     const wanted = featuresFor(pending.mode);
-    const granted = google.refreshToken ? wanted.filter((f) => google.scope.split(' ').includes(FEATURES[f].scope)) : [];
+    const granted = google.refreshToken ? wanted.filter((f) => FEATURES[f].scope.split(' ').every((s) => google.scope.split(' ').includes(s))) : [];
     if (wanted.length && holder.google && !same) return backTo(res, `${pending.mode}-other-account`);
     if (wanted.length && !granted.length) return backTo(res, `${pending.mode}-denied`);
 

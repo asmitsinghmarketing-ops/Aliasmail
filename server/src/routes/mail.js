@@ -22,7 +22,7 @@ import { HttpError, describeError } from '../errors.js';
 import { announceChange, mailEvents } from '../mail-events.js';
 import { liveSync, noteActivity } from '../live-sync.js';
 import { chatEnabled, driveEnabled, meetEnabled } from '../google-auth.js';
-import { googleTokenFor } from '../google-drive.js';
+import { createSpace, listSpaces, readSpace } from '../google-chat.js';
 import { createMeeting, readMeeting } from '../google-meet.js';
 import { driveTokenFor, readDriveRequest, shareWithRecipients } from '../google-drive.js';
 import { findLoginCode, mightHaveCode, serviceName } from '../login-codes.js';
@@ -816,17 +816,16 @@ router.post('/meet', async (req, res) => {
  */
 router.get('/chat/test', async (req, res) => {
   if (!chatEnabled()) throw new HttpError(404, 'Google Chat is not set up');
-  const { accessToken } = await googleTokenFor('chat', req.user.role, req.user.email);
-  const answer = await fetch(`${config.google.chatApiUrl}/spaces?pageSize=10`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    signal: AbortSignal.timeout(15_000),
-  }).catch(() => null);
-  const data = answer ? await answer.json().catch(() => ({})) : {};
-  if (!answer?.ok) {
-    return res.json({ ok: false, status: answer?.status || 0, reason: data.error?.message || (answer ? `Google answered ${answer.status}` : 'Google Chat didn’t answer') });
-  }
-  const spaces = (data.spaces || []).map((s) => ({ name: s.displayName || (s.spaceType === 'DIRECT_MESSAGE' ? 'Direct message' : 'Conversation'), type: s.spaceType || '' }));
-  res.json({ ok: true, spaces });
+  res.json(await listSpaces(req.user.role, req.user.email));
+});
+
+/** Create a Chat space and add people to it by email: { name, members }. */
+router.post('/chat/spaces', async (req, res) => {
+  if (!chatEnabled()) throw new HttpError(404, 'Google Chat is not set up');
+  const space = readSpace(req.body ?? {});
+  const result = await createSpace(req.user.role, req.user.email, space);
+  if (result.ok) audit(req, 'google-chat-space-created', req.user.email, `${space.members.length} member(s)`);
+  res.status(result.ok ? 201 : 200).json(result);
 });
 
 /* ---------------------------------- settings ---------------------------------- */

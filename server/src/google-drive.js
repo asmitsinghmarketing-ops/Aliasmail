@@ -10,7 +10,7 @@ import { db, save } from './store.js';
 export const driveAccess = new Map(); // "role:email" -> { accessToken, expiresAt }
 export const meetAccess = new Map();
 export const chatAccess = new Map();
-const holderOf = (role, email) => (role === 'admin' ? db().owner : findAlias(email));
+export const holderOf = (role, email) => (role === 'admin' ? db().owner : findAlias(email));
 const FEATURES = {
   drive: { cache: driveAccess, name: 'Google Drive' },
   meet: { cache: meetAccess, name: 'Google Meet' },

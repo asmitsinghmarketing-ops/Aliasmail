@@ -28,8 +28,10 @@ export const driveEnabled = () => googleEnabled() && Boolean(config.google.apiKe
 // Google Meet: meetings are events AliasMail creates in the person's own Google Calendar.
 export const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 export const meetEnabled = () => googleEnabled() && config.google.meet;
-// Google Chat (on trial): read the person's conversations, to see whether Google allows it.
-export const CHAT_SCOPE = 'https://www.googleapis.com/auth/chat.spaces.readonly';
+// Google Chat (on trial): see the person's conversations, create spaces and add people to them.
+export const CHAT_SCOPE = ['chat.spaces.readonly', 'chat.spaces.create', 'chat.memberships']
+  .map((s) => `https://www.googleapis.com/auth/${s}`)
+  .join(' ');
 export const chatEnabled = () => googleEnabled() && config.google.chat;
 
 /** `scope` (Drive or Calendar) is asked for on top of sign-in, with a refresh token to use it later. */

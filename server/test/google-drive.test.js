@@ -13,13 +13,13 @@ const ADMIN = { email: 'owner@example.com', password: 'admin-password-123' };
 const CLIENT_ID = 'drive-client.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const CHAT_SCOPE = 'https://www.googleapis.com/auth/chat.spaces.readonly';
+const CHAT_SCOPE = ['chat.spaces.readonly', 'chat.spaces.create', 'chat.memberships'].map((s) => `https://www.googleapis.com/auth/${s}`).join(' ');
 
 let server;
 let fake;
 let dir;
 const nonces = new Map();
-const fakeState = { grantDrive: true, revoked: false, shares: [], revokes: [], events: [] };
+const fakeState = { grantDrive: true, revoked: false, shares: [], revokes: [], events: [], setups: [] };
 
 test.before(async () => {
   fake = http.createServer((req, res) => {
@@ -61,6 +61,12 @@ test.before(async () => {
       if (url.pathname === '/chat/spaces') {
         if (fakeState.chatWorkspaceOnly) return send(403, { error: { message: 'Google Chat API is only available to Google Workspace users.' } });
         return send(200, { spaces: [{ displayName: 'Team', spaceType: 'SPACE' }, { spaceType: 'DIRECT_MESSAGE' }] });
+      }
+      if (url.pathname === '/chat/spaces:setup') {
+        const setup = JSON.parse(body);
+        fakeState.setups.push(setup);
+        if (fakeState.chatWorkspaceOnly) return send(403, { error: { message: 'Google Chat API is only available to Google Workspace users.' } });
+        return send(200, { name: 'spaces/AAA', displayName: setup.space.displayName, spaceType: 'SPACE', spaceUri: 'https://chat.google.com/room/AAA' });
       }
       if (url.pathname === '/bridge') {
         const { action } = JSON.parse(body || '{}');
@@ -262,9 +268,20 @@ test('Google Chat on trial: the test lists conversations, or shows why Google re
   assert.equal(back.location, '/?google=chat-linked');
 
   const works = (await john.call('GET', '/api/mail/chat/test')).data;
-  assert.deepEqual(works, { ok: true, spaces: [{ name: 'Team', type: 'SPACE' }, { name: 'Direct message', type: 'DIRECT_MESSAGE' }] });
+  assert.deepEqual(works.spaces.map((s) => [s.name, s.type]), [['Team', 'SPACE'], ['Direct message', 'DIRECT_MESSAGE']]);
+
+  const made = await john.call('POST', '/api/mail/chat/spaces', { name: 'Project team', members: ['Priya@gmail.com', 'ana@gmail.com', 'john@example.com'] });
+  assert.equal(made.status, 201);
+  assert.equal(made.data.space.link, 'https://chat.google.com/room/AAA');
+  const setup = fakeState.setups.at(-1);
+  assert.deepEqual(setup.space, { spaceType: 'SPACE', displayName: 'Project team' });
+  assert.deepEqual(setup.memberships.map((m) => m.member.name), ['users/priya@gmail.com', 'users/ana@gmail.com']);
+  assert.equal((await john.call('POST', '/api/mail/chat/spaces', { name: '', members: [] })).status, 400);
+  assert.equal((await john.call('POST', '/api/mail/chat/spaces', { name: 'x', members: ['nope'] })).status, 400);
   fakeState.chatWorkspaceOnly = true;
   const refused = (await john.call('GET', '/api/mail/chat/test')).data;
   assert.deepEqual([refused.ok, refused.status], [false, 403]);
   assert.match(refused.reason, /Workspace/);
+  const notAllowed = await john.call('POST', '/api/mail/chat/spaces', { name: 'Team', members: ['a@gmail.com'] });
+  assert.deepEqual([notAllowed.status, notAllowed.data.ok, notAllowed.data.status], [200, false, 403]);
 });
