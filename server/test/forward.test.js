@@ -169,3 +169,17 @@ test('each send is recorded with its hop timings for the admin', async () => {
   assert.equal(last.timing.route, 'through the app');
   assert.ok(timings.checking && 'lastCheck' in timings);
 });
+
+test('admins can check which of GoDaddy\'s mail ports the app server reaches; others cannot', async () => {
+  const admin = await signIn(ADMIN);
+  const res = await admin('GET', '/api/admin/smtp-check');
+  assert.equal(res.status, 200);
+  assert.equal(res.data.results.length, 6);
+  for (const r of res.data.results) {
+    assert.equal(typeof r.open, 'boolean');
+    assert.ok(r.open ? typeof r.greeting === 'string' : typeof r.error === 'string');
+  }
+  console.log('  from this machine:', res.data.results.map((r) => `${r.target}=${r.open ? 'open' : r.error}`).join(', '));
+  const john = await signIn({ email: 'john@example.com', password: 'john-password' });
+  assert.equal((await john('GET', '/api/admin/smtp-check')).status, 403);
+});

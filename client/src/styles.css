@@ -1608,3 +1608,53 @@ a.btn { color: inherit; text-decoration: none; }
 .hop-bar span { min-width: 2px; height: 100%; }
 .hop-bar span + span { box-shadow: inset 1px 0 0 rgb(255 255 255 / 55%); }
 .speed-note { display: flex; align-items: center; gap: 6px; }
+
+/* ---------- compose: the toolbar and Send bar always stay visible ---------- */
+/* When the window has little room (dragged low, short screen), the message area shrinks
+   instead of pushing the formatting bar under the Send bar. */
+.compose { overflow: hidden; }
+.compose > * { flex-shrink: 0; }
+.compose > .compose-body { flex: 1 1 auto; min-height: 90px; }
+
+/* ---------- inbox rows (desktop) ---------- */
+@media (min-width: 801px) {
+  .row { height: 50px; gap: 12px; background: #f8f7f5; transition: background 0.12s, box-shadow 0.12s; }
+  .row.unread { background: var(--surface); }
+  .row.unread::after {
+    content: ''; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0;
+    background: color-mix(in srgb, var(--alias) 70%, transparent);
+  }
+  .row:not(.unread) .row-from, .row:not(.unread) .row-subject { color: #44403b; }
+  .row:hover { background: var(--surface); box-shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 4px 14px rgb(0 0 0 / 8%); z-index: 1; }
+  .row.selected { background: color-mix(in srgb, var(--alias) 9%, white); }
+  .row-avatar {
+    display: grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer;
+  }
+  .row-avatar .avatar { width: 30px; height: 30px; font-size: 13px; }
+  .row-avatar .row-check { background: var(--alias); color: #fff; }
+  .row-avatar .row-check svg { width: 18px; height: 18px; }
+}
+
+/* ---------- admin overview ---------- */
+.status-main { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.status-icon {
+  flex: none; display: grid; place-items: center; width: 52px; height: 52px; border-radius: 16px;
+  color: #fff; background: linear-gradient(135deg, var(--brand), color-mix(in srgb, var(--brand) 55%, #d6336c));
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--brand) 30%, transparent);
+}
+.status-icon.bad { background: linear-gradient(135deg, #e03131, #f08c00); }
+.status-card .pill { margin-left: 6px; font-size: 11px; padding: 1px 8px; vertical-align: 1px; }
+.tile { position: relative; overflow: hidden; }
+.tile-icon {
+  position: absolute; top: 16px; right: 16px; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px;
+  color: var(--tile); background: color-mix(in srgb, var(--tile) 12%, var(--surface));
+}
+.tile::after {
+  content: ''; position: absolute; right: -30px; bottom: -40px; width: 120px; height: 120px; border-radius: 50%;
+  background: color-mix(in srgb, var(--tile) 6%, transparent); pointer-events: none;
+}
+.port-list { list-style: none; margin: 12px 0; padding: 0; display: grid; gap: 8px; }
+.port-list li { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.port-list li .pill { flex: none; min-width: 64px; text-align: center; }
+.port-list li code { flex: none; }
+.port-list li .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

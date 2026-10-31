@@ -1426,7 +1426,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                         {item.kind === 'draft' && <span className="draft-label">Draft </span>}
                         {['sent', 'draft', 'scheduled'].includes(item.kind)
                           ? `To: ${(item.to || []).map((p) => personLabel(p, me)).join(', ') || '(no recipients)'}`
-                          : displayName(item.from)}
+                          : personLabel(item.from, me)}
                       </span>
                       <span className="row-main">
                         {folder === 'all' && !item.archived && <span className="tag">Inbox</span>}

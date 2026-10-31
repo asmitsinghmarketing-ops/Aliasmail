@@ -86,6 +86,55 @@ function checkParts(run) {
   return Object.entries(merged).map(([hop, ms]) => ({ hop, ms }));
 }
 
+/**
+ * Which of GoDaddy's mail servers the AliasMail app's own host can reach. If one is open, mail
+ * could go out from here, signed in, instead of through the bridge's slow relay.
+ */
+function SmtpCheck() {
+  const [state, setState] = useState(null); // null | 'checking' | { results } | { error }
+  const run = async () => {
+    setState('checking');
+    try {
+      setState(await api('/admin/smtp-check'));
+    } catch (err) {
+      setState({ error: err.message });
+    }
+  };
+  const open = state?.results?.filter((r) => r.open) || [];
+  return (
+    <section className="card speed-card">
+      <div className="hop-row-head">
+        <h2 className="card-title">Sending ports from the app server</h2>
+        <button type="button" className="btn btn-outline" disabled={state === 'checking'} onClick={run}>
+          {state === 'checking' ? 'Checking… (up to 10 s)' : 'Check now'}
+        </button>
+      </div>
+      <p className="muted small">
+        Tries GoDaddy’s mail server from the server AliasMail runs on. It only connects and reads the greeting: nothing is sent.
+      </p>
+      {state?.error && <div className="alert">{state.error}</div>}
+      {state?.results && (
+        <>
+          <ul className="port-list">
+            {state.results.map((r) => (
+              <li key={r.target}>
+                <span className={`pill ${r.open ? 'on' : 'warn'}`}>{r.open ? 'Open' : 'Blocked'}</span>
+                <code>{r.target}</code>
+                <span className="muted small">{r.open ? r.greeting : r.error} · {r.ms} ms</span>
+              </li>
+            ))}
+          </ul>
+          <p className={`small ${open.length ? '' : 'muted'}`}>
+            {open.length
+              ? `✅ ${open.map((r) => r.target).join(', ')} can be reached from here, so AliasMail could send through GoDaddy's mail server directly, skipping the slow relay.`
+              : 'All blocked from here too: GoDaddy only allows sending through the cPanel relay.'}
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function AdminSpeed() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -211,6 +260,8 @@ export default function AdminSpeed() {
           </>
         )}
       </section>
+
+      <SmtpCheck />
 
       <p className="muted small speed-note">
         <Icon name="info" size={14} /> Hover a bar segment for its exact time. These numbers live in memory, so they reset whenever the app restarts or is published again.

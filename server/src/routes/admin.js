@@ -1,4 +1,6 @@
 // Admin console API: manage aliases and every message in the real mailbox.
+import net from 'node:net';
+import tls from 'node:tls';
 import { Router } from 'express';
 import config from '../config.js';
 import { db, save } from '../store.js';
@@ -42,6 +44,34 @@ function getAlias(req) {
 
 // Where the time goes: the last sends (browser → app → bridge → relay) and the last new messages
 // (sent → reached the mailbox → seen by AliasMail), plus the last mail check.
+// Which of GoDaddy's mail servers and ports this app's own host can reach (sending straight from
+// here would skip the bridge's slow relay). Only connects and reads the greeting: nothing is
+// sent and nobody signs in. A fixed list, so it can't be used to probe other places.
+const SMTP_TARGETS = [
+  { host: 'smtpout.secureserver.net', port: 465, tls: true },
+  { host: 'smtpout.secureserver.net', port: 587 },
+  { host: 'smtpout.secureserver.net', port: 25 },
+  { host: 'smtpout.secureserver.net', port: 80 },
+  { host: 'smtpout.secureserver.net', port: 3535 },
+  { host: 'relay-hosting.secureserver.net', port: 25 },
+];
+function probe({ host, port, tls: secure }) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const done = (result) => {
+      socket.destroy();
+      resolve({ target: `${host}:${port}${secure ? ' (SSL)' : ''}`, ms: Date.now() - started, ...result });
+    };
+    const socket = secure ? tls.connect({ host, port, servername: host }) : net.connect({ host, port });
+    socket.setTimeout(8000, () => done({ open: false, error: 'timed out' }));
+    socket.once('error', (err) => done({ open: false, error: err.code || err.message }));
+    socket.once('data', (chunk) => done({ open: true, greeting: chunk.toString().split(/\r?\n/)[0].slice(0, 160) }));
+  });
+}
+router.get('/smtp-check', async (req, res) => {
+  res.json({ results: await Promise.all(SMTP_TARGETS.map(probe)) });
+});
+
 router.get('/timings', (req, res) => {
   res.json({ sends: recentSends, receives: recentReceives, lastCheck: db().sync.lastRun || null, checking: liveSync.status() });
 });

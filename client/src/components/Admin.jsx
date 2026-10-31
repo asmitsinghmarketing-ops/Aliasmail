@@ -144,10 +144,10 @@ function Overview({ overview, onReload }) {
   }
 
   const tiles = [
-    { label: 'Messages in inbox', value: totals.messages, color: 'var(--teal)' },
-    { label: 'Aliases', value: totals.aliases, color: 'var(--violet)' },
-    { label: 'Unassigned mail', value: totals.unassigned, color: 'var(--orange)' },
-    { label: 'Sent mail', value: totals.sent, color: 'var(--pink)' },
+    { label: 'Messages in inbox', value: totals.messages, color: 'var(--teal)', icon: 'inbox' },
+    { label: 'Aliases', value: totals.aliases, color: 'var(--violet)', icon: 'people' },
+    { label: 'Unassigned mail', value: totals.unassigned, color: 'var(--orange)', icon: 'mail' },
+    { label: 'Sent mail', value: totals.sent, color: 'var(--pink)', icon: 'send' },
   ];
 
   return (
@@ -155,8 +155,13 @@ function Overview({ overview, onReload }) {
       <h1 className="page-title">Overview</h1>
 
       <section className="card status-card">
-        <div>
-          <div className="muted small">Connected mailbox</div>
+        <div className="status-main">
+          <span className={`status-icon ${!overview.configured || sync.lastError ? 'bad' : ''}`} aria-hidden="true"><Icon name="mail" size={24} /></span>
+          <div>
+          <div className="muted small">
+            Connected mailbox{' '}
+            <span className={`pill ${!overview.configured || sync.lastError ? 'warn' : 'on'}`}>{!overview.configured || sync.lastError ? 'Problem' : 'Connected'}</span>
+          </div>
           <div className="status-mailbox">{overview.mailbox || 'Not configured'}</div>
           <div className="small">
             <span className={`dot ${!overview.configured || sync.lastError ? 'bad' : 'good'}`} />
@@ -173,6 +178,7 @@ function Overview({ overview, onReload }) {
               {sync.checking.lastCheckAt && ` · last check ${timeAgo(sync.checking.lastCheckAt)}`}
             </div>
           )}
+          </div>
         </div>
         <div className="actions">
           <button className="btn btn-outline" disabled={!!busy} onClick={() => run('test')}>
@@ -188,6 +194,7 @@ function Overview({ overview, onReload }) {
       <section className="tiles">
         {tiles.map((t) => (
           <div key={t.label} className="tile" style={{ '--tile': t.color }}>
+            <span className="tile-icon" aria-hidden="true"><Icon name={t.icon} size={22} /></span>
             <div className="tile-value">{t.value}</div>
             <div className="tile-label">{t.label}</div>
           </div>
