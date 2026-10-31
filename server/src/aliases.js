@@ -32,8 +32,8 @@ export const aliasesOf = (msg) => db().aliases.filter((a) => msg.recipients.incl
 /** The signed-in account: an alias, or a stand-in record for the main mailbox address. */
 export function accountOf(address) {
   if (isOwner(address)) {
-    const { displayName = '', signature = '', avatar = null } = db().owner;
-    return { address, displayName, signature, avatar, owner: true };
+    const { displayName = '', signature = '', signatureHtml = '', avatar = null } = db().owner;
+    return { address, displayName, signature, signatureHtml, avatar, owner: true };
   }
   return findAlias(address);
 }
@@ -49,7 +49,7 @@ export function setAvatar(account, file) {
 export async function updateAccount(account, changes) {
   if (!account.owner) return updateAlias(findAlias(account.address), changes);
   if (changes.password) throw new HttpError(400, 'The admin password is set in server/.env (ADMIN_PASSWORD)');
-  for (const key of ['displayName', 'signature']) {
+  for (const key of ['displayName', 'signature', 'signatureHtml']) {
     if (typeof changes[key] === 'string') db().owner[key] = changes[key].trim();
   }
   save();
@@ -113,7 +113,7 @@ export async function updateAlias(alias, changes) {
   if (type === 'personal' && !alias.passwordHash && !changes.password) {
     throw new HttpError(400, 'Set a password so the person can sign in to this personal mailbox');
   }
-  for (const key of ['displayName', 'ownerName', 'color', 'signature']) {
+  for (const key of ['displayName', 'ownerName', 'color', 'signature', 'signatureHtml']) {
     if (typeof changes[key] === 'string') alias[key] = changes[key].trim();
   }
   if (typeof changes.active === 'boolean') alias.active = changes.active;

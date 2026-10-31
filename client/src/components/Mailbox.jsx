@@ -214,7 +214,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState(new Set());
   const [draft, setDraft] = useState(null);
-  const [signature, setSignature] = useState('');
+  const [signature, setSignature] = useState({ text: '', html: '' });
   const [modal, setModal] = useState(null); // 'settings' | 'shortcuts'
   // Phones hide the drawer; tablets and small laptops start with the icon rail so the list has room.
   const [collapsed, setCollapsed] = useState(() => window.matchMedia('(max-width: 1100px)').matches);
@@ -365,7 +365,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       .catch(() => {});
     api('/mail/people').then(setPeople).catch(() => {});
     api('/mail/settings')
-      .then((s) => setSignature(s.signature))
+      .then((s) => setSignature({ text: s.signature, html: s.signatureHtml }))
       .catch(() => {});
   }, []);
 
@@ -627,13 +627,18 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   /* ----- compose & send ----- */
 
-  const withSignature = (text = '') => (signature ? `\n\n-- \n${signature}${text}` : text);
+  // The signature below a "-- " line, as formatted in Settings (or its plain text, set before
+  // the editor existed).
+  const signatureBlock = () => {
+    const body = signature.html ? sanitizeHtml(signature.html) : signature.text ? htmlFromText(signature.text) : '';
+    return body ? `<br><br><div>-- </div>${body}` : '';
+  };
   // Replies and forwards: the signature, then the original in full (HTML), below the cursor.
   const quotedHtml = (msg) =>
-    `${htmlFromText(withSignature('\n\n'))}<div>On ${escapeHtml(formatDate(msg.date, true))}, ${person(msg.from)} wrote:</div>` +
+    `${signatureBlock()}<br><br><div>On ${escapeHtml(formatDate(msg.date, true))}, ${person(msg.from)} wrote:</div>` +
     `<blockquote style="${QUOTE_STYLE}">${originalHtml(msg)}</blockquote>`;
   const forwardedHtml = (msg) =>
-    `${htmlFromText(withSignature('\n\n'))}<div>---------- Forwarded message ---------<br>From: <b>${person(msg.from)}</b><br>` +
+    `${signatureBlock()}<br><br><div>---------- Forwarded message ---------<br>From: <b>${person(msg.from)}</b><br>` +
     `Date: ${escapeHtml(formatDate(msg.date, true))}<br>Subject: ${escapeHtml(msg.subject || '')}<br>` +
     `To: ${(msg.to || []).map(person).join(', ')}${msg.cc?.length ? `<br>Cc: ${msg.cc.map(person).join(', ')}` : ''}</div><br>${originalHtml(msg)}`;
   const replyHeaders = (msg) => ({
@@ -642,7 +647,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     references: [...asArray(msg.references), msg.messageId].filter(Boolean),
   });
 
-  const compose = () => setDraft({ text: withSignature() });
+  const compose = () => setDraft(signatureBlock() ? { html: signatureBlock() } : { text: '' });
 
   const reply = (msg) => setDraft({ ...replyHeaders(msg), to: (msg.replyTo || msg.from).address, html: quotedHtml(msg) });
 
@@ -1293,7 +1298,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               onClose={() => setModal(null)}
               onSaved={(s) => {
                 setModal(null);
-                setSignature(s.signature);
+                setSignature({ text: s.signature, html: s.signatureHtml });
                 onUserChange({ ...user, displayName: s.displayName, avatarUrl: s.avatarUrl });
                 flash('Settings saved.');
               }}
@@ -1531,7 +1536,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           onClose={() => setModal(null)}
           onEmail={(meeting) => {
             setModal(null);
-            setDraft({ to: meeting.guests.join(', '), subject: meeting.title, text: meetingText(meeting) + withSignature() });
+            setDraft({ to: meeting.guests.join(', '), subject: meeting.title, html: htmlFromText(meetingText(meeting)) + signatureBlock() });
           }}
         />
       )}

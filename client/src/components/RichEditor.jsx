@@ -5,6 +5,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
+import { Popover } from './Menus.jsx';
+import { linkWordBeforeCaret } from '../linkify.js';
 
 const KEEP = new Set([
   'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'BR', 'P', 'DIV', 'SPAN', 'UL', 'OL', 'LI', 'A', 'BLOCKQUOTE',
@@ -85,14 +87,74 @@ const TOOLS = [
   ['removeFormat', 'clearFormat', 'Remove formatting'],
 ];
 
+const MAX_PICTURE_SIDE = 480; // a signature logo, not a photo (shown at most 240 px wide, so it stays sharp)
+const SHOWN_PICTURE_WIDTH = 240;
+const COLORS = [
+  ['#202124', 'Black'], ['#5f6368', 'Grey'], ['#c2410c', 'Orange'], ['#d93025', 'Red'],
+  ['#1a73e8', 'Blue'], ['#188038', 'Green'], ['#7b1fa2', 'Purple'], ['#b06000', 'Brown'],
+];
+
+/** A picked picture, shrunk to signature size, as a data: URL (PNG keeps a logo's transparency). */
+async function pictureDataUrl(file) {
+  if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) throw new Error('Choose a PNG, JPG, GIF or WebP picture');
+  const image = await createImageBitmap(file).catch(() => {
+    throw new Error('This picture can’t be read here — try a PNG or JPG');
+  });
+  const ratio = Math.min(1, MAX_PICTURE_SIDE / Math.max(image.width, image.height));
+  const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(image.width * ratio), height: Math.round(image.height * ratio) });
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  image.close?.();
+  return { url: file.type === 'image/png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.9), width: Math.min(canvas.width, SHOWN_PICTURE_WIDTH) };
+}
+
 /**
  * `initialHtml` is loaded once (sanitized). `onChange({ html, text })` runs on every edit;
- * `text` is the plain-text version sent alongside the HTML.
+ * `text` is the plain-text version sent alongside the HTML. `richTools` adds text colour and
+ * pictures (used for the signature).
  */
-export default function RichEditor({ initialHtml, onChange, placeholder, autoFocus, caretAtStart, className = '', toolbarClassName = '', editorRef }) {
+export default function RichEditor({ initialHtml, onChange, placeholder, autoFocus, caretAtStart, className = '', toolbarClassName = '', editorRef, richTools = false }) {
   const box = useRef(null);
   const [active, setActive] = useState({});
   const savedRange = useRef(null);
+  const picturePicker = useRef(null);
+
+  // Toolbar controls that open something (a colour or file picker) take the focus away from the
+  // text: remember where the cursor was and put it back before changing anything.
+  const keepSelection = () => {
+    const sel = window.getSelection();
+    if (sel.rangeCount && box.current.contains(sel.anchorNode)) savedRange.current = sel.getRangeAt(0).cloneRange();
+  };
+  const restoreSelection = () => {
+    box.current.focus();
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    if (savedRange.current) sel.addRange(savedRange.current);
+    else {
+      sel.selectAllChildren(box.current);
+      sel.collapseToEnd();
+    }
+  };
+
+  function setColor(color) {
+    restoreSelection();
+    document.execCommand('styleWithCSS', false, false);
+    document.execCommand('foreColor', false, color);
+    emit();
+  }
+
+  async function insertPicture(file) {
+    if (!file) return;
+    try {
+      const { url, width } = await pictureDataUrl(file);
+      restoreSelection();
+      document.execCommand('insertHTML', false, `<img src="${url}" width="${width}" alt="">`);
+      emit();
+    } catch (err) {
+      await ask({ title: 'Couldn’t add the picture', message: err.message, confirmLabel: 'OK', cancelLabel: '' });
+    }
+  }
 
   useEffect(() => {
     const el = box.current;
@@ -123,7 +185,7 @@ export default function RichEditor({ initialHtml, onChange, placeholder, autoFoc
   const emit = () => {
     const el = box.current;
     // An editor emptied by the user can keep a stray <br>; treat it as empty.
-    if (!el.textContent.trim() && !el.querySelector('li')) el.innerHTML = '';
+    if (!el.textContent.trim() && !el.querySelector('li, img')) el.innerHTML = '';
     // Editors store spaces next to formatting as non-breaking; plain text wants ordinary ones.
     onChange({ html: el.innerHTML, text: el.innerText.replace(/ /g, ' ').replace(/\n{3,}/g, '\n\n').trimEnd() });
   };
@@ -167,6 +229,9 @@ export default function RichEditor({ initialHtml, onChange, placeholder, autoFoc
         spellCheck
         suppressContentEditableWarning
         onInput={emit}
+        onKeyDown={(e) => {
+          if ((e.key === ' ' || e.key === 'Enter') && linkWordBeforeCaret(box.current)) emit();
+        }}
         onPaste={(e) => {
           // Pasted content goes through the same allowlist as everything else.
           const html = e.clipboardData.getData('text/html');
@@ -191,6 +256,74 @@ export default function RichEditor({ initialHtml, onChange, placeholder, autoFoc
             <Icon name={icon} size={20} />
           </button>
         ))}
+        {richTools && (
+          <>
+            <span
+              className="color-tool"
+              onMouseDown={(e) => {
+                keepSelection();
+                // Keep the text selected while the palette is open (the custom picker still opens).
+                if (e.target.tagName !== 'INPUT') e.preventDefault();
+              }}
+            >
+              <Popover icon="formatColor" title="Text colour">
+                {(close) => (
+                  <div className="menu color-menu" role="menu" aria-label="Text colour">
+                    <div className="color-swatches">
+                      {COLORS.map(([color, name]) => (
+                        <button
+                          key={color}
+                          type="button"
+                          className="color-swatch"
+                          style={{ background: color }}
+                          title={name}
+                          aria-label={name}
+                          onClick={() => {
+                            setColor(color);
+                            close();
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <label className="color-custom">
+                      Custom colour…
+                      <input
+                        type="color"
+                        onChange={(e) => {
+                          setColor(e.target.value);
+                          close();
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
+              </Popover>
+            </span>
+            <button
+              type="button"
+              className="icon-btn"
+              title="Insert picture (e.g. your logo)"
+              aria-label="Insert picture"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                keepSelection();
+              }}
+              onClick={() => picturePicker.current.click()}
+            >
+              <Icon name="image" size={20} />
+            </button>
+            <input
+              ref={picturePicker}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              hidden
+              onChange={(e) => {
+                insertPicture(e.target.files[0]);
+                e.target.value = '';
+              }}
+            />
+          </>
+        )}
       </div>
     </>
   );

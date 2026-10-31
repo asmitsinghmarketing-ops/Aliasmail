@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, download, getMessage, preview, previewType } from '../api.js';
 import { displayName, formatDate, formatSize, personLabel, timeAgo } from '../format.js';
 import Avatar from './Avatar.jsx';
+import { LINK, hrefFor, linkifyNode } from '../linkify.js';
 import Icon from './Icon.jsx';
 
 // A sender can't loosen that with their own <meta name="referrer"> or referrerpolicy="unsafe-url".
@@ -25,6 +26,12 @@ function HtmlBody({ html }) {
   // the content's height, and keeps adjusting as late images load or the window resizes.
   const onLoad = () => {
     const el = frame.current;
+    // Addresses the sender left as plain text become clickable, like in Gmail.
+    try {
+      linkifyNode(el.contentDocument.body);
+    } catch {
+      /* not reachable: leave the email as it is */
+    }
     const fit = () => {
       try {
         const body = el.contentDocument.body;
@@ -148,13 +155,11 @@ function Attachments({ url, attachments, onError }) {
   );
 }
 
-const LINK = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]|www\.[^\s<>"']+[^\s<>"'.,;:!?)\]])/g;
-
-/** Plain text with its web addresses made clickable (rendered by React, so nothing is injected). */
+/** Plain text with its web and email addresses made clickable (rendered by React, so nothing is injected). */
 function Linkified({ text }) {
   return text.split(LINK).map((part, i) =>
     i % 2 ? (
-      <a key={i} href={part.startsWith('www.') ? `https://${part}` : part} target="_blank" rel="noopener noreferrer">
+      <a key={i} href={hrefFor(part)} target="_blank" rel="noopener noreferrer">
         {part}
       </a>
     ) : (

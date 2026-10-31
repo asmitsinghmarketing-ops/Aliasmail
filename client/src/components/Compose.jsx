@@ -8,6 +8,7 @@ import RichEditor, { escapeHtml, htmlFromText, sanitizeHtml, textFromHtml } from
 import { pickDriveFiles } from '../drivePicker.js';
 import { createMeeting } from '../meet.js';
 import { canShrink, shrinkPhoto } from '../photoResize.js';
+import { linkifyHtml } from '../linkify.js';
 import RecipientField, { parseAddresses } from './RecipientField.jsx';
 
 // Address suggestions, loaded once per page and shared by every compose window.
@@ -391,7 +392,7 @@ export default function Compose({ from, draft, onClose, onSend, driveOn = false,
     // reopens without them doubled.
     onSend({
       ...form,
-      html: sanitizeHtml(form.html),
+      html: linkifyHtml(sanitizeHtml(form.html)),
       draftId: id,
       inReplyTo: draft.inReplyTo || undefined,
       references: draft.references,

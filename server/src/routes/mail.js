@@ -830,10 +830,14 @@ router.post('/chat/spaces', async (req, res) => {
 
 /* ---------------------------------- settings ---------------------------------- */
 
+const MAX_SIGNATURE = 400_000; // characters, pictures included
+
 const settingsOf = (account) => ({
   address: account.address,
   displayName: account.displayName || '',
   signature: account.signature || '',
+  // The formatted signature (the app's editor HTML, which is sanitised again wherever it is shown).
+  signatureHtml: account.signatureHtml || '',
   avatarUrl: avatarUrl(account.avatar),
   owner: Boolean(account.owner),
 });
@@ -898,7 +902,9 @@ router.get('/people', (req, res) => {
 router.patch('/settings', async (req, res) => {
   ownMailboxOnly(req);
   const account = accountOf(req.me);
-  const { displayName, signature, currentPassword, newPassword } = req.body ?? {};
+  const { displayName, signature, signatureHtml, currentPassword, newPassword } = req.body ?? {};
+  // A logo in the signature is stored inside it: keep the whole thing small.
+  if (typeof signatureHtml === 'string' && signatureHtml.length > MAX_SIGNATURE) throw new HttpError(413, 'The signature is too large: use a smaller picture');
 
   if (newPassword) {
     if (account.owner) throw new HttpError(400, 'The admin password is set in server/.env (ADMIN_PASSWORD)');
@@ -910,7 +916,7 @@ router.patch('/settings', async (req, res) => {
     }
     passwordChecks.reset(req.me);
   }
-  const updated = await updateAccount(account, { displayName, signature, password: newPassword || undefined });
+  const updated = await updateAccount(account, { displayName, signature, signatureHtml, password: newPassword || undefined });
   // A new password signs the account out on every other device.
   if (newPassword) {
     signOutAccount('user', req.me, { keep: req.session.id });

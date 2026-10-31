@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Avatar, { checkImageFile } from './Avatar.jsx';
 import AvatarCropper from './AvatarCropper.jsx';
+import RichEditor, { htmlFromText, sanitizeHtml } from './RichEditor.jsx';
 import Icon from './Icon.jsx';
 import SecurityPanel from './SecurityPanel.jsx';
 import GoogleApps from './GoogleApps.jsx';
@@ -132,8 +133,8 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
     setBusy(true);
     setError('');
     try {
-      const { displayName, signature } = form;
-      onSaved(await api('/mail/settings', { method: 'PATCH', body: { displayName, signature } }));
+      const { displayName, signature, signatureHtml } = form;
+      onSaved(await api('/mail/settings', { method: 'PATCH', body: { displayName, signature, signatureHtml: signatureHtml ? sanitizeHtml(signatureHtml) : '' } }));
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -189,10 +190,19 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
               <span>Your name <span className="muted">· shown to people you email</span></span>
               <input type="text" {...field('displayName')} placeholder={form.address} />
             </label>
-            <label>
+            <div className="signature-field">
               <span>Signature <span className="muted">· added to new messages and replies</span></span>
-              <textarea className="textarea" rows={4} {...field('signature')} placeholder={'Best regards,\nJohn'} />
-            </label>
+              <div className="signature-editor">
+                <RichEditor
+                  initialHtml={form.signatureHtml || htmlFromText(form.signature)}
+                  onChange={({ html, text }) => setForm((f) => ({ ...f, signature: text, signatureHtml: text || html.includes('<img') ? html : '' }))}
+                  placeholder={'Best regards,\nJohn'}
+                  className="signature-body"
+                  toolbarClassName="signature-tools"
+                  richTools
+                />
+              </div>
+            </div>
             <section className="sec-card google-account-card">
               <div>
                 <h3>Use this address with Google</h3>
