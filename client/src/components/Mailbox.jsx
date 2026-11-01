@@ -24,7 +24,6 @@ import Settings from './Settings.jsx';
 // `color` tints the folder's icon tile in the sidebar.
 const FOLDERS = [
   { id: 'inbox', label: 'Inbox', icon: 'inbox', count: 'inbox', color: 'var(--brand)', section: 'Folders' },
-  { id: 'assigned', label: 'Assigned to me', icon: 'person', count: 'assigned', plain: true, color: '#7048e8' },
   { id: 'starred', label: 'Starred', icon: 'star', color: '#f59f00' },
   { id: 'snoozed', label: 'Snoozed', icon: 'clock', color: '#0c8599' },
   { id: 'important', label: 'Important', icon: 'important', count: 'important', color: '#d6336c' },
@@ -66,7 +65,7 @@ function dateGroup(date) {
 const UNGROUPED = new Set(['scheduled', 'outbox']);
 
 // Folders holding inbox messages (per-account state applies); the rest are special lists.
-const MAIL_FOLDERS = ['inbox', 'assigned', 'starred', 'snoozed', 'important', 'all'];
+const MAIL_FOLDERS = ['inbox', 'starred', 'snoozed', 'important', 'all'];
 // Views of received mail narrowed by inbox category (Primary, Promotions, …).
 const CATEGORIZED = ['inbox'];
 // A sender's organisation, from their address (none for personal mail providers).
@@ -519,15 +518,20 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   // The live connection (live.js): mail changes and instant notes, the moment they happen.
   useEffect(() => {
     let timer;
+    // The badge always comes from the server, so every device shows the same number.
+    const refreshUnread = () => api('/notes/unread').then(({ unread }) => setNotesUnread(unread)).catch(() => {});
     const stop = subscribe((message) => {
       if (message.type === 'mail') {
         clearTimeout(timer);
         timer = setTimeout(() => latestLoad.current?.(), 150);
+      } else if (message.type === 'note-read') {
+        // Read here or on another device.
+        if (message.by === notesView.current.me) refreshUnread();
       } else if (message.type === 'note') {
         const { note } = message;
         setLatestNote(note);
         if (note.from === notesView.current.me || notesView.current.open) return;
-        setNotesUnread((n) => n + 1);
+        refreshUnread();
         const preview = note.text || `Sent ${note.files.length === 1 ? 'a file' : `${note.files.length} files`}`;
         flash(preview.length > 140 ? `${preview.slice(0, 140)}…` : preview, null, 9000, {
           tone: 'note',
@@ -536,12 +540,17 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         });
       } else if (message.type === 'open') {
         // Connected again after a drop: catch up on anything missed.
-        api('/notes/unread').then(({ unread }) => setNotesUnread(unread)).catch(() => {});
+        refreshUnread();
         latestLoad.current?.();
       }
     });
     return () => { clearTimeout(timer); stop(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Closing the notes panel: the badge shows what is really still unread.
+  useEffect(() => {
+    if (!notesOpen) api('/notes/unread').then(({ unread }) => setNotesUnread(unread)).catch(() => {});
+  }, [notesOpen]);
 
   // Back from connecting Google in Settings → Security: reopen it and say how it went.
   const [settingsTab, setSettingsTab] = useState('profile');
@@ -752,7 +761,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const removesFromView = (action) =>
     ['trash', 'delete', 'spam', 'notSpam', 'snooze', 'cancel'].includes(action) ||
     ['sent', 'drafts'].includes(folder) ||
-    (action === 'archive' && ['inbox', 'assigned'].includes(folder)) ||
+    (action === 'archive' && folder === 'inbox') ||
     (action === 'restore' && folder === 'trash');
 
   async function act(ids, action, extra = {}, { silent = false } = {}) {
@@ -1060,6 +1069,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     const tag = e.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
     if (tag === 'BUTTON' && e.key === 'Enter') return;
+    // Keys pressed in Instant notes belong to it (Enter there must never open an email).
+    if (notesOpen || e.target.closest?.('.notes-panel')) return;
     if (modal) {
       if (e.key === 'Escape') setModal(null);
       return;
@@ -1596,7 +1607,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         )}
         {!open && modal !== 'settings' && (
           <nav className="bottom-nav" aria-label="Folders">
-            {['inbox', 'assigned'].map((id) => {
+            {['inbox', 'sent'].map((id) => {
               const f = FOLDERS.find((x) => x.id === id);
               return (
                 <button key={id} type="button" className={folder === id && !notesOpen ? 'on' : ''} onClick={() => goTo(id)}>
@@ -1604,7 +1615,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                     <Icon name={f.icon} />
                     {f.count && counts[f.count] > 0 && <span className="bottom-nav-badge">{counts[f.count] > 99 ? '99+' : counts[f.count]}</span>}
                   </span>
-                  {id === 'assigned' ? 'Mine' : f.label}
+                  {f.label}
                 </button>
               );
             })}
@@ -1615,7 +1626,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               </span>
               Notes
             </button>
-            <button type="button" className={['inbox', 'assigned'].includes(folder) || notesOpen ? '' : 'on'} onClick={() => setCollapsed(false)}>
+            <button type="button" className={['inbox', 'sent'].includes(folder) || notesOpen ? '' : 'on'} onClick={() => setCollapsed(false)}>
               <span className="bottom-nav-icon"><Icon name="menu" /></span>
               More
             </button>
@@ -1725,7 +1736,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                   <h1>{search ? 'Search results' : folderLabel}</h1>
                   <p className="muted">
                     {folder === 'inbox' && !search
-                      ? [`${counts.inbox || 0} unread`, counts.assigned ? `${counts.assigned} assigned to you` : null].filter(Boolean).join(' · ')
+                      ? `${counts.inbox || 0} unread`
                       : list.total ? `${list.total} ${list.total === 1 ? 'conversation' : 'conversations'}` : ''}
                   </p>
                 </div>

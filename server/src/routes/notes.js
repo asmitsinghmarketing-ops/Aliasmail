@@ -30,10 +30,12 @@ router.get('/threads', (req, res) => {
     .sort((a, b) => (b.last?.at || '').localeCompare(a.last?.at || '')));
 });
 
-/** Unread notes in all, for the badge, and which address is "me". */
+/** Unread notes in all, for the badge, and which address is "me". Only from people listed in
+ * the panel: a note from someone no longer on the team could never be opened and read. */
 router.get('/unread', (req, res) => {
   const me = personOf(req.user);
-  res.json({ me, unread: notes().filter((n) => n.to === me && !n.readAt).length });
+  const team = new Set(teammates().map((p) => p.address));
+  res.json({ me, unread: notes().filter((n) => n.to === me && !n.readAt && team.has(n.from)).length });
 });
 
 /** The notes exchanged with one teammate (the latest 200), oldest first. */

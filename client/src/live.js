@@ -36,20 +36,21 @@ function connect() {
   clearTimeout(retryTimer);
   if (!listeners.size || ws) return;
   let opened = false;
+  let socket;
   try {
-    ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/api/live`);
+    socket = new WebSocket(`${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/api/live`);
   } catch {
-    ws = null;
     startEvents();
     return;
   }
-  ws.onopen = () => {
+  ws = socket;
+  socket.onopen = () => {
     opened = true;
     attempts = 0;
     stopEvents();
     emit({ type: 'open', via: 'socket' });
   };
-  ws.onmessage = (event) => {
+  socket.onmessage = (event) => {
     let message;
     try {
       message = JSON.parse(event.data);
@@ -65,7 +66,8 @@ function connect() {
     }
     emit(message);
   };
-  ws.onclose = (event) => {
+  socket.onclose = (event) => {
+    if (ws !== socket) return; // closed on purpose and already replaced
     ws = null;
     // Already sent, so not retried another way (a note could arrive twice).
     for (const [ref, waiting] of pending) {
