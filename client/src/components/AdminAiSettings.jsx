@@ -146,7 +146,11 @@ export default function AdminAiSettings({ onChanged }) {
           <span>API key</span>
           <input
             type="password"
-            autoComplete="off"
+            name="ai-api-key"
+            // Not a password: keep it out of the browser's password manager.
+            autoComplete="new-password"
+            data-1p-ignore="true"
+            data-lpignore="true"
             spellCheck={false}
             value={form.key}
             onChange={(e) => setForm({ ...form, key: e.target.value })}

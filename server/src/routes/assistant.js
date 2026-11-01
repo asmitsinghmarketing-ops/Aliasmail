@@ -20,6 +20,22 @@ const notSetUp = () =>
     ? 'The Assistant needs a model: the admin sets OPENROUTER_MODEL to a free model that supports tools (openrouter.ai/models).'
     : 'The Assistant isn’t set up yet. The admin needs to add ANTHROPIC_API_KEY (or GEMINI_API_KEY / OPENROUTER_API_KEY for testing).';
 
+// At most this many messages per person per hour, whatever the AI costs: free models count as
+// $0, so the spending limits alone wouldn't stop one person (or a stuck script) using up the
+// team's free quota.
+const PER_HOUR = 60;
+const sent = new Map(); // person -> times of their recent messages
+function countMessage(person) {
+  const hourAgo = Date.now() - 3600e3;
+  const recent = (sent.get(person) || []).filter((t) => t > hourAgo);
+  if (recent.length >= PER_HOUR) {
+    const minutes = Math.max(1, Math.ceil((recent[0] - hourAgo) / 60e3));
+    throw new HttpError(429, `That’s ${PER_HOUR} messages to the Assistant in the last hour. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`);
+  }
+  recent.push(Date.now());
+  sent.set(person, recent);
+}
+
 const running = new Map(); // chat id -> AbortController, while answering
 
 const listView = (c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt });
@@ -75,6 +91,7 @@ router.post('/chats/:id/messages', (req, res) => {
   checkLimits(me);
   const body = req.body ?? {};
   if (!String(body.message || '').trim()) throw new HttpError(400, 'Write a message');
+  countMessage(me);
 
   const abort = new AbortController();
   running.set(chat.id, abort);
