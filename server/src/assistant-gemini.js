@@ -41,6 +41,9 @@ function failure(status, body) {
   if (status === 429) return new HttpError(429, 'Gemini’s free limit has been used up for now. Try again in a minute (or tomorrow if the daily limit was reached).');
   if (status === 400 && /api key/i.test(said)) return new HttpError(502, 'The Gemini API key isn’t valid. The admin needs to check GEMINI_API_KEY.');
   if (status === 403) return new HttpError(502, 'Gemini refused the request. Check that GEMINI_API_KEY is right and the Gemini API is enabled.');
+  if (/no longer available|not found|not supported|is deprecated/i.test(said)) {
+    return new HttpError(502, `The Gemini model “${config.assistant.geminiModel}” can’t be used: ${said.slice(0, 200)} The admin can choose another with GEMINI_MODEL.`);
+  }
   if (status >= 500) return new HttpError(502, 'Gemini is overloaded right now. Try again in a minute.');
   return new HttpError(502, `Gemini couldn’t take that request${said ? `: ${said.slice(0, 200)}` : ` (${status})`}`);
 }

@@ -154,7 +154,7 @@ const config = {
     effort: env('ASSISTANT_EFFORT', 'medium'),
     provider: env('ASSISTANT_PROVIDER').toLowerCase(),
     geminiKey: env('GEMINI_API_KEY'),
-    geminiModel: env('GEMINI_MODEL', 'gemini-2.5-flash'),
+    geminiModel: env('GEMINI_MODEL', 'gemini-3.8-flash'),
     geminiUrl: env('GEMINI_API_URL', 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, ''),
   },
   appUrl: env('APP_URL').replace(/\/$/, ''),
