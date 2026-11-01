@@ -2326,3 +2326,4 @@ button, input, select, textarea { font-family: inherit; }
   .assistant.show-chats .ai-chats { box-shadow: 12px 0 32px -12px rgb(16 24 40 / 35%); }
 }
 .alert.warning { background: #fff8e6; color: #7a4a00; border: 1px solid #f5d08a; }
+.crash-details { max-width: 100%; margin: 0; padding: 10px 12px; border-radius: 8px; background: #eef1f5; font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-word; }

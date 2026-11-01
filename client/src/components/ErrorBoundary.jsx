@@ -1,8 +1,11 @@
-// If something on the page breaks, say so (with a way back) instead of leaving a blank screen.
+// If something on the page breaks, say so (with a way back) instead of leaving a blank screen,
+// and send the details to the server's log so the cause can be found.
 import React from 'react';
 
+const firstLines = (text, n) => String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).slice(0, n).join('\n');
+
 export default class ErrorBoundary extends React.Component {
-  state = { error: null };
+  state = { error: null, where: '' };
 
   static getDerivedStateFromError(error) {
     return { error };
@@ -10,6 +13,21 @@ export default class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, info) {
     console.error('Nextspace page error:', error, info?.componentStack);
+    const where = firstLines(info?.componentStack, 4);
+    this.setState({ where });
+    // Into the host's runtime logs ([client-error]): no message content, just where it broke.
+    fetch('/api/client-error', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' },
+      body: JSON.stringify({
+        message: String(error?.message || error).slice(0, 300),
+        stack: firstLines(error?.stack, 8).slice(0, 2000),
+        components: where.slice(0, 1000),
+        page: window.location.pathname,
+        browser: navigator.userAgent.slice(0, 200),
+      }),
+    }).catch(() => {});
   }
 
   render() {
@@ -22,6 +40,9 @@ export default class ErrorBoundary extends React.Component {
           Reload
         </button>
         <code>{String(this.state.error?.message || this.state.error).slice(0, 300)}</code>
+        {(this.state.where || this.state.error?.stack) && (
+          <pre className="crash-details">{firstLines(this.state.error?.stack, 3)}{this.state.where && `\n${this.state.where}`}</pre>
+        )}
       </div>
     );
   }

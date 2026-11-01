@@ -112,6 +112,20 @@ app.get('/api/avatars/:file', async (req, res) => {
 app.use('/api/auth', authRoutes);
 // Health check for the host (GoDaddy pings the site to see that the app started).
 app.get('/api/health', (req, res) => res.json({ ok: true }));
+
+// A page that broke in someone's browser (ErrorBoundary) reports where, for the runtime logs.
+// No message content; at most 30 reports a minute so it can't flood the log.
+let clientErrors = { minute: 0, count: 0 };
+app.post('/api/client-error', (req, res) => {
+  const minute = Math.floor(Date.now() / 60_000);
+  if (clientErrors.minute !== minute) clientErrors = { minute, count: 0 };
+  if (++clientErrors.count <= 30) {
+    const b = req.body ?? {};
+    const line = (v, n) => String(v ?? '').replace(/\s+/g, ' ').slice(0, n);
+    console.warn(`[client-error] ${line(b.message, 300)} | at ${line(b.stack, 1500)} | in ${line(b.components, 600)} | page ${line(b.page, 100)} | ${line(b.browser, 200)}`);
+  }
+  res.status(204).end();
+});
 app.use('/api/mail', mailRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/assistant', assistantRoutes);
