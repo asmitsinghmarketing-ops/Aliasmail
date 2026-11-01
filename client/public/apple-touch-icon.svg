@@ -1,13 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
-  <!-- Same drawing as src/components/Logo.jsx, full-bleed: iOS rounds the corners itself -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="30 30 1210 1210">
+  <!-- Same drawing as src/components/Logo.jsx: the NX mark -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f76707"/><stop offset="0.55" stop-color="#d6336c"/><stop offset="1" stop-color="#7048e8"/>
-    </linearGradient>
+    <linearGradient id="navy" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b3fa8"/><stop offset="1" stop-color="#062a73"/></linearGradient>
+    <linearGradient id="sky" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#0050d0"/><stop offset="0.55" stop-color="#0a9bf2"/><stop offset="1" stop-color="#0068e8"/></linearGradient>
   </defs>
-  <rect width="40" height="40" fill="url(#bg)"/>
-  <g transform="translate(2.4 2.4) scale(0.88)">
-    <path d="M8 28V12l11 16V12" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M23.5 12l9 16M32.5 12l-9 16" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
+  <rect x="30" y="30" width="1210" height="1210" fill="#fff"/>
+  <path fill="url(#navy)" d="M176 403H293C318 403 336 414 350 428L610 690L505 787L310 578V867H176Z"/>
+  <path fill="url(#navy)" d="M470 402H670L772 515L668 627Z"/>
+  <path fill="url(#navy)" d="M884 632L1092 867H888L785 746Z"/>
+  <path fill="url(#sky)" d="M352 867C470 850 560 790 640 705L898 402H1077L885 633L785 745C730 815 680 867 612 867Z"/>
 </svg>

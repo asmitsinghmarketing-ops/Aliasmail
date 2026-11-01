@@ -21,7 +21,7 @@ import Settings from './Settings.jsx';
 // Gmail's folders, in Gmail's order. `count` is the key in /mail/folders shown beside it;
 // `color` tints the folder's icon tile in the sidebar.
 const FOLDERS = [
-  { id: 'inbox', label: 'Inbox', icon: 'inbox', count: 'inbox', color: '#e8590c' },
+  { id: 'inbox', label: 'Inbox', icon: 'inbox', count: 'inbox', color: 'var(--brand)' },
   { id: 'starred', label: 'Starred', icon: 'star', color: '#f59f00' },
   { id: 'snoozed', label: 'Snoozed', icon: 'clock', color: '#0c8599' },
   { id: 'important', label: 'Important', icon: 'important', count: 'important', color: '#d6336c' },
@@ -1009,7 +1009,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const drawerVisiblyOpen = !collapsed || (drawerDrag !== null && drawerDrag > 0);
 
   return (
-    <div className={`app ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.some((m) => m.phase === 'waiting') ? 'has-send-tray' : ''}`} style={{ '--alias': user.color }}>
+    <div className={`app ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.some((m) => m.phase === 'waiting') ? 'has-send-tray' : ''}`}>
       <header className="topbar">
         <div className="brand">
           <button

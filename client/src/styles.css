@@ -1,6 +1,7 @@
 :root {
-  --brand: #e8590c;
-  --brand-dark: #c2410c;
+  /* From the NX logo: its mid blue, and the navy for pressed and dark states. */
+  --brand: #0b5cd5;
+  --brand-dark: #073c9a;
   --teal: #0c8599;
   --violet: #7048e8;
   --orange: #f08c00;
@@ -9,12 +10,12 @@
   --red: #c92a2a;
   --alias: var(--brand);
 
-  --bg: #f6f4f1;
+  --bg: #f4f6f9;
   --surface: #ffffff;
-  --hover: #f1eeea;
-  --border: #e6e1da;
-  --text: #1f1d1a;
-  --muted: #6b665f;
+  --hover: #eef2f7;
+  --border: #e1e6ed;
+  --text: #1b1f24;
+  --muted: #5f6b7a;
   --radius: 12px;
   --shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 4px 16px rgb(0 0 0 / 6%);
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -100,7 +101,7 @@ input[type='checkbox'] { accent-color: var(--brand); width: 16px; height: 16px; 
 .login-side { display: flex; flex-direction: column; gap: 22px; }
 .login-heading { animation: rise-in 0.3s var(--ease-out); }
 .login-heading h1 { font-size: 36px; font-weight: 400; letter-spacing: -0.01em; margin-bottom: 12px; }
-.login-heading p { margin: 0; font-size: 16px; color: #3c3a37; }
+.login-heading p { margin: 0; font-size: 16px; color: #3c4043; }
 .account-chip {
   display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 4px 10px 4px 4px;
   border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-weight: 500;
@@ -120,7 +121,7 @@ input[type='checkbox'] { accent-color: var(--brand); width: 16px; height: 16px; 
 .caps-warning { font-size: 12px; color: #d9480f; font-weight: 600; margin-top: -4px; }
 .login-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 28px; }
 .login-next { padding: 10px 26px; }
-.login-footer { width: 100%; max-width: 1000px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 0 8px; font-size: 12px; color: #3c3a37; }
+.login-footer { width: 100%; max-width: 1000px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 0 8px; font-size: 12px; color: #3c4043; }
 
 /* Outlined input whose label floats up into the border when focused or filled. */
 .field { position: relative; display: block; }
@@ -165,7 +166,7 @@ label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; }
 .brand-mark { flex: none; display: block; }
 .wordmark { letter-spacing: -0.02em; }
 .wordmark-accent {
-  background: linear-gradient(90deg, var(--brand), var(--pink) 55%, var(--violet));
+  background: linear-gradient(90deg, #0050d0, #0a9bf2);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #f3f0ff; color: var(--violet); }
@@ -228,7 +229,7 @@ label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; }
 .rows { flex: 1; }
 .row {
   display: flex; align-items: center; gap: 10px; padding: 0 16px 0 22px; height: 44px;
-  border-bottom: 1px solid var(--border); cursor: pointer; background: #faf9f7;
+  border-bottom: 1px solid var(--border); cursor: pointer; background: #f8f9fb;
 }
 .row.unread { background: var(--surface); font-weight: 700; }
 .row:hover { box-shadow: inset 0 -1px 0 var(--border), 0 1px 4px rgb(0 0 0 / 10%); position: relative; }
@@ -236,7 +237,7 @@ label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; }
 .row .icon-btn { width: 30px; height: 30px; }
 .row-from { width: 200px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row:not(.unread) .row-subject { color: #45413c; }
+.row:not(.unread) .row-subject { color: #3c4043; }
 .row-date { flex: none; font-size: 12px; min-width: 64px; text-align: right; }
 .row.unread .row-date { color: var(--text); }
 
@@ -450,7 +451,7 @@ label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; }
 .shortcuts td { padding: 6px 4px; border-bottom: 1px solid var(--border); }
 kbd {
   display: inline-block; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border);
-  border-bottom-width: 2px; background: #faf9f7; font: 600 12px ui-monospace, monospace;
+  border-bottom-width: 2px; background: #f8f9fb; font: 600 12px ui-monospace, monospace;
 }
 code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 .toast { display: flex; align-items: center; gap: 16px; }
@@ -636,7 +637,7 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
 .setup-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
 
 .backup-codes p { margin: 0 0 12px; line-height: 1.5; }
-.code-grid { list-style: none; margin: 0; padding: 14px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 24px; border: 1px dashed var(--border); border-radius: 12px; background: #faf9f7; }
+.code-grid { list-style: none; margin: 0; padding: 14px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 24px; border: 1px dashed var(--border); border-radius: 12px; background: #f8f9fb; }
 .code-grid code { background: none; font-size: 15px; letter-spacing: 0.05em; }
 .code-tools { display: flex; gap: 4px; }
 
@@ -853,7 +854,7 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
   }
   .admin-app .content { min-height: 0; margin: 0; }
   .admin-app .topbar .account > .admin-switch { display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; }
-  .admin-app .brand > .brand-mark { display: block; width: 40px; height: 40px; }
+  .admin-app .brand > .brand-mark { display: block; width: 48px; height: auto; }
   .admin-app .topbar .brand { width: auto; flex: 1; }
 }
 
@@ -867,7 +868,7 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
   .menu-open .mobile-menu-toggle { display: none; }
   .mobile-drawer-head { display: flex; align-items: center; justify-content: space-between; min-height: 44px; }
   .mobile-drawer-brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; }
-  .mobile-drawer-logo { display: block; width: 40px; height: 40px; }
+  .mobile-drawer-logo { display: block; width: 52px; height: auto; }
   .mobile-drawer-close { color: #444746; }
   .sidebar-backdrop {
     position: fixed; z-index: 39; inset: 0; display: block;
@@ -1785,19 +1786,18 @@ a.btn { color: inherit; text-decoration: none; }
 /* ----- sign-in: Nextspace look on laptop and phone ----- */
 .login-page {
   background:
-    radial-gradient(42rem 28rem at 8% -10%, rgb(247 103 7 / 0.16), transparent 70%),
-    radial-gradient(40rem 30rem at 105% 110%, rgb(112 72 232 / 0.16), transparent 70%),
-    radial-gradient(30rem 20rem at 70% 0%, rgb(214 51 108 / 0.08), transparent 70%),
-    #f6f4f1;
+    radial-gradient(42rem 28rem at 8% -10%, rgb(11 92 213 / 0.12), transparent 70%),
+    radial-gradient(40rem 30rem at 105% 110%, rgb(10 155 242 / 0.12), transparent 70%),
+    #f4f6f9;
 }
-.login-card { box-shadow: 0 1px 2px rgb(0 0 0 / 4%), 0 12px 40px -12px rgb(112 72 232 / 18%); }
+.login-card { box-shadow: 0 1px 2px rgb(0 0 0 / 4%), 0 12px 40px -12px rgb(11 92 213 / 18%); }
 .login-page .brand { width: auto; gap: 10px; }
 .login-page .brand-mark { display: block; }
 .login-tagline { margin: -14px 0 0; color: var(--muted); font-size: 13px; }
 @media (max-width: 800px) {
   .login-page { justify-content: flex-start; padding-top: max(28px, env(safe-area-inset-top)); }
-  .login-page .login-card { margin-top: auto; padding: 28px 20px 24px; border-radius: 24px; background: var(--surface); box-shadow: 0 10px 36px -14px rgb(112 72 232 / 25%); }
-  .login-page .brand-mark { width: 44px; height: 44px; }
+  .login-page .login-card { margin-top: auto; padding: 28px 20px 24px; border-radius: 24px; background: var(--surface); box-shadow: 0 10px 36px -14px rgb(11 92 213 / 22%); }
+  .login-page .brand-mark { width: 60px; height: auto; }
   .login-footer { margin-top: auto; }
 }
 
@@ -1819,4 +1819,23 @@ a.btn { color: inherit; text-decoration: none; }
 .empty-icon { color: #c4c7c5; }
 @media (max-width: 800px) {
   .row-group { padding: 12px 16px 4px; border-bottom: 0; }
+}
+
+/* Sidebar: never scrolls sideways; its scrollbar stays slim and shows only while hovered. */
+@media (min-width: 801px) {
+  .sidebar { overflow-x: hidden; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  .sidebar:hover { scrollbar-color: #c4c7c5 transparent; }
+  .sidebar::-webkit-scrollbar { width: 6px; height: 0; }
+  .sidebar::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+  .sidebar:hover::-webkit-scrollbar-thumb { background: #c4c7c5; }
+}
+/* Short screens (laptops with Windows scaling at 125–150%): a tighter sidebar so every folder fits. */
+@media (min-width: 801px) and (max-height: 760px) {
+  .sidebar { gap: 6px; padding-top: 8px; }
+  .compose-btn { padding: 12px 20px 12px 14px; }
+  .sidebar.collapsed .compose-btn { padding: 12px; }
+  .nav-item { padding-top: 5px; padding-bottom: 5px; }
+  .sidebar.collapsed .nav-item { padding: 5px; }
+  .nav-icon { width: 28px; height: 28px; }
+  .labels-head { padding-top: 6px; }
 }
