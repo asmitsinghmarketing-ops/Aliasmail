@@ -2325,3 +2325,4 @@ button, input, select, textarea { font-family: inherit; }
   .ai-chats { box-shadow: none; }
   .assistant.show-chats .ai-chats { box-shadow: 12px 0 32px -12px rgb(16 24 40 / 35%); }
 }
+.alert.warning { background: #fff8e6; color: #7a4a00; border: 1px solid #f5d08a; }

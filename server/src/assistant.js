@@ -12,6 +12,7 @@ import { teammates } from './team.js';
 import { onlinePeople } from './live.js';
 import { meetEnabled } from './google-auth.js';
 import { assistantRead, assistantSearch } from './routes/mail.js';
+import { callGemini, geminiToolResults, geminiUserMessage } from './assistant-gemini.js';
 
 const MAX_STEPS = 10; // model calls for one message, tools included
 const MAX_TOKENS = 16000;
@@ -26,11 +27,19 @@ const PRICES = {
   'claude-opus-5': [5, 25, 0.5, 6.25],
   'claude-sonnet-5-5': [2, 10, 0.2, 2.5],
   'claude-haiku-5-5': [0.1, 0.5, 0.01, 0.125],
+  gemini: [0, 0, 0, 0], // Gemini's free tier
 };
 // Models that retry a declined request on another model by themselves (server-side fallback).
 const FALLBACK_MODELS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5']);
 
-export const assistantEnabled = () => Boolean(config.assistant.apiKey);
+/** 'anthropic' (Claude) or 'gemini': ASSISTANT_PROVIDER, else whichever key is set (Claude first). */
+export function provider() {
+  const { provider: chosen, apiKey, geminiKey } = config.assistant;
+  if (chosen === 'gemini' || chosen === 'anthropic') return chosen;
+  return apiKey || !geminiKey ? 'anthropic' : 'gemini';
+}
+export const modelName = () => (provider() === 'gemini' ? config.assistant.geminiModel : config.assistant.model);
+export const assistantEnabled = () => Boolean(provider() === 'gemini' ? config.assistant.geminiKey : config.assistant.apiKey);
 
 let client = null;
 const anthropic = () => (client ||= new Anthropic({ apiKey: config.assistant.apiKey }));
@@ -56,12 +65,9 @@ export function monthUsage(month = monthKey()) {
   return { month, total, people };
 }
 
-function record(person, model, usage) {
-  const [inP, outP, readP, writeP] = PRICES[model] || PRICES['claude-opus-5-5'];
-  const input = usage?.input_tokens || 0;
-  const output = usage?.output_tokens || 0;
-  const cacheRead = usage?.cache_read_input_tokens || 0;
-  const cacheWrite = usage?.cache_creation_input_tokens || 0;
+/** Usage of one model call: { input, output, cacheRead, cacheWrite } tokens. Returns its cost. */
+function record(person, model, { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }) {
+  const [inP, outP, readP, writeP] = provider() === 'gemini' ? PRICES.gemini : PRICES[model] || PRICES['claude-opus-5-5'];
   const usd = (input * inP + output * outP + cacheRead * readP + cacheWrite * writeP) / 1e6;
   const month = (store().usage[monthKey()] ||= {});
   const u = (month[person] ||= blank());
@@ -99,7 +105,7 @@ export function findChat(person, id) {
 
 export function newChat(person) {
   const now = new Date().toISOString();
-  const chat = { id: crypto.randomUUID(), owner: person, title: 'New chat', createdAt: now, updatedAt: now, history: [], items: [], updates: [] };
+  const chat = { id: crypto.randomUUID(), owner: person, provider: provider(), title: 'New chat', createdAt: now, updatedAt: now, history: [], items: [], updates: [] };
   store().chats.push(chat);
   const mine = chatsOf(person).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
   for (const old of mine.slice(0, Math.max(0, mine.length - MAX_CHATS))) store().chats.splice(store().chats.indexOf(old), 1);
@@ -292,6 +298,52 @@ async function runTool(name, input, me) {
   throw new BadInput(`Unknown tool ${name}`);
 }
 
+/* ---------------------------------- one model call ---------------------------------- */
+
+/** One Claude call, streamed. Same shape as callGemini(): { message, uses, stop, usage }. */
+async function callClaude({ system, history, tools, onText, onReset, signal }) {
+  const model = config.assistant.model;
+  for (let attempt = 0; ; attempt++) {
+    const stream = anthropic().beta.messages.stream(
+      {
+        model,
+        max_tokens: MAX_TOKENS,
+        system: [{ type: 'text', text: system }],
+        tools,
+        messages: history,
+        cache_control: { type: 'ephemeral' },
+        output_config: { effort: config.assistant.effort },
+        ...(FALLBACK_MODELS.has(model) && { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }),
+      },
+      { signal },
+    );
+    stream.on('text', onText);
+    let response;
+    try {
+      response = await stream.finalMessage();
+    } catch (err) {
+      // A tool input that couldn't be read at all: ask again (twice at most).
+      if (err instanceof Anthropic.APIError || signal?.aborted || attempt >= 2) throw err;
+      onReset();
+      continue;
+    }
+    const u = response.usage || {};
+    const uses = response.content.filter((b) => b.type === 'tool_use').map((b) => ({ id: b.id, name: b.name, input: b.input }));
+    const stop = { refusal: 'refusal', pause_turn: 'pause', max_tokens: 'max_tokens', tool_use: uses.length ? 'tool_use' : 'end' }[response.stop_reason] || 'end';
+    return {
+      message: { role: 'assistant', content: response.content },
+      uses,
+      stop,
+      usage: { input: u.input_tokens || 0, output: u.output_tokens || 0, cacheRead: u.cache_read_input_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0 },
+    };
+  }
+}
+
+const claudeToolResults = (results) => ({
+  role: 'user',
+  content: results.map(({ use, content, isError }) => ({ type: 'tool_result', tool_use_id: use.id, content, ...(isError && { is_error: true }) })),
+});
+
 /* ---------------------------------- one turn ---------------------------------- */
 
 function friendly(err) {
@@ -305,10 +357,12 @@ function friendly(err) {
 
 /**
  * Answer one message in a chat. `emit(event, data)` streams to the browser: 'delta' (text),
- * 'step', 'card', 'error'. The chat (history and what the person sees) is saved as it goes.
+ * 'reset', 'step', 'card', 'error'. The chat (history and what the person sees) is saved as it goes.
  */
 export async function runTurn({ chat, person, name, message, now, timeZone, emit, signal }) {
-  const model = config.assistant.model;
+  const via = provider();
+  if ((chat.provider || 'anthropic') !== via) throw new HttpError(409, 'This chat was with a different AI model. Start a new chat.');
+  const model = modelName();
   const userText = String(message || '').trim().slice(0, 8000);
   if (!userText) throw new HttpError(400, 'Write a message');
   if (JSON.stringify(chat.history).length > MAX_CHAT_BYTES) throw new HttpError(400, 'This chat is very long. Start a new chat to carry on.');
@@ -316,10 +370,8 @@ export async function runTurn({ chat, person, name, message, now, timeZone, emit
 
   const when = `[${String(now || new Date().toISOString()).slice(0, 60)}, time zone ${String(timeZone || 'UTC').slice(0, 60)}]`;
   const updates = chat.updates.splice(0);
-  chat.history.push({
-    role: 'user',
-    content: [{ type: 'text', text: `${updates.length ? `${updates.join('\n')}\n\n` : ''}${when}\n\n${userText}` }],
-  });
+  const asked = `${updates.length ? `${updates.join('\n')}\n\n` : ''}${when}\n\n${userText}`;
+  chat.history.push(via === 'gemini' ? geminiUserMessage(asked) : { role: 'user', content: [{ type: 'text', text: asked }] });
   if (!chat.items.length) chat.title = userText.replace(/\s+/g, ' ').slice(0, 60);
   chat.items.push({ role: 'user', text: userText, at: new Date().toISOString() });
   const reply = { role: 'assistant', parts: [], at: new Date().toISOString() };
@@ -327,70 +379,53 @@ export async function runTurn({ chat, person, name, message, now, timeZone, emit
   chat.updatedAt = reply.at;
   save();
 
-  const system = [
-    { type: 'text', text: SYSTEM },
-    { type: 'text', text: `The person is ${name || person} <${person}>.` },
-  ];
+  const system = `${SYSTEM}\n\nThe person is ${name || person} <${person}>.`;
   const tools = toolsFor();
+  const call = via === 'gemini' ? callGemini : callClaude;
+  const toolResults = via === 'gemini' ? geminiToolResults : claudeToolResults;
   let spent = 0;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     checkLimits(person);
     let textPart = null;
-    let response;
-    for (let attempt = 0; ; attempt++) {
-      const stream = anthropic().beta.messages.stream(
-        {
-          model,
-          max_tokens: MAX_TOKENS,
-          system,
-          tools,
-          messages: chat.history,
-          cache_control: { type: 'ephemeral' },
-          output_config: { effort: config.assistant.effort },
-          ...(FALLBACK_MODELS.has(model) && { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }),
-        },
-        { signal },
-      );
-      stream.on('text', (delta) => {
+    const response = await call({
+      system,
+      history: chat.history,
+      tools,
+      signal,
+      onText: (delta) => {
         if (!textPart) {
           textPart = { type: 'text', text: '' };
           reply.parts.push(textPart);
         }
         textPart.text += delta;
         emit('delta', { text: delta });
-      });
-      try {
-        response = await stream.finalMessage();
-        break;
-      } catch (err) {
-        // A tool input that couldn't be read at all: ask again (twice at most).
-        if (err instanceof Anthropic.APIError || signal?.aborted || attempt >= 2) throw err;
+      },
+      onReset: () => {
         if (textPart) reply.parts.splice(reply.parts.indexOf(textPart), 1);
         textPart = null;
         emit('reset', {});
-      }
-    }
+      },
+    });
     spent += record(person, model, response.usage);
 
-    if (response.stop_reason === 'refusal') {
-      reply.parts.push({ type: 'error', text: 'Claude couldn’t help with that request.' });
-      emit('error', { error: 'Claude couldn’t help with that request.' });
+    if (response.stop === 'refusal') {
+      reply.parts.push({ type: 'error', text: 'The AI couldn’t help with that request.' });
+      emit('error', { error: 'The AI couldn’t help with that request.' });
       break;
     }
-    const uses = response.content.filter((b) => b.type === 'tool_use');
-    if (response.stop_reason === 'pause_turn') {
-      chat.history.push({ role: 'assistant', content: response.content });
+    if (response.stop === 'pause') {
+      chat.history.push(response.message);
       continue;
     }
-    if (!uses.length || response.stop_reason !== 'tool_use') {
-      chat.history.push({ role: 'assistant', content: response.content });
-      if (response.stop_reason === 'max_tokens') reply.parts.push({ type: 'error', text: 'The answer was cut short.' });
+    if (response.stop !== 'tool_use') {
+      chat.history.push(response.message);
+      if (response.stop === 'max_tokens') reply.parts.push({ type: 'error', text: 'The answer was cut short.' });
       break;
     }
 
     const results = [];
-    for (const use of uses) {
+    for (const use of response.uses) {
       const label = (STEP_LABELS[use.name] || (() => use.name))(use.input || {});
       reply.parts.push({ type: 'step', text: label });
       emit('step', { text: label });
@@ -400,17 +435,16 @@ export async function runTurn({ chat, person, name, message, now, timeZone, emit
           const full = { id: use.id, status: 'pending', ...card };
           reply.parts.push({ type: 'card', card: full });
           emit('card', full);
-          results.push({ type: 'tool_result', tool_use_id: use.id, content: 'Shown to the person as a card. It has NOT been sent or created yet; they will press the button when ready.' });
+          results.push({ use, content: 'Shown to the person as a card. It has NOT been sent or created yet; they will press the button when ready.' });
         } else {
-          results.push({ type: 'tool_result', tool_use_id: use.id, content: result });
+          results.push({ use, content: result });
         }
       } catch (err) {
-        const why = err instanceof BadInput ? err.message : `Failed: ${describeError(err)}`;
-        results.push({ type: 'tool_result', tool_use_id: use.id, content: why, is_error: true });
+        results.push({ use, content: err instanceof BadInput ? err.message : `Failed: ${describeError(err)}`, isError: true });
       }
     }
-    // The assistant turn and its results go in together, so the history always stays valid.
-    chat.history.push({ role: 'assistant', content: response.content }, { role: 'user', content: results });
+    // The model's turn and its results go in together, so the history always stays valid.
+    chat.history.push(response.message, toolResults(results));
     chat.updatedAt = new Date().toISOString();
     save();
     if (step === MAX_STEPS - 1) {

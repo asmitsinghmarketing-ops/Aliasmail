@@ -43,8 +43,15 @@ export default function AdminAssistant() {
     <div className="ai-admin">
       {!data.enabled && (
         <div className="alert">
-          The Assistant is off. Create a key at console.anthropic.com and add it in the hosting’s environment variables as
-          <code> ANTHROPIC_API_KEY</code>, then restart Nextspace.
+          The Assistant is off. Add <code>ANTHROPIC_API_KEY</code> (Claude, from console.anthropic.com) or, for testing,
+          <code> GEMINI_API_KEY</code> (Google Gemini, from aistudio.google.com) in the hosting’s environment variables, then restart Nextspace.
+        </div>
+      )}
+      {data.enabled && data.provider === 'gemini' && (
+        <div className="alert warning">
+          <strong>Test mode: Google Gemini.</strong> On Gemini’s free tier Google may use what is sent (including email
+          content the Assistant reads) to improve its products. Use it for testing, and switch to Claude
+          (<code>ANTHROPIC_API_KEY</code>) for real company mail.
         </div>
       )}
 
@@ -70,9 +77,11 @@ export default function AdminAssistant() {
           <span className="muted small">of input reused at a tenth of the price</span>
         </div>
         <div className="card speed-tile">
-          <span className="muted small">Model</span>
+          <span className="muted small">{data.provider === 'gemini' ? 'Google Gemini (free tier)' : 'Claude'}</span>
           <strong className="ai-admin-model">{data.model}</strong>
-          <span className="muted small">effort: {data.effort} · change with ASSISTANT_MODEL / ASSISTANT_EFFORT</span>
+          <span className="muted small">
+            {data.provider === 'gemini' ? 'change with GEMINI_MODEL' : `effort: ${data.effort} · change with ASSISTANT_MODEL / ASSISTANT_EFFORT`}
+          </span>
         </div>
       </div>
 

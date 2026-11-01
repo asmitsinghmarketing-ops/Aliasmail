@@ -8,7 +8,7 @@ import { HttpError } from '../errors.js';
 import { personOf, teammates } from '../team.js';
 import { meetEnabled } from '../google-auth.js';
 import { audit } from '../audit.js';
-import { assistantEnabled, chatsOf, checkLimits, findChat, friendly, monthUsage, newChat, runTurn, settleCard, store } from '../assistant.js';
+import { assistantEnabled, modelName, provider, chatsOf, checkLimits, findChat, friendly, monthUsage, newChat, runTurn, settleCard, store } from '../assistant.js';
 
 const router = Router();
 router.use(requireAuth());
@@ -22,7 +22,8 @@ router.get('/status', (req, res) => {
   const usage = monthUsage();
   res.json({
     enabled: assistantEnabled(),
-    model: config.assistant.model,
+    provider: provider(),
+    model: modelName(),
     meet: meetEnabled(),
     me,
     name: teammates().find((p) => p.address === me)?.name || '',
@@ -36,7 +37,7 @@ router.get('/chats', (req, res) => {
 });
 
 router.post('/chats', (req, res) => {
-  if (!assistantEnabled()) throw new HttpError(503, 'The Assistant isn’t set up yet. The admin needs to add ANTHROPIC_API_KEY.');
+  if (!assistantEnabled()) throw new HttpError(503, 'The Assistant isn’t set up yet. The admin needs to add ANTHROPIC_API_KEY (or GEMINI_API_KEY for testing).');
   res.status(201).json(listView(newChat(personOf(req.user))));
 });
 
@@ -55,7 +56,7 @@ router.delete('/chats/:id', (req, res) => {
 
 /** Ask something: { message, now, timeZone }. The answer streams back as events. */
 router.post('/chats/:id/messages', async (req, res) => {
-  if (!assistantEnabled()) throw new HttpError(503, 'The Assistant isn’t set up yet. The admin needs to add ANTHROPIC_API_KEY.');
+  if (!assistantEnabled()) throw new HttpError(503, 'The Assistant isn’t set up yet. The admin needs to add ANTHROPIC_API_KEY (or GEMINI_API_KEY for testing).');
   const me = personOf(req.user);
   const chat = findChat(me, req.params.id);
   if (running.has(chat.id)) throw new HttpError(409, 'Still answering the last message');
@@ -123,8 +124,9 @@ router.get('/usage', requireAuth('admin'), (req, res) => {
   const names = Object.fromEntries(teammates().map((p) => [p.address, p.name]));
   res.json({
     enabled: assistantEnabled(),
-    model: config.assistant.model,
-    effort: config.assistant.effort,
+    provider: provider(),
+    model: modelName(),
+    effort: provider() === 'gemini' ? null : config.assistant.effort,
     limits: store().limits,
     month: usage.month,
     total: usage.total,

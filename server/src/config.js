@@ -145,11 +145,17 @@ const config = {
     chat: bool('GOOGLE_CHAT', true),
     chatApiUrl: env('GOOGLE_CHAT_API_URL', 'https://chat.googleapis.com/v1'),
   },
-  // The Assistant (assistant.js): Claude through the Anthropic API. Off until a key is set.
+  // The Assistant (assistant.js): Claude through the Anthropic API, or Google Gemini (for
+  // testing on its free tier). Off until a key is set. ASSISTANT_PROVIDER picks one when both
+  // keys are set; otherwise whichever key there is.
   assistant: {
     apiKey: env('ANTHROPIC_API_KEY'),
     model: env('ASSISTANT_MODEL', 'claude-opus-5-5'),
     effort: env('ASSISTANT_EFFORT', 'medium'),
+    provider: env('ASSISTANT_PROVIDER').toLowerCase(),
+    geminiKey: env('GEMINI_API_KEY'),
+    geminiModel: env('GEMINI_MODEL', 'gemini-2.5-flash'),
+    geminiUrl: env('GEMINI_API_URL', 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, ''),
   },
   appUrl: env('APP_URL').replace(/\/$/, ''),
   // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.

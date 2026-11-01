@@ -390,8 +390,8 @@ export default function Assistant({ status, onClose, actions }) {
                   <span className="ai-mark"><Icon name="sparkle" size={30} /></span>
                   <h1>The Assistant isn’t set up yet</h1>
                   <p className="muted">
-                    It needs an Anthropic API key. The admin creates one at console.anthropic.com and adds it to the hosting’s
-                    environment variables as <code>ANTHROPIC_API_KEY</code>, then restarts Nextspace.
+                    It needs an AI key. The admin adds <code>ANTHROPIC_API_KEY</code> (Claude) or, for testing,
+                    <code>GEMINI_API_KEY</code> (Google Gemini) to the hosting’s environment variables, then restarts Nextspace.
                   </p>
                 </div>
               )}
@@ -466,7 +466,8 @@ export default function Assistant({ status, onClose, actions }) {
           </div>
           <p className="ai-foot muted small">
             The Assistant can make mistakes, so check what it writes. Nothing is sent until you press Send.
-            {enabled && spent > 0 && ` · This month: $${spent.toFixed(2)}`}
+            {status?.provider === 'gemini' && ' · Test mode (Google Gemini)'}
+            {enabled && spent > 0 && ` · This month: ${spent.toFixed(2)}`}
           </p>
         </form>
       </div>
