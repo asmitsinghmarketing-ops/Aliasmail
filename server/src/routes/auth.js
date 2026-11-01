@@ -35,9 +35,11 @@ import {
 
 const router = Router();
 
-// Wrong passwords: 5 per address from one IP, 20 per address from anywhere, and 30 from one IP
-// across all addresses (password spraying) each lock sign-in for a while.
-const loginByIpAndAccount = limiter('login-ip-account', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
+// Wrong passwords: 4 per address from one IP, 20 per address from anywhere, and 30 from one IP
+// across all addresses (password spraying) each lock sign-in for a while. Locks are temporary
+// (a permanent one would let anyone lock a colleague out); the administrator can lift them.
+const LOGIN_TRIES = 4;
+const loginByIpAndAccount = limiter('login-ip-account', { max: LOGIN_TRIES, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 const loginByAccount = limiter('login-account', { max: 20, windowMs: 60 * 60e3, lockMs: 30 * 60e3 });
 const loginByIp = limiter('login-ip', { max: 30, windowMs: 15 * 60e3, lockMs: 30 * 60e3 });
 // 5 wrong codes lock 2-step verification for that account for 15 minutes.
@@ -191,10 +193,14 @@ router.post('/login', async (req, res) => {
   }
   if (!account) {
     loginByIp.fail(ip);
-    loginByIpAndAccount.fail(ipKey);
+    const left = loginByIpAndAccount.fail(ipKey);
     loginByAccount.fail(email);
-    audit(req, 'sign-in-failed', email, 'wrong email or password');
-    throw new HttpError(401, 'Wrong email or password');
+    audit(req, left ? 'sign-in-failed' : 'locked-out', email, left ? 'wrong email or password' : `${LOGIN_TRIES} wrong passwords`);
+    // The same answer whether or not the address exists, so it reveals nothing about accounts.
+    if (!left) throw new HttpError(429, `Wrong password ${LOGIN_TRIES} times. Sign-in is locked for 15 minutes; your administrator can unlock it sooner.`);
+    throw new HttpError(401, left === 1
+      ? 'Wrong email or password. One more wrong try will lock sign-in for 15 minutes.'
+      : `Wrong email or password. ${left} tries left before sign-in is locked for 15 minutes.`);
   }
   loginByIpAndAccount.reset(ipKey);
 

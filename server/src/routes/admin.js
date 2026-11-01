@@ -15,7 +15,7 @@ import { HttpError, describeError } from '../errors.js';
 import { liveSync } from '../live-sync.js';
 import { revokeToken } from '../google-auth.js';
 import { chatAccess, driveAccess, meetAccess } from '../google-drive.js';
-import { unseal } from '../security.js';
+import { signInLockedUntil, unlockSignIn, unseal } from '../security.js';
 
 const router = Router();
 router.use(requireAuth('admin'));
@@ -121,7 +121,7 @@ router.get('/overview', (req, res) => {
       unassigned: msgs.filter((m) => aliasesOf(m).length === 0).length,
       sent: Object.keys(db().sentBox.messages).length,
     },
-    aliases: db().aliases.map(withCounts),
+    aliases: db().aliases.map((a) => withLock(withCounts(a))),
   });
 });
 
@@ -199,6 +199,14 @@ router.delete('/aliases/:id', (req, res) => {
   res.status(204).end();
 });
 
+/** Lift a sign-in lock (too many wrong passwords or codes) for this person. */
+router.post('/aliases/:id/unlock', (req, res) => {
+  const alias = getAlias(req);
+  unlockSignIn(alias.address);
+  audit(req, 'admin-unlocked-sign-in', alias.address, `by ${req.user.email}`);
+  res.json(withLock(withCounts(alias)));
+});
+
 /** For someone who lost their phone: turn their 2-step verification off and sign them out. */
 router.post('/aliases/:id/reset-mfa', (req, res) => {
   const alias = getAlias(req);
@@ -211,6 +219,12 @@ router.post('/aliases/:id/reset-mfa', (req, res) => {
 });
 
 /* ----- roles: which people can open which group mailboxes ----- */
+
+/** An alias for the console, with when its sign-in lock ends (if it's locked). */
+function withLock(alias) {
+  const until = signInLockedUntil(alias.address);
+  return until ? { ...alias, lockedUntil: new Date(until).toISOString() } : alias;
+}
 
 const roleView = (role) => ({ id: role.id, name: role.name, mailboxes: role.mailboxes, members: role.members, createdAt: role.createdAt });
 

@@ -132,6 +132,7 @@ export function limiter(name, { max, windowMs, lockMs }) {
         throw new HttpError(429, `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`);
       }
     },
+    /** Count a failure; returns how many tries are left before the lock (0 = locked now). */
     fail(key) {
       const now = Date.now();
       let b = buckets.get(k(key));
@@ -139,11 +140,29 @@ export function limiter(name, { max, windowMs, lockMs }) {
       b.count += 1;
       if (b.count >= max) b.lockedUntil = now + lockMs;
       buckets.set(k(key), b);
+      return Math.max(0, max - b.count);
     },
     reset(key) {
       buckets.delete(k(key));
     },
   };
+}
+
+// The sign-in limiters that concern one address: wrong passwords (from one IP, and from
+// anywhere) and wrong 2-step codes.
+const isSignInKey = (key, email) =>
+  key === `login-account:${email}` || (key.startsWith('login-ip-account:') && key.endsWith(`|${email}`)) || (key.startsWith('mfa:') && key.endsWith(`:${email}`));
+
+/** Until when sign-in for this address is locked (ms since 1970), or 0 when it isn't. */
+export function signInLockedUntil(email) {
+  let until = 0;
+  for (const [key, b] of buckets) if (isSignInKey(key, email) && b.lockedUntil > Date.now()) until = Math.max(until, b.lockedUntil);
+  return until;
+}
+
+/** Lift every sign-in lock and count for this address (the administrator's "Unlock"). */
+export function unlockSignIn(email) {
+  for (const key of [...buckets.keys()]) if (isSignInKey(key, email)) buckets.delete(key);
 }
 
 /* ---------------------------------- cookies & request info ---------------------------------- */

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, cachedMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
@@ -42,6 +42,25 @@ const CATEGORY_TABS = [
   { id: 'social', label: 'Social', icon: 'people', color: '#1971c2' },
   { id: 'updates', label: 'Updates', icon: 'info', color: 'var(--orange)' },
 ];
+
+// The list is split by when mail arrived, like Outlook: Today, Yesterday, this week, this month,
+// then month by month.
+function dateGroup(date) {
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const day = new Date(d);
+  day.setHours(0, 0, 0, 0);
+  const days = Math.round((today - day) / 86400e3);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7 && day.getDay() < today.getDay()) return 'Earlier this week';
+  if (d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear()) return 'Earlier this month';
+  return d.toLocaleDateString(undefined, { month: 'long', ...(d.getFullYear() !== today.getFullYear() && { year: 'numeric' }) });
+}
+// Lists in date order get the groups; Scheduled and the Outbox are ordered by send time instead.
+const UNGROUPED = new Set(['scheduled', 'outbox']);
 
 // Folders holding inbox messages (per-account state applies); the rest are special lists.
 const MAIL_FOLDERS = ['inbox', 'starred', 'snoozed', 'important', 'all'];
@@ -171,7 +190,7 @@ function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh
             <div className="switcher-current">
               <Avatar url={user.avatarUrl} person={{ name: user.displayName, address: user.email }} color={user.color} size="lg" />
               <strong>{user.displayName || user.email}</strong>
-              <span className="muted small">{user.email}</span>
+              {user.displayName && <span className="muted small">{user.email}</span>}
               <span className={`pill ${shared ? 'warn' : 'on'}`}>{shared ? `Shared · ${shared.roles.join(', ')}` : 'Your mailbox'}</span>
               {!shared && (
                 <button type="button" className="btn btn-outline" onClick={() => { setOpen(false); onSettings(); }}>
@@ -1091,7 +1110,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           />
           <div className="account-text">
             <strong>{user.displayName || me}</strong>
-            <span className="muted small">{me}</span>
+            {user.displayName && <span className="muted small">{me}</span>}
           </div>
           <button className="icon-btn" title="Sign out" onClick={onLogout}>
             <Icon name="logout" />
@@ -1431,6 +1450,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 {loading && <div className="loading-lines list"><span /><span /><span /><span /></div>}
                 {!loading && list.items.length === 0 && !sendingRows && (
                   <div className="empty">
+                    <Icon name={search ? 'search' : 'inbox'} size={40} className="empty-icon" />
                     {search
                       ? 'No messages match your search.'
                       : folder === 'inbox'
@@ -1440,8 +1460,11 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 )}
                 {!loading &&
                   list.items.map((item, i) => (
+                    <Fragment key={item.id}>
+                    {!UNGROUPED.has(folder) && dateGroup(item.date) !== (i ? dateGroup(list.items[i - 1].date) : null) && (
+                      <div className="row-group" role="presentation">{dateGroup(item.date)}</div>
+                    )}
                     <div
-                      key={item.id}
                       className={`row ${item.read ? '' : 'unread'} ${selected.has(item.id) ? 'selected' : ''} ${i === cursor ? 'focused' : ''} ${leaving.has(item.id) ? 'leaving' : ''}`}
                       style={{ '--i': Math.min(i, 15) }}
                       onClick={() => openAt(i)}
@@ -1508,6 +1531,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                       <span className="row-date" title={formatDate(item.date, true)}>{rowDate(item)}</span>
                       <span className="row-hover">{actionButtons([item.id], [item], { compact: true })}</span>
                     </div>
+                    </Fragment>
                   ))}
               </div>
             </div>

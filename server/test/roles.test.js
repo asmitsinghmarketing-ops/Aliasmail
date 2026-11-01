@@ -130,3 +130,25 @@ test('turning a personal mailbox into a group mailbox ends its sign-in', async (
   assert.equal((await admin.call('PATCH', `/admin/aliases/${alias.id}`, { body: { type: 'personal', password: 'new-password-1' } })).status, 200);
   assert.equal((await signIn({ email: 'team@example.com', password: 'new-password-1' })).status, 200);
 });
+
+test('four wrong passwords lock sign-in for 15 minutes, with a warning before; the admin can unlock', async () => {
+  const admin = await signIn(ADMIN);
+  const created = await admin.call('POST', '/admin/aliases', { body: { address: 'lock@example.com', password: 'lock-password' } });
+  const login = (password) => fetch(`${BASE}/auth/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' }, body: JSON.stringify({ email: 'lock@example.com', password }),
+  }).then(async (r) => ({ status: r.status, error: (await r.json()).error }));
+
+  assert.match((await login('wrong-1')).error, /3 tries left/);
+  assert.match((await login('wrong-2')).error, /2 tries left/);
+  assert.match((await login('wrong-3')).error, /One more wrong try/);
+  const locked = await login('wrong-4');
+  assert.deepEqual([locked.status, /locked for 15 minutes/.test(locked.error)], [429, true]);
+  // Even the right password is refused while locked.
+  assert.equal((await login('lock-password')).status, 429);
+
+  const listed = (await admin.call('GET', '/admin/overview')).data.aliases.find((a) => a.address === 'lock@example.com');
+  assert.ok(listed.lockedUntil);
+  const unlocked = await admin.call('POST', `/admin/aliases/${created.data.id}/unlock`);
+  assert.equal(unlocked.data.lockedUntil, undefined);
+  assert.equal((await login('lock-password')).status, 200);
+});

@@ -513,6 +513,20 @@ function Aliases({ overview, onChanged }) {
                   <button className={`toggle ${a.active ? 'on' : ''}`} onClick={() => patch(a, { active: !a.active })}>
                     {a.active ? 'Active' : 'Disabled'}
                   </button>
+                  {a.lockedUntil && (
+                    <div className="lock-cell" title="Too many wrong passwords or codes">
+                      <span className="pill warn">Locked until {new Date(a.lockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                      <button
+                        className="link small"
+                        onClick={async () => {
+                          await api(`/admin/aliases/${a.id}/unlock`, { method: 'POST' });
+                          onChanged();
+                        }}
+                      >
+                        Unlock
+                      </button>
+                    </div>
+                  )}
                 </td>
                 <td className="row-actions">
                   <button className="icon-btn" title="Edit" onClick={() => setEditing(a)}>

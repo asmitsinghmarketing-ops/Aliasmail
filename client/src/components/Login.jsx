@@ -191,6 +191,7 @@ export default function Login({ onLogin }) {
             <Logo />
             <Wordmark />
           </div>
+          <p className="login-tagline">Your email, wherever you go.</p>
           <div className="login-heading" key={step}>
             <h1>{HEADINGS[step]}</h1>
             {step === 'email' ? (
