@@ -1971,7 +1971,7 @@ button, input, select, textarea { font-family: inherit; }
 
   /* List: a table of conversations. */
   .content { border-radius: 12px; }
-  .tabs { gap: 6px; padding: 0 24px 10px; border-bottom: 0; overflow-x: auto; }
+  .tabs { gap: 6px; padding: 7px 24px; border-bottom: 0; overflow-x: auto; }
   .tab {
     flex: none; min-width: 0; height: 34px; padding: 0 14px; border: 1px solid var(--border); border-radius: 8px;
     background: var(--surface); font-size: 13px; color: #344054;
@@ -2327,3 +2327,26 @@ button, input, select, textarea { font-family: inherit; }
 }
 .alert.warning { background: #fff8e6; color: #7a4a00; border: 1px solid #f5d08a; }
 .crash-details { max-width: 100%; margin: 0; padding: 10px 12px; border-radius: 8px; background: #eef1f5; font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+
+/* Admin → Assistant → AI settings */
+.ai-settings { display: grid; gap: 16px; }
+.ai-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ai-settings-head .card-title { margin: 0; }
+.ai-settings-state { font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 999px; }
+.ai-settings-state.on { color: #067647; background: #dcfae6; }
+.ai-settings-state.off { color: #b42318; background: #fee4e2; }
+.ai-settings-field { display: grid; gap: 8px; }
+.ai-settings-label { font-weight: 600; font-size: 14px; }
+.ai-segments { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 12px; background: #eef1f5; width: fit-content; max-width: 100%; }
+.ai-segments button { border: 0; background: none; padding: 8px 14px; border-radius: 9px; font: inherit; font-weight: 500; color: var(--muted); cursor: pointer; }
+.ai-segments button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgb(16 24 40 / 15%); }
+.ai-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.ai-tabs button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 10px 14px; font: inherit; font-weight: 500; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.ai-tabs button.on { color: var(--brand); border-bottom-color: var(--brand); }
+.ai-tabs button svg { color: #16a34a; }
+.ai-provider { display: grid; gap: 10px; max-width: 640px; }
+.ai-provider .field { margin: 0; }
+.ai-provider > p { margin: 0; }
+.ai-provider-hint { margin-top: -4px !important; }
+.ai-provider-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.ai-provider-actions .btn { display: inline-flex; align-items: center; gap: 6px; }

@@ -159,6 +159,10 @@ const config = {
     // off leaves it to the model's own default.
     geminiThinking: env('GEMINI_THINKING', 'low').toLowerCase(),
     geminiUrl: env('GEMINI_API_URL', 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, ''),
+    // OpenRouter (or any OpenAI-style service via OPENROUTER_URL). The model must support tools.
+    openrouterKey: env('OPENROUTER_API_KEY'),
+    openrouterModel: env('OPENROUTER_MODEL'),
+    openrouterUrl: env('OPENROUTER_URL', 'https://openrouter.ai/api/v1').replace(/\/$/, ''),
   },
   appUrl: env('APP_URL').replace(/\/$/, ''),
   // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.

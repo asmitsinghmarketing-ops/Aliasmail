@@ -13,6 +13,8 @@ import { onlinePeople } from './live.js';
 import { meetEnabled } from './google-auth.js';
 import { assistantRead, assistantSearch } from './routes/mail.js';
 import { callGemini, geminiToolResults, geminiUserMessage } from './assistant-gemini.js';
+import { settings } from './assistant-settings.js';
+import { callOpenRouter, openrouterToolResults, openrouterUserMessage } from './assistant-openrouter.js';
 
 const MAX_STEPS = 10; // model calls for one message, tools included
 const MAX_TOKENS = 16000;
@@ -28,21 +30,42 @@ const PRICES = {
   'claude-sonnet-5-5': [2, 10, 0.2, 2.5],
   'claude-haiku-5-5': [0.1, 0.5, 0.01, 0.125],
   gemini: [0, 0, 0, 0], // Gemini's free tier
+  openrouter: [0, 0, 0, 0], // free models (paid ones are billed on OpenRouter's side)
 };
 // Models that retry a declined request on another model by themselves (server-side fallback).
 const FALLBACK_MODELS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5']);
 
-/** 'anthropic' (Claude) or 'gemini': ASSISTANT_PROVIDER, else whichever key is set (Claude first). */
+/**
+ * 'anthropic' (Claude), 'gemini' or 'openrouter': ASSISTANT_PROVIDER, else whichever key is set
+ * (Claude, then Gemini, then OpenRouter).
+ */
 export function provider() {
-  const { provider: chosen, apiKey, geminiKey } = config.assistant;
-  if (chosen === 'gemini' || chosen === 'anthropic') return chosen;
-  return apiKey || !geminiKey ? 'anthropic' : 'gemini';
+  const { provider: chosen, apiKey, geminiKey, openrouterKey } = settings();
+  if (['anthropic', 'gemini', 'openrouter'].includes(chosen)) return chosen;
+  if (apiKey) return 'anthropic';
+  if (geminiKey) return 'gemini';
+  return openrouterKey ? 'openrouter' : 'anthropic';
 }
-export const modelName = () => (provider() === 'gemini' ? config.assistant.geminiModel : config.assistant.model);
-export const assistantEnabled = () => Boolean(provider() === 'gemini' ? config.assistant.geminiKey : config.assistant.apiKey);
+export function modelName() {
+  const a = settings();
+  return { gemini: a.geminiModel, openrouter: a.openrouterModel }[provider()] ?? a.model;
+}
+export function assistantEnabled() {
+  const a = settings();
+  return Boolean({ gemini: a.geminiKey, openrouter: a.openrouterKey && a.openrouterModel }[provider()] ?? a.apiKey);
+}
 
 let client = null;
-const anthropic = () => (client ||= new Anthropic({ apiKey: config.assistant.apiKey }));
+let clientKey = '';
+// A new client when the admin changes the key.
+function anthropic() {
+  const { apiKey } = settings();
+  if (!client || clientKey !== apiKey) {
+    client = new Anthropic({ apiKey });
+    clientKey = apiKey;
+  }
+  return client;
+}
 
 /* ---------------------------------- storage ---------------------------------- */
 
@@ -67,7 +90,7 @@ export function monthUsage(month = monthKey()) {
 
 /** Usage of one model call: { input, output, cacheRead, cacheWrite } tokens. Returns its cost. */
 function record(person, model, { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }) {
-  const [inP, outP, readP, writeP] = provider() === 'gemini' ? PRICES.gemini : PRICES[model] || PRICES['claude-opus-5-5'];
+  const [inP, outP, readP, writeP] = PRICES[provider()] || PRICES[model] || PRICES['claude-opus-5-5'];
   const usd = (input * inP + output * outP + cacheRead * readP + cacheWrite * writeP) / 1e6;
   const month = (store().usage[monthKey()] ||= {});
   const u = (month[person] ||= blank());
@@ -302,17 +325,17 @@ async function runTool(name, input, me) {
 
 /** One Claude call, streamed. Same shape as callGemini(): { message, uses, stop, usage }. */
 async function callClaude({ system, history, tools, onText, onReset, signal }) {
-  const model = config.assistant.model;
+  const { model, effort } = settings();
   for (let attempt = 0; ; attempt++) {
     const stream = anthropic().beta.messages.stream(
       {
         model,
         max_tokens: MAX_TOKENS,
         system: [{ type: 'text', text: system }],
-        tools,
+        ...(tools.length && { tools }),
         messages: history,
         cache_control: { type: 'ephemeral' },
-        output_config: { effort: config.assistant.effort },
+        output_config: { effort },
         ...(FALLBACK_MODELS.has(model) && { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }),
       },
       { signal },
@@ -371,7 +394,7 @@ export async function runTurn({ chat, person, name, message, now, timeZone, emit
   const when = `[${String(now || new Date().toISOString()).slice(0, 60)}, time zone ${String(timeZone || 'UTC').slice(0, 60)}]`;
   const updates = chat.updates.splice(0);
   const asked = `${updates.length ? `${updates.join('\n')}\n\n` : ''}${when}\n\n${userText}`;
-  chat.history.push(via === 'gemini' ? geminiUserMessage(asked) : { role: 'user', content: [{ type: 'text', text: asked }] });
+  chat.history.push({ gemini: geminiUserMessage, openrouter: openrouterUserMessage }[via]?.(asked) ?? { role: 'user', content: [{ type: 'text', text: asked }] });
   if (!chat.items.length) chat.title = userText.replace(/\s+/g, ' ').slice(0, 60);
   chat.items.push({ role: 'user', text: userText, at: new Date().toISOString() });
   const reply = { role: 'assistant', parts: [], at: new Date().toISOString() };
@@ -381,8 +404,8 @@ export async function runTurn({ chat, person, name, message, now, timeZone, emit
 
   const system = `${SYSTEM}\n\nThe person is ${name || person} <${person}>.`;
   const tools = toolsFor();
-  const call = via === 'gemini' ? callGemini : callClaude;
-  const toolResults = via === 'gemini' ? geminiToolResults : claudeToolResults;
+  const call = { gemini: callGemini, openrouter: callOpenRouter }[via] ?? callClaude;
+  const toolResults = { gemini: geminiToolResults, openrouter: openrouterToolResults }[via] ?? claudeToolResults;
   let spent = 0;
 
   for (let step = 0; step < MAX_STEPS; step++) {
@@ -444,7 +467,7 @@ export async function runTurn({ chat, person, name, message, now, timeZone, emit
       }
     }
     // The model's turn and its results go in together, so the history always stays valid.
-    chat.history.push(response.message, toolResults(results));
+    chat.history.push(response.message, ...[].concat(toolResults(results)));
     chat.updatedAt = new Date().toISOString();
     save();
     if (step === MAX_STEPS - 1) {
@@ -455,6 +478,18 @@ export async function runTurn({ chat, person, name, message, now, timeZone, emit
   chat.updatedAt = new Date().toISOString();
   save();
   return { spent };
+}
+
+/** One tiny request with the current settings, to check the key and model: { reply, ms }. */
+export async function testConnection() {
+  const via = provider();
+  const ask = 'Reply with just the word OK.';
+  const history = [{ gemini: geminiUserMessage, openrouter: openrouterUserMessage }[via]?.(ask) ?? { role: 'user', content: [{ type: 'text', text: ask }] }];
+  const call = { gemini: callGemini, openrouter: callOpenRouter }[via] ?? callClaude;
+  const started = Date.now();
+  let reply = '';
+  await call({ system: 'This is a connection test.', history, tools: [], onText: (t) => { reply += t; }, onReset: () => { reply = ''; } });
+  return { provider: via, model: modelName(), ms: Date.now() - started, reply: reply.trim().slice(0, 100) };
 }
 
 export { friendly };

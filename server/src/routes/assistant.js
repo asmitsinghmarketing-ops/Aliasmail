@@ -8,10 +8,17 @@ import { HttpError } from '../errors.js';
 import { personOf, teammates } from '../team.js';
 import { meetEnabled } from '../google-auth.js';
 import { audit } from '../audit.js';
-import { assistantEnabled, modelName, provider, chatsOf, checkLimits, findChat, friendly, monthUsage, newChat, runTurn, settleCard, store } from '../assistant.js';
+import { describeSettings, settings, updateSettings } from '../assistant-settings.js';
+import { assistantEnabled, modelName, provider, chatsOf, checkLimits, findChat, friendly, monthUsage, newChat, runTurn, settleCard, store, testConnection } from '../assistant.js';
 
 const router = Router();
 router.use(requireAuth());
+
+// Why the Assistant is off, for the person trying to use it.
+const notSetUp = () =>
+  provider() === 'openrouter' && settings().openrouterKey
+    ? 'The Assistant needs a model: the admin sets OPENROUTER_MODEL to a free model that supports tools (openrouter.ai/models).'
+    : 'The Assistant isn’t set up yet. The admin needs to add ANTHROPIC_API_KEY (or GEMINI_API_KEY / OPENROUTER_API_KEY for testing).';
 
 const running = new Map(); // chat id -> AbortController, while answering
 
@@ -37,7 +44,7 @@ router.get('/chats', (req, res) => {
 });
 
 router.post('/chats', (req, res) => {
-  if (!assistantEnabled()) throw new HttpError(503, 'The Assistant isn’t set up yet. The admin needs to add ANTHROPIC_API_KEY (or GEMINI_API_KEY for testing).');
+  if (!assistantEnabled()) throw new HttpError(503, notSetUp());
   res.status(201).json(listView(newChat(personOf(req.user))));
 });
 
@@ -61,7 +68,7 @@ router.delete('/chats/:id', (req, res) => {
  * No long-lived response, so hosting proxies that hold streamed responses back don't matter.
  */
 router.post('/chats/:id/messages', (req, res) => {
-  if (!assistantEnabled()) throw new HttpError(503, 'The Assistant isn’t set up yet. The admin needs to add ANTHROPIC_API_KEY (or GEMINI_API_KEY for testing).');
+  if (!assistantEnabled()) throw new HttpError(503, notSetUp());
   const me = personOf(req.user);
   const chat = findChat(me, req.params.id);
   if (running.has(chat.id)) throw new HttpError(409, 'Still answering the last message');
@@ -107,12 +114,36 @@ router.get('/usage', requireAuth('admin'), (req, res) => {
     enabled: assistantEnabled(),
     provider: provider(),
     model: modelName(),
-    effort: provider() === 'gemini' ? null : config.assistant.effort,
+    effort: provider() === 'anthropic' ? settings().effort : null,
     limits: store().limits,
     month: usage.month,
     total: usage.total,
     people: Object.entries(usage.people).map(([address, u]) => ({ address, name: names[address] || '', ...u })).sort((a, b) => b.usd - a.usd),
   });
+});
+
+/** The AI provider, keys (only whether set and their last 4 characters) and models. */
+router.get('/settings', requireAuth('admin'), (req, res) => {
+  res.json({ ...describeSettings(), inUse: { provider: provider(), model: modelName(), enabled: assistantEnabled() } });
+});
+
+/** Change them: { provider, keys: { anthropic|gemini|openrouter: string | null }, model, effort, ... }. */
+router.put('/settings', requireAuth('admin'), (req, res) => {
+  const body = req.body ?? {};
+  const saved = updateSettings(body);
+  const keys = Object.entries(body.keys || {}).map(([p, v]) => `${p} key ${v ? 'set' : 'removed'}`);
+  audit(req, 'assistant-settings', req.user.email, [body.provider !== undefined && `provider ${body.provider || 'automatic'}`, ...keys].filter(Boolean).join(', ') || 'models');
+  res.json({ ...saved, inUse: { provider: provider(), model: modelName(), enabled: assistantEnabled() } });
+});
+
+/** Send one tiny request with the current settings and say how it went. */
+router.post('/settings/test', requireAuth('admin'), async (req, res) => {
+  if (!assistantEnabled()) throw new HttpError(400, notSetUp());
+  try {
+    res.json({ ok: true, ...(await testConnection()) });
+  } catch (err) {
+    res.json({ ok: false, provider: provider(), model: modelName(), error: friendly(err) });
+  }
 });
 
 router.put('/limits', requireAuth('admin'), (req, res) => {

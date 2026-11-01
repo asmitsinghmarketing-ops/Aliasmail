@@ -1,9 +1,11 @@
-// Admin → Assistant: this month's Claude usage per person (tokens and estimated cost) and the
-// monthly spending limits that stop the Assistant once reached.
+// Admin → Assistant: the AI settings (provider, key, model), this month's usage per person (tokens
+// and estimated cost) and the monthly spending limits that stop the Assistant once reached.
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import AdminAiSettings from './AdminAiSettings.jsx';
 import Icon from './Icon.jsx';
 
+const PROVIDERS = { anthropic: 'Claude', gemini: 'Google Gemini (free tier)', openrouter: 'OpenRouter' };
 const usd = (n) => `$${(n || 0).toFixed(2)}`;
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 
@@ -41,17 +43,12 @@ export default function AdminAssistant() {
 
   return (
     <div className="ai-admin">
-      {!data.enabled && (
-        <div className="alert">
-          The Assistant is off. Add <code>ANTHROPIC_API_KEY</code> (Claude, from console.anthropic.com) or, for testing,
-          <code> GEMINI_API_KEY</code> (Google Gemini, from aistudio.google.com) in the hosting’s environment variables, then restart Nextspace.
-        </div>
-      )}
-      {data.enabled && data.provider === 'gemini' && (
+      <AdminAiSettings onChanged={load} />
+      {data.enabled && data.provider !== 'anthropic' && (
         <div className="alert warning">
-          <strong>Test mode: Google Gemini.</strong> On Gemini’s free tier Google may use what is sent (including email
-          content the Assistant reads) to improve its products. Use it for testing, and switch to Claude
-          (<code>ANTHROPIC_API_KEY</code>) for real company mail.
+          <strong>Test mode: {PROVIDERS[data.provider]}.</strong> With free models, the provider may keep or use what is
+          sent (including email content the Assistant reads) to improve its products. Use it for testing, and switch to
+          Claude in AI settings for real company mail.
         </div>
       )}
 
@@ -67,7 +64,7 @@ export default function AdminAssistant() {
           )}
         </div>
         <div className="card speed-tile">
-          <span className="muted small">Requests to Claude</span>
+          <span className="muted small">Requests to the AI</span>
           <strong>{data.total.requests}</strong>
           <span className="muted small">{tokens(cached)} tokens read · {tokens(data.total.output)} written</span>
         </div>
@@ -77,10 +74,10 @@ export default function AdminAssistant() {
           <span className="muted small">of input reused at a tenth of the price</span>
         </div>
         <div className="card speed-tile">
-          <span className="muted small">{data.provider === 'gemini' ? 'Google Gemini (free tier)' : 'Claude'}</span>
+          <span className="muted small">{PROVIDERS[data.provider]}</span>
           <strong className="ai-admin-model">{data.model}</strong>
           <span className="muted small">
-            {data.provider === 'gemini' ? 'change with GEMINI_MODEL' : `effort: ${data.effort} · change with ASSISTANT_MODEL / ASSISTANT_EFFORT`}
+            {{ gemini: 'change with GEMINI_MODEL', openrouter: 'change with OPENROUTER_MODEL' }[data.provider] ?? `effort: ${data.effort} · change with ASSISTANT_MODEL / ASSISTANT_EFFORT`}
           </span>
         </div>
       </div>
@@ -105,7 +102,7 @@ export default function AdminAssistant() {
             ))}
           </div>
         )}
-        <p className="muted small">Costs are estimates from Anthropic’s list prices; your Anthropic invoice is the final word.</p>
+        <p className="muted small">Costs are estimates from list prices (free models count as $0); the provider’s own invoice is the final word.</p>
       </section>
 
       <section className="card speed-card">
