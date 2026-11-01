@@ -59,8 +59,14 @@ export async function callGemini({ system, history, tools, onText, signal: cance
   const { geminiKey, geminiModel, geminiUrl, geminiThinking } = config.assistant;
   const started = Date.now();
   // Never wait forever: a call that takes longer than this ends with a message.
-  const timeout = AbortSignal.timeout(CALL_TIMEOUT_MS);
-  const signal = cancel ? AbortSignal.any([cancel, timeout]) : timeout;
+  // (Combined by hand: AbortSignal.any() needs Node 20, and the host may run an older one.)
+  const both = new AbortController();
+  const timer = setTimeout(() => both.abort(), CALL_TIMEOUT_MS);
+  timer.unref?.();
+  const timeout = { get aborted() { return both.signal.aborted && !cancel?.aborted; } };
+  if (cancel?.aborted) both.abort();
+  else cancel?.addEventListener('abort', () => both.abort(), { once: true });
+  const signal = both.signal;
   const tooSlow = () => new HttpError(504, 'Gemini took too long to answer. Try again, or ask something shorter.');
   const send = (thinking) =>
     fetch(`${geminiUrl}/models/${encodeURIComponent(geminiModel)}:streamGenerateContent?alt=sse`, {
@@ -144,6 +150,7 @@ export async function callGemini({ system, history, tools, onText, signal: cance
         ? 'max_tokens'
         : 'end';
   const cached = usage.cachedContentTokenCount || 0;
+  clearTimeout(timer);
   // In the host's logs: where the time goes (no message content).
   console.info(`[assistant] gemini ${geminiModel}: first reply ${firstByte} ms, total ${Date.now() - started} ms, ${uses.length} tool call(s), ${usage.thoughtsTokenCount || 0} thinking tokens`);
   return {
