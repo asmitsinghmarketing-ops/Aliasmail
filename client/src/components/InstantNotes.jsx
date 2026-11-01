@@ -1,14 +1,27 @@
 // Instant notes: quick private messages between teammates, with files, delivered at once over
-// the mailbox's live connection. Never sent by email.
+// the live connection (live.js), with who is online and typing. Never sent by email.
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { formatDate, formatSize } from '../format.js';
+import { notify, onlineNow, request, subscribe } from '../live.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const IMAGE = /^image\/(png|jpeg|gif|webp)$/;
+const TYPING_EVERY_MS = 2500; // how often "typing" is sent while someone types
+const TYPING_SHOWN_MS = 4000; // how long "typing…" stays after the last one arrives
+
+/** Over the socket when it's open; through the plain API when it couldn't be sent. */
+async function viaLive(message, path, body) {
+  try {
+    return await request(message);
+  } catch (err) {
+    if (!err.offline) throw err;
+    return { http: await api(path, { method: 'POST', body }) };
+  }
+}
 
 const readBase64 = (file) =>
   new Promise((resolve, reject) => {
@@ -33,11 +46,40 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [online, setOnline] = useState(onlineNow); // addresses online; null when unknown
+  const [typing, setTyping] = useState({}); // address -> when "typing" last arrived
+  const [, setTick] = useState(0);
   const bottom = useRef(null);
   const picker = useRef(null);
+  const lastTyping = useRef(0);
+  const current = useRef(null);
+  current.current = person;
 
   const loadThreads = () => api('/notes/threads').then(setThreads).catch((err) => setError(err.message));
   useEffect(() => { loadThreads(); }, []);
+
+  // Who is online and typing, and "Seen" the moment a note is read.
+  useEffect(() => subscribe((message) => {
+    if (['hello', 'closed', 'presence'].includes(message.type)) setOnline(onlineNow());
+    else if (message.type === 'typing') {
+      setTyping((t) => ({ ...t, [message.from]: Date.now() }));
+    } else if (message.type === 'note') {
+      setTyping((t) => ({ ...t, [message.note.from]: 0 }));
+    } else if (message.type === 'note-read' && current.current?.address === message.by) {
+      setNotes((list) => list.map((n) => (n.to === message.by ? { ...n, read: true } : n)));
+    }
+  }), []);
+
+  // "typing…" fades by itself when no more arrive.
+  const typingNow = (address) => Date.now() - (typing[address] || 0) < TYPING_SHOWN_MS;
+  const anyTyping = Object.keys(typing).some(typingNow);
+  useEffect(() => {
+    if (!anyTyping) return undefined;
+    const timer = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, [anyTyping]);
+
+  const isOnline = (t) => (online ? online.has(t.address) : Boolean(t.online));
 
   useEffect(() => {
     if (startWith && threads) {
@@ -66,7 +108,8 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   useEffect(() => bottom.current?.scrollIntoView({ block: 'end' }), [notes]);
 
   async function markRead(address) {
-    const { changed } = await api('/notes/read', { method: 'POST', body: { with: address } }).catch(() => ({ changed: 0 }));
+    const answer = await viaLive({ type: 'read', with: address }, '/notes/read', { with: address }).catch(() => ({}));
+    const changed = answer.http ? answer.http.changed : answer.changed;
     if (changed) onRead(changed);
   }
 
@@ -99,7 +142,9 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
     setError('');
     try {
       const body = { to: person.address, text, files: await Promise.all(files.map(async (f) => ({ name: f.name, type: f.type, data: await readBase64(f) }))) };
-      const note = await api('/notes', { method: 'POST', body });
+      const answer = await viaLive({ type: 'note', ...body }, '/notes', body);
+      const note = answer.http || answer.note;
+      lastTyping.current = 0;
       setNotes((list) => (list.some((n) => n.id === note.id) ? list : [...list, note]));
       setText('');
       setFiles([]);
@@ -119,10 +164,15 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
             <button type="button" className="icon-btn" aria-label="All notes" onClick={() => { setPerson(null); loadThreads(); }}>
               <Icon name="back" />
             </button>
-            <Avatar url={person.avatarUrl} person={person} color={person.color} size="sm" />
+            <span className="presence-wrap">
+              <Avatar url={person.avatarUrl} person={person} color={person.color} size="sm" />
+              {isOnline(person) && <span className="presence-dot" title="Online" />}
+            </span>
             <div className="notes-who">
               <strong>{nameOf(person)}</strong>
-              <span className="muted small">{person.address}</span>
+              <span className={`small ${typingNow(person.address) ? 'notes-typing' : 'muted'}`}>
+                {typingNow(person.address) ? 'typing…' : isOnline(person) ? 'Online now' : person.address}
+              </span>
             </div>
           </>
         ) : (
@@ -142,14 +192,17 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
           {threads?.length === 0 && <div className="muted notes-empty">Nobody else on your team yet. The admin adds people in the Admin console.</div>}
           {threads?.map((t) => (
             <button key={t.address} type="button" className={`notes-thread ${t.unread ? 'unread' : ''}`} onClick={() => open(t)}>
-              <Avatar url={t.avatarUrl} person={t} color={t.color} />
+              <span className="presence-wrap">
+                <Avatar url={t.avatarUrl} person={t} color={t.color} />
+                {isOnline(t) && <span className="presence-dot" title="Online" />}
+              </span>
               <span className="notes-thread-text">
                 <span className="notes-thread-top">
                   <strong>{nameOf(t)}</strong>
                   {t.last && <span className="muted small">{formatDate(t.last.at)}</span>}
                 </span>
-                <span className="muted small notes-preview">
-                  {t.last
+                <span className={`small notes-preview ${typingNow(t.address) ? 'notes-typing' : 'muted'}`}>
+                  {typingNow(t.address) ? 'typing…' : t.last
                     ? `${t.last.from === me ? 'You: ' : ''}${t.last.text || (t.last.files.length ? `Attachment: ${t.last.files.map((f) => f.name).join(', ')}` : '')}`
                     : 'Send the first note'}
                 </span>
@@ -214,7 +267,13 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
                 maxLength={4000}
                 placeholder={`Note to ${nameOf(person)}…`}
                 value={text}
-                onChange={(e) => setText(e.target.value)}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  if (e.target.value && Date.now() - lastTyping.current > TYPING_EVERY_MS) {
+                    lastTyping.current = Date.now();
+                    notify({ type: 'typing', to: person.address });
+                  }
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) send(e);
                 }}

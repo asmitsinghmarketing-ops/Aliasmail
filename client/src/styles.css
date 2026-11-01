@@ -2093,3 +2093,24 @@ button, input, select, textarea { font-family: inherit; }
 @media (max-width: 800px) {
   .notes-panel { width: 100vw; border-left: 0; }
 }
+
+/* Instant notes: who is online (a green dot on the picture) and "typing…" */
+.presence-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.presence-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #1e9e5a;
+  box-shadow: 0 0 0 2px var(--surface, #fff);
+}
+.notes-typing {
+  color: var(--brand);
+  font-style: italic;
+}

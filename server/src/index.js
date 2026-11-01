@@ -12,6 +12,7 @@ import { driveEnabled } from './google-auth.js';
 import authRoutes from './routes/auth.js';
 import mailRoutes from './routes/mail.js';
 import notesRoutes from './routes/notes.js';
+import { attachLive } from './live.js';
 import adminRoutes from './routes/admin.js';
 
 // Log what kills the process, so the host's runtime logs show why requests got a 502.
@@ -131,7 +132,9 @@ app.use((err, req, res, next) => {
   res.status([502, 503, 504].includes(status) ? 500 : status).json({ error: message || 'Something went wrong' });
 });
 
-app.listen(config.port, () => console.log(`Nextspace API running on http://localhost:${config.port}`));
+const server = app.listen(config.port, () => console.log(`Nextspace API running on http://localhost:${config.port}`));
+// Live WebSocket for the mailbox: mail changes, instant notes, who is online and typing.
+attachLive(server);
 checkDeployment();
 
 if (config.configured) {
