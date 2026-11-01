@@ -105,7 +105,9 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
     loadThreads();
   }, [incoming]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => bottom.current?.scrollIntoView({ block: 'end' }), [notes]);
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: 'end' });
+  }, [notes]);
 
   async function markRead(address) {
     const answer = await viaLive({ type: 'read', with: address }, '/notes/read', { with: address }).catch(() => ({}));

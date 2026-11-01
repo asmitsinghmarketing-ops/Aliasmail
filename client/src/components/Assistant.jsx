@@ -201,7 +201,9 @@ export default function Assistant({ status, onClose, actions }) {
 
   const loadChats = () => api('/assistant/chats').then(setChats).catch(() => {});
   useEffect(() => { if (enabled) loadChats(); }, [enabled]);
-  useEffect(() => bottom.current?.scrollIntoView({ block: 'end' }), [items]);
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: 'end' });
+  }, [items]);
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && !busy && onClose();
     window.addEventListener('keydown', onKey);
