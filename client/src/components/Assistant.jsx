@@ -6,6 +6,8 @@ import { api } from '../api.js';
 import { formatDate } from '../format.js';
 import Icon from './Icon.jsx';
 
+const POLL_MS = 700; // how often the answer being written is read
+
 const SUGGESTIONS = [
   { text: 'Summarise my unread mail', icon: 'inbox' },
   { text: 'What needs a reply from me today?', icon: 'reply' },
@@ -193,7 +195,6 @@ export default function Assistant({ status, onClose, actions }) {
   const [error, setError] = useState('');
   const [spent, setSpent] = useState(status?.spentUsd || 0);
   const [showChats, setShowChats] = useState(false);
-  const stopper = useRef(null);
   const bottom = useRef(null);
   const box = useRef(null);
   const enabled = Boolean(status?.enabled);
@@ -206,7 +207,6 @@ export default function Assistant({ status, onClose, actions }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [busy, onClose]);
-  useEffect(() => () => stopper.current?.abort(), []);
 
   async function openChat(id) {
     setShowChats(false);
@@ -215,13 +215,19 @@ export default function Assistant({ status, onClose, actions }) {
     try {
       const chat = await api(`/assistant/chats/${id}`);
       setItems(chat.items);
+      if (chat.running) follow(id);
+      else {
+        polling.current += 1;
+        setBusy(false);
+      }
     } catch (err) {
       setError(err.message);
     }
   }
 
   function newChat() {
-    stopper.current?.abort();
+    polling.current += 1;
+    setBusy(false);
     setShowChats(false);
     setChatId(null);
     setItems([]);
@@ -235,38 +241,48 @@ export default function Assistant({ status, onClose, actions }) {
     loadChats();
   }
 
-  // Changes to the reply being written (always the last item).
-  const updateReply = (fn) =>
-    setItems((list) => {
-      const last = list.at(-1);
-      if (!last || last.role !== 'assistant') return list;
-      return [...list.slice(0, -1), { ...last, parts: fn(last.parts || []) }];
-    });
-
-  function handle(event, data) {
-    if (event === 'delta') {
-      updateReply((parts) => {
-        const last = parts.at(-1);
-        return last?.type === 'text' ? [...parts.slice(0, -1), { ...last, text: last.text + data.text }] : [...parts, { type: 'text', text: data.text }];
-      });
-    } else if (event === 'reset') {
-      updateReply((parts) => (parts.at(-1)?.type === 'text' ? parts.slice(0, -1) : parts));
-    } else if (event === 'step') {
-      updateReply((parts) => [...parts, { type: 'step', text: data.text }]);
-    } else if (event === 'card') {
-      updateReply((parts) => [...parts, { type: 'card', card: data }]);
-    } else if (event === 'error') {
-      updateReply((parts) => [...parts, { type: 'error', text: data.error }]);
-    } else if (event === 'done') {
-      setSpent(data.spentUsd);
+  // The answer being written: the server keeps it in the chat, and this reads it every moment
+  // until it's done (plain short requests, which every hosting proxy passes straight through).
+  const polling = useRef(0);
+  async function follow(id) {
+    const run = ++polling.current;
+    setBusy(true);
+    try {
+      for (let errors = 0; run === polling.current; ) {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        if (run !== polling.current) return;
+        let chat;
+        try {
+          chat = await api(`/assistant/chats/${id}`);
+          errors = 0;
+        } catch (err) {
+          if (++errors >= 5) throw err;
+          continue;
+        }
+        if (run !== polling.current) return;
+        setSpent(chat.spentUsd ?? 0);
+        setItems(chat.running ? chat.items.map((item, i) => (i === chat.items.length - 1 && item.role === 'assistant' ? { ...item, live: true } : item)) : chat.items);
+        if (!chat.running) break;
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      if (run === polling.current) {
+        setBusy(false);
+        loadChats();
+      }
     }
+  }
+  useEffect(() => () => { polling.current += 1; }, []);
+
+  async function stop() {
+    if (chatId) await api(`/assistant/chats/${chatId}/stop`, { method: 'POST' }).catch(() => {});
   }
 
   async function ask(text) {
     const message = text.trim();
     if (!message || busy || !enabled) return;
     setError('');
-    setBusy(true);
     setInput('');
     let id = chatId;
     try {
@@ -275,48 +291,16 @@ export default function Assistant({ status, onClose, actions }) {
         setChatId(id);
       }
       setItems((list) => [...list, { role: 'user', text: message }, { role: 'assistant', parts: [], live: true }]);
-      const controller = new AbortController();
-      stopper.current = controller;
-      const res = await fetch(`/api/assistant/chats/${id}/messages`, {
+      setBusy(true);
+      await api(`/assistant/chats/${id}/messages`, {
         method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'X-Requested-With': 'AliasMail', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, now: localNow(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-        signal: controller.signal,
+        body: { message, now: localNow(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error(data?.error || `Request failed (${res.status})`);
-      }
-      // Server-Sent Events from a POST: read them off the response body.
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let cut;
-        while ((cut = buffer.indexOf('\n\n')) >= 0) {
-          const block = buffer.slice(0, cut);
-          buffer = buffer.slice(cut + 2);
-          const event = /^event: (.*)$/m.exec(block)?.[1];
-          const data = /^data: (.*)$/m.exec(block)?.[1];
-          if (event && data) handle(event, JSON.parse(data));
-        }
-      }
+      follow(id);
     } catch (err) {
-      if (err.name !== 'AbortError') {
-        setError(err.message);
-        setItems((list) => (list.at(-1)?.role === 'assistant' && !(list.at(-1).parts || []).length ? list.slice(0, -1) : list));
-      } else {
-        updateReply((parts) => [...parts, { type: 'error', text: 'Stopped.' }]);
-      }
-    } finally {
-      stopper.current = null;
-      setItems((list) => list.map((item) => (item.live ? { ...item, live: false } : item)));
+      setError(err.message);
+      setItems((list) => (list.at(-1)?.role === 'assistant' && !(list.at(-1).parts || []).length ? list.slice(0, -1) : list));
       setBusy(false);
-      loadChats();
     }
   }
 
@@ -455,7 +439,7 @@ export default function Assistant({ status, onClose, actions }) {
               }}
             />
             {busy ? (
-              <button type="button" className="ai-send stop" aria-label="Stop" onClick={() => stopper.current?.abort()}>
+              <button type="button" className="ai-send stop" aria-label="Stop" onClick={stop}>
                 <span className="ai-stop-square" />
               </button>
             ) : (
@@ -467,7 +451,7 @@ export default function Assistant({ status, onClose, actions }) {
           <p className="ai-foot muted small">
             The Assistant can make mistakes, so check what it writes. Nothing is sent until you press Send.
             {status?.provider === 'gemini' && ' · Test mode (Google Gemini)'}
-            {enabled && spent > 0 && ` · This month: ${spent.toFixed(2)}`}
+            {enabled && spent > 0 && ` · This month: US$${spent.toFixed(2)}`}
           </p>
         </form>
       </div>

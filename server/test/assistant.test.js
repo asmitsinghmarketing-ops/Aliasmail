@@ -82,7 +82,18 @@ async function cookieFor(credentials) {
   return res.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
 }
 
-const events = (text) => text.split('\n\n').map((block) => ({ event: /^event: (.*)$/m.exec(block)?.[1], data: /^data: (.*)$/m.exec(block)?.[1] })).filter((e) => e.event).map((e) => ({ event: e.event, data: JSON.parse(e.data) }));
+// Sends a message, then reads the chat until the answer is finished (as the browser does).
+async function answered(call, chatId, body) {
+  const res = await call(`/assistant/chats/${chatId}/messages`, { method: 'POST', body: JSON.stringify(body) });
+  assert.equal(res.status, 202);
+  for (let i = 0; i < 100; i++) {
+    const chat = await (await call(`/assistant/chats/${chatId}`)).json();
+    if (!chat.running) return chat.items.at(-1).parts;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error('no answer');
+}
+const textOf = (parts) => parts.filter((p) => p.type === 'text').map((p) => p.text).join('');
 
 test('a turn searches mail, prepares an email card and answers; usage and limits are kept', async () => {
   const admin = await cookieFor(ADMIN);
@@ -90,13 +101,10 @@ test('a turn searches mail, prepares an email card and answers; usage and limits
 
   assert.equal((await (await call('/assistant/status')).json()).enabled, true);
   const chat = await (await call('/assistant/chats', { method: 'POST' })).json();
-  const res = await call(`/assistant/chats/${chat.id}/messages`, { method: 'POST', body: JSON.stringify({ message: 'Reply to Prince about the proposal', now: 'Sunday 1 November 2026, 15:30', timeZone: 'Asia/Kolkata' }) });
-  assert.equal(res.status, 200);
-  const got = events(await res.text());
-  const kinds = got.map((e) => e.event);
-  assert.deepEqual([...new Set(kinds)], ['delta', 'step', 'card', 'done']);
-  assert.equal(got.filter((e) => e.event === 'delta').map((e) => e.data.text).join(''), 'Let me look.Your reply is ready. Check the card and press **Send**.');
-  const card = got.find((e) => e.event === 'card').data;
+  const parts = await answered(call, chat.id, { message: 'Reply to Prince about the proposal', now: 'Sunday 1 November 2026, 15:30', timeZone: 'Asia/Kolkata' });
+  assert.deepEqual(parts.map((p) => p.type), ['text', 'step', 'step', 'card', 'text']);
+  assert.equal(textOf(parts), 'Let me look.Your reply is ready. Check the card and press **Send**.');
+  const card = parts.find((p) => p.type === 'card').card;
   assert.deepEqual([card.kind, card.status, card.data.to, card.data.subject], ['email', 'pending', ['prince@client.test'], 'Phase 1']);
 
   // What went to Claude: tools, caching, the fallback opt-in, the person's time, then the results.

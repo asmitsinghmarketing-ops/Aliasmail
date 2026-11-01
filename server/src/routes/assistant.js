@@ -13,7 +13,7 @@ import { assistantEnabled, modelName, provider, chatsOf, checkLimits, findChat, 
 const router = Router();
 router.use(requireAuth());
 
-const running = new Set(); // chat ids answering right now
+const running = new Map(); // chat id -> AbortController, while answering
 
 const listView = (c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt });
 
@@ -43,7 +43,8 @@ router.post('/chats', (req, res) => {
 
 router.get('/chats/:id', (req, res) => {
   const chat = findChat(personOf(req.user), req.params.id);
-  res.json({ ...listView(chat), items: chat.items, running: running.has(chat.id) });
+  const me = personOf(req.user);
+  res.json({ ...listView(chat), items: chat.items, running: running.has(chat.id), spentUsd: monthUsage().people[me]?.usd || 0 });
 });
 
 router.delete('/chats/:id', (req, res) => {
@@ -54,61 +55,41 @@ router.delete('/chats/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-/** Ask something: { message, now, timeZone }. The answer streams back as events. */
-router.post('/chats/:id/messages', async (req, res) => {
+/**
+ * Ask something: { message, now, timeZone }. Answers 202 at once; the answer is written into
+ * the chat as it comes, and the browser reads it with GET /chats/:id (`running` until done).
+ * No long-lived response, so hosting proxies that hold streamed responses back don't matter.
+ */
+router.post('/chats/:id/messages', (req, res) => {
   if (!assistantEnabled()) throw new HttpError(503, 'The Assistant isn’t set up yet. The admin needs to add ANTHROPIC_API_KEY (or GEMINI_API_KEY for testing).');
   const me = personOf(req.user);
   const chat = findChat(me, req.params.id);
   if (running.has(chat.id)) throw new HttpError(409, 'Still answering the last message');
   checkLimits(me);
+  const body = req.body ?? {};
+  if (!String(body.message || '').trim()) throw new HttpError(400, 'Write a message');
 
-  running.add(chat.id);
-  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store, no-transform', 'X-Accel-Buffering': 'no' });
-  res.flushHeaders();
-  res.socket?.setNoDelay(true);
-  // Some hosting proxies hold small writes back; text is sent in short batches, each padded.
-  const pad = `:${' '.repeat(2048)}\n\n`;
-  let pending = '';
-  let timer = null;
-  const write = (event, data) => !res.writableEnded && res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n${pad}`);
-  const flushText = () => {
-    clearTimeout(timer);
-    timer = null;
-    if (pending) write('delta', { text: pending });
-    pending = '';
-  };
-  const emit = (event, data) => {
-    if (event === 'delta') {
-      pending += data.text;
-      timer ||= setTimeout(flushText, 150);
-      return;
-    }
-    flushText();
-    write(event, data);
-  };
   const abort = new AbortController();
-  res.on('close', () => !res.writableFinished && abort.abort());
-
-  try {
-    const body = req.body ?? {};
-    const name = teammates().find((p) => p.address === me)?.name || '';
-    await runTurn({ chat, person: me, name, message: body.message, now: body.now, timeZone: body.timeZone, emit, signal: abort.signal });
-    flushText();
-    write('done', { spentUsd: monthUsage().people[me]?.usd || 0, title: chat.title });
-  } catch (err) {
-    if (!abort.signal.aborted) {
-      const error = friendly(err);
-      if (!(err instanceof HttpError)) console.warn('[assistant]', error);
-      chat.items.at(-1)?.parts?.push({ type: 'error', text: error });
+  running.set(chat.id, abort);
+  const name = teammates().find((p) => p.address === me)?.name || '';
+  runTurn({ chat, person: me, name, message: body.message, now: body.now, timeZone: body.timeZone, emit: () => {}, signal: abort.signal })
+    .catch((err) => {
+      const error = abort.signal.aborted ? 'Stopped.' : friendly(err);
+      if (!abort.signal.aborted && !(err instanceof HttpError)) console.warn('[assistant]', error);
+      const last = chat.items.at(-1);
+      if (last?.role === 'assistant') last.parts.push({ type: 'error', text: error });
+      else chat.items.push({ role: 'assistant', parts: [{ type: 'error', text: error }], at: new Date().toISOString() });
       save();
-      flushText();
-      write('error', { error, final: true });
-    }
-  } finally {
-    clearTimeout(timer);
-    running.delete(chat.id);
-    res.end();
-  }
+    })
+    .finally(() => running.delete(chat.id));
+  res.status(202).json({ ok: true });
+});
+
+/** Stop the answer being written. */
+router.post('/chats/:id/stop', (req, res) => {
+  const chat = findChat(personOf(req.user), req.params.id);
+  running.get(chat.id)?.abort();
+  res.json({ ok: true });
 });
 
 /** The person pressed Send / Create, or Cancel: { status: 'done' | 'cancelled', detail }. */

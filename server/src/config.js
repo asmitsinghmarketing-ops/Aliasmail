@@ -155,6 +155,9 @@ const config = {
     provider: env('ASSISTANT_PROVIDER').toLowerCase(),
     geminiKey: env('GEMINI_API_KEY'),
     geminiModel: env('GEMINI_MODEL', 'gemini-3.8-flash'),
+    // How much Gemini thinks before answering: low is much faster; high for harder requests;
+    // off leaves it to the model's own default.
+    geminiThinking: env('GEMINI_THINKING', 'low').toLowerCase(),
     geminiUrl: env('GEMINI_API_URL', 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, ''),
   },
   appUrl: env('APP_URL').replace(/\/$/, ''),

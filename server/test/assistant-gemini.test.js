@@ -70,7 +70,18 @@ test.after(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-const events = (text) => text.split('\n\n').map((b) => ({ event: /^event: (.*)$/m.exec(b)?.[1], data: /^data: (.*)$/m.exec(b)?.[1] })).filter((e) => e.event).map((e) => ({ event: e.event, data: JSON.parse(e.data) }));
+// Sends a message, then reads the chat until the answer is finished (as the browser does).
+async function answered(call, chatId, body) {
+  const res = await call(`/assistant/chats/${chatId}/messages`, { method: 'POST', body: JSON.stringify(body) });
+  assert.equal(res.status, 202);
+  for (let i = 0; i < 100; i++) {
+    const chat = await (await call(`/assistant/chats/${chatId}`)).json();
+    if (!chat.running) return chat.items.at(-1).parts;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error('no answer');
+}
+const textOf = (parts) => parts.filter((p) => p.type === 'text').map((p) => p.text).join('');
 
 test('with only a Gemini key, the Assistant uses Gemini: tools, cards and streaming work', async () => {
   const login = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: HEADERS, body: JSON.stringify(ADMIN) });
@@ -81,12 +92,10 @@ test('with only a Gemini key, the Assistant uses Gemini: tools, cards and stream
   assert.deepEqual([status.enabled, status.provider, status.model], [true, 'gemini', 'gemini-test-model']);
 
   const chat = await (await call('/assistant/chats', { method: 'POST' })).json();
-  const res = await call(`/assistant/chats/${chat.id}/messages`, { method: 'POST', body: JSON.stringify({ message: 'Ask the vendor to resend the invoice', timeZone: 'Asia/Kolkata' }) });
-  const got = events(await res.text());
-  assert.equal(got.filter((e) => e.event === 'delta').map((e) => e.data.text).join(''), 'Looking for it.The email is ready to send.');
-  const card = got.find((e) => e.event === 'card').data;
+  const parts = await answered(call, chat.id, { message: 'Ask the vendor to resend the invoice', timeZone: 'Asia/Kolkata' });
+  assert.equal(textOf(parts), 'Looking for it.The email is ready to send.');
+  const card = parts.find((p) => p.type === 'card').card;
   assert.deepEqual([card.kind, card.data.to, card.status], ['email', ['billing@vendor.test'], 'pending']);
-  assert.ok(got.some((e) => e.event === 'done'));
 
   // The request: the key in a header (not the URL), the model, function declarations.
   const first = requests[0];
@@ -96,6 +105,7 @@ test('with only a Gemini key, the Assistant uses Gemini: tools, cards and stream
   assert.deepEqual(names, ['search_mail', 'read_email', 'list_team', 'draft_email', 'send_note']);
   assert.equal(first.body.tools[0].functionDeclarations.find((f) => f.name === 'list_team').parameters, undefined);
   assert.match(first.body.systemInstruction.parts[0].text, /Nextspace Assistant/);
+  assert.deepEqual(first.body.generationConfig.thinkingConfig, { thinkingLevel: 'low' });
 
   // The model's turn goes back unchanged (thought signature included), then the function result.
   const second = requests[1].body.contents;

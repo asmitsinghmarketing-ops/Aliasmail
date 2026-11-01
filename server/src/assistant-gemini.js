@@ -18,6 +18,9 @@ function schema(value) {
   return out;
 }
 
+const CALL_TIMEOUT_MS = 90_000;
+let noThinkingLevel = false; // the model said it doesn't take a thinking level
+
 const declarations = (tools) => [{
   functionDeclarations: tools.map((t) => ({
     name: t.name,
@@ -52,11 +55,15 @@ function failure(status, body) {
  * One model call, streamed. `onText(delta)` gets text as it arrives. Returns { message (for the
  * history, as Gemini sent it), uses: [{ id, name, input }], stop, usage }.
  */
-export async function callGemini({ system, history, tools, onText, signal }) {
-  const { geminiKey, geminiModel, geminiUrl } = config.assistant;
-  let res;
-  try {
-    res = await fetch(`${geminiUrl}/models/${encodeURIComponent(geminiModel)}:streamGenerateContent?alt=sse`, {
+export async function callGemini({ system, history, tools, onText, signal: cancel }) {
+  const { geminiKey, geminiModel, geminiUrl, geminiThinking } = config.assistant;
+  const started = Date.now();
+  // Never wait forever: a call that takes longer than this ends with a message.
+  const timeout = AbortSignal.timeout(CALL_TIMEOUT_MS);
+  const signal = cancel ? AbortSignal.any([cancel, timeout]) : timeout;
+  const tooSlow = () => new HttpError(504, 'Gemini took too long to answer. Try again, or ask something shorter.');
+  const send = (thinking) =>
+    fetch(`${geminiUrl}/models/${encodeURIComponent(geminiModel)}:streamGenerateContent?alt=sse`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey },
       body: JSON.stringify({
@@ -64,15 +71,29 @@ export async function callGemini({ system, history, tools, onText, signal }) {
         contents: history,
         tools: declarations(tools),
         toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
-        generationConfig: { maxOutputTokens: 8192 },
+        generationConfig: { maxOutputTokens: 8192, ...(thinking && { thinkingConfig: { thinkingLevel: thinking } }) },
       }),
       signal,
     });
+  let res;
+  try {
+    const thinking = geminiThinking !== 'off' && !noThinkingLevel ? geminiThinking : null;
+    res = await send(thinking);
+    // A model that doesn't take a thinking level: ask again without it, and remember.
+    if (thinking && res.status === 400) {
+      const said = await res.clone().json().catch(() => null);
+      if (/thinking/i.test(said?.error?.message || '')) {
+        noThinkingLevel = true;
+        res = await send(null);
+      }
+    }
   } catch (err) {
-    if (signal?.aborted) throw err;
+    if (cancel?.aborted) throw err;
+    if (timeout.aborted) throw tooSlow();
     throw new HttpError(502, 'Couldn’t reach Gemini. Check the connection and try again.');
   }
   if (!res.ok) throw failure(res.status, await res.json().catch(() => null));
+  const firstByte = Date.now() - started;
 
   // Server-Sent Events: each "data:" line is a piece of the answer.
   const parts = [];
@@ -96,7 +117,14 @@ export async function callGemini({ system, history, tools, onText, signal }) {
     }
   };
   for (;;) {
-    const { value, done } = await reader.read();
+    let value;
+    let done;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if (!cancel?.aborted && timeout.aborted) throw tooSlow();
+      throw err;
+    }
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split(/\r?\n/);
@@ -116,6 +144,8 @@ export async function callGemini({ system, history, tools, onText, signal }) {
         ? 'max_tokens'
         : 'end';
   const cached = usage.cachedContentTokenCount || 0;
+  // In the host's logs: where the time goes (no message content).
+  console.info(`[assistant] gemini ${geminiModel}: first reply ${firstByte} ms, total ${Date.now() - started} ms, ${uses.length} tool call(s), ${usage.thoughtsTokenCount || 0} thinking tokens`);
   return {
     // Kept exactly as sent (thought signatures included): Gemini needs them back unchanged.
     message: { role: 'model', parts: parts.length ? parts : [{ text: '' }] },
