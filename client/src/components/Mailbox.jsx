@@ -1112,9 +1112,6 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             <strong>{user.displayName || me}</strong>
             {user.displayName && <span className="muted small">{me}</span>}
           </div>
-          <button className="icon-btn" title="Sign out" onClick={onLogout}>
-            <Icon name="logout" />
-          </button>
         </div>
       </header>
 
