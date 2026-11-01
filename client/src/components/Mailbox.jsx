@@ -125,6 +125,41 @@ const person = (p) => (p.name ? `${escapeHtml(p.name)} &lt;${escapeHtml(p.addres
 
 const asArray = (v) => (Array.isArray(v) ? v : v ? [v] : []);
 
+/** True on phone-sized screens (the Gmail-app layout), updated as the window changes. */
+function usePhone() {
+  const query = '(max-width: 800px)';
+  const [phone, setPhone] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const list = window.matchMedia(query);
+    const update = () => setPhone(list.matches);
+    list.addEventListener('change', update);
+    return () => list.removeEventListener('change', update);
+  }, []);
+  return phone;
+}
+
+/** Phone: the open email's less-used actions under ⋮ (Snooze, Important, Labels, Newer/Older). */
+function PhoneMoreMenu({ close, onPrev, onNext, snoozed, onSnooze, onUnsnooze, important, onImportant, labelMenu }) {
+  const [view, setView] = useState('main');
+  const item = (icon, label, onClick, disabled) => (
+    <button type="button" className="menu-item check-item" disabled={disabled} onClick={onClick}>
+      <Icon name={icon} size={20} /> {label}
+    </button>
+  );
+  if (view === 'snooze') return <TimeMenu title="Snooze until…" options={snoozeOptions()} close={close} onPick={onSnooze} />;
+  if (view === 'labels') return labelMenu(close);
+  const run = (fn) => () => { close(); fn(); };
+  return (
+    <div className="menu phone-more">
+      {onNext !== undefined && item('chevronLeft', 'Newer', run(onPrev || (() => {})), !onPrev)}
+      {onNext !== undefined && item('chevronRight', 'Older', run(onNext || (() => {})), !onNext)}
+      {onSnooze && (snoozed ? item('clock', 'Unsnooze', run(onUnsnooze)) : item('clock', 'Snooze…', () => setView('snooze')))}
+      {onImportant && item('important', important ? 'Mark as not important' : 'Mark as important', run(onImportant))}
+      {labelMenu && item('label', 'Labels…', () => setView('labels'))}
+    </div>
+  );
+}
+
 function IconButton({ icon, title, onClick, danger, size }) {
   return (
     <button
@@ -225,6 +260,10 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [list, setList] = useState({ items: [], total: 0, page: 1, pageSize: 50 });
+  // Phones scroll through the whole list (the next 50 load at the bottom) instead of paging.
+  const phone = usePhone();
+  const [loadingMore, setLoadingMore] = useState(false);
+  const moreSentinel = useRef(null);
   const [counts, setCounts] = useState({});
   const [labels, setLabels] = useState([]);
   const [people, setPeople] = useState({}); // address -> profile picture URL
@@ -278,11 +317,16 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       const params = new URLSearchParams({ folder, page, q: search, ...(folder === 'inbox' && !search && { category }) });
       const path = `/mail/messages?${params}`;
       const cached = cachedMailboxList(path);
-      if (cached) { setList(cached); setLoading(false); }
+      const keepScrolled = (data) => (prev) => {
+        if (!phone || page !== 1 || prev.items.length <= data.items.length || prev.view !== path) return { ...data, view: path };
+        const fresh = new Set(data.items.map((i) => i.id));
+        return { ...data, view: path, items: [...data.items, ...prev.items.slice(data.items.length).filter((i) => !fresh.has(i.id))], scrolledPages: prev.scrolledPages };
+      };
+      if (cached) { setList(keepScrolled(cached)); setLoading(false); }
       const [data, folderCounts] = await Promise.all([
         api(path).then((data) => {
           if (request === loadRequest.current) {
-            setList(data);
+            setList(keepScrolled(data));
             setLoading(false);
           }
           return data;
@@ -290,7 +334,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         api('/mail/folders'),
       ]);
       if (request !== loadRequest.current) return;
-      setList(data);
+      setList(keepScrolled(data));
       setCounts(folderCounts);
       setError('');
     } catch (err) {
@@ -298,7 +342,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     } finally {
       if (request === loadRequest.current) setLoading(false);
     }
-  }, [folder, category, page, search]);
+  }, [folder, category, page, search, phone]);
   latestLoad.current = load;
 
   useEffect(() => {
@@ -475,6 +519,35 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       document.title = 'Nextspace';
     };
   }, [folderLabel, counts.inbox, me]);
+
+  // Phone: when the end of the list scrolls into view, fetch the next 50 and add them below.
+  const hasMore = phone && !search && list.items.length < list.total;
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    const next = (list.scrolledPages || 1) + 1;
+    const view = list.view;
+    setLoadingMore(true);
+    try {
+      const params = new URLSearchParams({ folder, page: next, q: search, ...(folder === 'inbox' && !search && { category }) });
+      const data = await api(`/mail/messages?${params}`);
+      setList((prev) => {
+        if (prev.view !== view) return prev;
+        const have = new Set(prev.items.map((i) => i.id));
+        return { ...prev, total: data.total, scrolledPages: next, items: [...prev.items, ...data.items.filter((i) => !have.has(i.id))] };
+      });
+    } catch {
+      /* the next scroll tries again */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, list.scrolledPages, list.view, folder, search, category]);
+  useEffect(() => {
+    const target = moreSentinel.current;
+    if (!target || !hasMore) return undefined;
+    const watcher = new IntersectionObserver((entries) => entries[0].isIntersecting && loadMore(), { rootMargin: '600px 0px' });
+    watcher.observe(target);
+    return () => watcher.disconnect();
+  }, [hasMore, loadMore]);
 
   function goTo(nextFolder) {
     setFolder(nextFolder);
@@ -1162,7 +1235,24 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 <span className="nav-label">{f.label}</span>
                 {f.count && shownCounts[f.count] > 0 && <span className={`count ${f.plain ? 'plain' : ''}`}>{shownCounts[f.count]}</span>}
               </button>
-            ))}
+            )).flatMap((button, i, all) => (all[i].key === 'inbox'
+              ? [button, ...CATEGORY_TABS.map((t) => (
+                  <button
+                    key={`category-${t.id}`}
+                    className={`nav-item nav-sub mobile-only ${folder === 'inbox' && !search && category === t.id ? 'active' : ''}`}
+                    onClick={() => {
+                      setCategory(t.id);
+                      goTo('inbox');
+                    }}
+                  >
+                    <span className="nav-icon" style={{ '--c': t.color }}>
+                      <Icon name={t.icon} size={16} />
+                    </span>
+                    <span className="nav-label">{t.label}</span>
+                    {t.id !== 'primary' && counts.categories?.[t.id] > 0 && <span className="count">{counts.categories[t.id]}</span>}
+                  </button>
+                ))]
+              : [button]))}
             {onOpenAdmin && (
               <button
                 className="nav-item admin-mobile-item"
@@ -1331,6 +1421,38 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               noticeTone={open.outbox ? (open.failed ? 'error' : 'warning') : undefined}
               patch={livePatch}
               actions={actionButtons([open.id], [{ ...live, read: true }])}
+              phoneMore={
+                <span className="mobile-only">
+                  <Popover icon="moreVert" title="More" align="right">
+                    {(close) => (
+                      <PhoneMoreMenu
+                        close={close}
+                        onPrev={openIndex > 0 ? () => openAt(openIndex - 1) : null}
+                        onNext={openIndex >= 0 && openIndex < list.items.length - 1 ? () => openAt(openIndex + 1) : null}
+                        {...(MAIL_FOLDERS.includes(folder) && {
+                          snoozed: Boolean(live.snoozedUntil),
+                          onSnooze: (date) => act([open.id], 'snooze', { until: date.toISOString() }),
+                          onUnsnooze: () => act([open.id], 'unsnooze'),
+                          important: Boolean(live.important),
+                          onImportant: () => act([open.id], live.important ? 'notImportant' : 'important', {}, { silent: true }),
+                          labelMenu: (closeMenu) => (
+                            <LabelMenu
+                              labels={labels}
+                              items={[live]}
+                              close={closeMenu}
+                              onToggle={(label, add) => toggleLabel([open.id], label, add)}
+                              onCreate={async (name) => {
+                                const label = await createLabel(name);
+                                if (label) await toggleLabel([open.id], label, true);
+                              }}
+                            />
+                          ),
+                        })}
+                      />
+                    )}
+                  </Popover>
+                </span>
+              }
               position={openIndex >= 0 ? { index: openIndex, total: list.items.length } : null}
               onPrev={openIndex > 0 ? () => openAt(openIndex - 1) : null}
               onNext={openIndex >= 0 && openIndex < list.items.length - 1 ? () => openAt(openIndex + 1) : null}
@@ -1392,6 +1514,27 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 )}
                 {selected.size > 0 && <span className="muted small">{selected.size} selected</span>}
                 <Pager list={list} onPage={setPage} />
+                {selected.size === 0 && (
+                  <span className="mobile-only list-more">
+                    <Popover icon="moreVert" title="More" align="right">
+                      {(close) => (
+                        <div className="menu phone-more">
+                          <button type="button" className="menu-item check-item" onClick={() => { close(); refresh(); }}>
+                            <Icon name="refresh" size={20} /> Check for new mail
+                          </button>
+                          <button type="button" className="menu-item check-item" onClick={() => { close(); selectBy('all'); }}>
+                            <Icon name="check" size={20} /> Select all
+                          </button>
+                          {MAIL_FOLDERS.includes(folder) && list.items.some((i) => !i.read) && (
+                            <button type="button" className="menu-item check-item" onClick={() => { close(); act(list.items.filter((i) => !i.read).map((i) => i.id), 'read'); }}>
+                              <Icon name="markRead" size={20} /> Mark all as read
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </Popover>
+                  </span>
+                )}
               </div>
 
               {showTabs && (
@@ -1530,6 +1673,11 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                     </div>
                     </Fragment>
                   ))}
+                {!loading && hasMore && (
+                  <div ref={moreSentinel} className="list-more-loading" aria-live="polite">
+                    {loadingMore ? 'Loading more…' : ''}
+                  </div>
+                )}
               </div>
             </div>
           )}

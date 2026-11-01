@@ -245,7 +245,7 @@ function PlainBody({ text }) {
  * One opened message, Gmail style. `url` is its API path; `preview` (the list row) fills the
  * header while the body loads. Every action prop is optional.
  */
-export default function MessageView({
+export default function MessageView({ phoneMore,
   url,
   preview,
   me,
@@ -309,6 +309,7 @@ export default function MessageView({
               </button>
             ))
           : actions}
+        {phoneMore}
         {position && (
           <div className="pager">
             <span className="muted small">

@@ -1852,3 +1852,25 @@ a.btn { color: inherit; text-decoration: none; }
 .plain { font-size: 15px; line-height: 1.65; color: #1b1f24; }
 .plain.quoted { margin-top: 10px; padding-left: 14px; border-left: 2px solid #d5dbe3; color: var(--muted); }
 .message-body .quote-toggle { margin-top: 6px; }
+
+/* ----- phones: more room for mail ----- */
+.list-more-loading { min-height: 1px; padding: 14px; text-align: center; color: var(--muted); font-size: 13px; }
+.nav-sub { display: none; }
+.phone-more { min-width: 220px; }
+@media (max-width: 800px) {
+  /* The category tabs live in the side menu; the list title says which one is open. */
+  .tabs { display: none; }
+  .nav-sub.mobile-only { display: flex; padding-left: 36px; }
+  .nav-sub .nav-icon { width: 26px; height: 26px; }
+  /* Scrolling replaces the pager; refresh and the rest sit under ⋮. */
+  .view-enter > .toolbar > .pager, .view-enter > .toolbar > .icon-btn[title="Check for new mail"] { display: none; }
+  .list-more { margin-left: auto; }
+  /* An open email keeps Back, Archive, Delete and Mark unread; the rest are under ⋮. */
+  .viewer > .toolbar > .popover-wrap, .viewer > .toolbar > .icon-btn[title^="Mark as important"],
+  .viewer > .toolbar > .icon-btn[title^="Mark as not important"], .viewer > .toolbar > .pager { display: none; }
+  .viewer > .toolbar > .mobile-only { margin-left: auto; display: inline-flex; }
+  .viewer > .toolbar > .mobile-only .popover-wrap { display: inline-flex; }
+}
+@media (max-width: 800px) {
+  .viewer > .toolbar { overflow: visible; }
+}
