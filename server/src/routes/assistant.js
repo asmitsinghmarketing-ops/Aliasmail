@@ -17,8 +17,8 @@ router.use(requireAuth());
 // Why the Assistant is off, for the person trying to use it.
 const notSetUp = () =>
   provider() === 'openrouter' && settings().openrouterKey
-    ? 'The Assistant needs a model: the admin sets OPENROUTER_MODEL to a free model that supports tools (openrouter.ai/models).'
-    : 'The Assistant isn’t set up yet. The admin needs to add ANTHROPIC_API_KEY (or GEMINI_API_KEY / OPENROUTER_API_KEY for testing).';
+    ? 'The Assistant needs a model: the admin picks a free model that supports tools in Admin console → Assistant → AI settings → OpenRouter.'
+    : 'The Assistant isn’t set up yet. The admin adds an AI key in Admin console → Assistant → AI settings.';
 
 // At most this many messages per person per hour, whatever the AI costs: free models count as
 // $0, so the spending limits alone wouldn't stop one person (or a stuck script) using up the

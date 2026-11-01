@@ -85,6 +85,14 @@ test('the admin sets the provider, key and model in Nextspace; the key stays sec
   await new Promise((r) => setTimeout(r, 400));
   assert.ok(!(await fs.readFile(path.join(dir, 'db.json'), 'utf8')).includes(KEY), 'not saved readable');
 
+  // A key or model in the wrong tab is refused with a pointer to the right one.
+  const wrongKey = await call('/assistant/settings', { method: 'PUT', body: JSON.stringify({ keys: { anthropic: 'AIzaSyFakeGeminiKey0000000000000000' } }) });
+  assert.equal(wrongKey.status, 400);
+  assert.match((await wrongKey.json()).error, /Google Gemini key/);
+  const wrongModel = await call('/assistant/settings', { method: 'PUT', body: JSON.stringify({ model: 'gemini-3.8-flash' }) });
+  assert.equal(wrongModel.status, 400);
+  assert.match((await wrongModel.json()).error, /isn’t a Claude model/);
+
   // Removing the key turns the Assistant off again.
   const removed = await (await call('/assistant/settings', { method: 'PUT', body: JSON.stringify({ keys: { openrouter: null } }) })).json();
   assert.equal(removed.inUse.enabled, false);

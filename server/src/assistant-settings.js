@@ -32,6 +32,9 @@ const stored = () => ((db().assistant ||= {}).settings ||= {});
 
 const KEYS = { anthropic: 'apiKey', gemini: 'geminiKey', openrouter: 'openrouterKey' };
 const PROVIDERS = ['anthropic', 'gemini', 'openrouter'];
+const NAMES = { anthropic: 'Claude', gemini: 'Google Gemini', openrouter: 'OpenRouter' };
+// How each service's API keys begin (to catch a key pasted into the wrong tab).
+const KEY_STARTS = { anthropic: 'sk-ant-', gemini: 'AIza', openrouter: 'sk-or-' };
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const THINKING = ['minimal', 'low', 'medium', 'high', 'off'];
 const MODEL = /^[\w.:/@-]{1,120}$/;
@@ -95,6 +98,9 @@ export function updateSettings(patch = {}) {
     else {
       const key = String(value).trim();
       if (key.length < 10 || key.length > 400 || /\s/.test(key)) throw new HttpError(400, 'That doesn’t look like an API key');
+      // A key pasted into the wrong tab: each service's keys start their own way.
+      const owner = Object.entries(KEY_STARTS).find(([, start]) => key.startsWith(start))?.[0];
+      if (owner && owner !== p) throw new HttpError(400, `That looks like a ${NAMES[owner]} key. Paste it in the ${NAMES[owner]} tab instead.`);
       s.keys[name] = seal(key);
     }
   }
@@ -102,6 +108,8 @@ export function updateSettings(patch = {}) {
     if (!(field in patch)) continue;
     const value = String(patch[field] || '').trim();
     if (value && !MODEL.test(value)) throw new HttpError(400, `“${value.slice(0, 60)}” isn’t a valid model name`);
+    if (value && field === 'model' && !value.startsWith('claude')) throw new HttpError(400, `“${value.slice(0, 60)}” isn’t a Claude model. Claude models start with claude-, e.g. claude-opus-5-5.`);
+    if (value && field === 'geminiModel' && (value.startsWith('claude') || value.includes('/'))) throw new HttpError(400, `“${value.slice(0, 60)}” isn’t a Gemini model, e.g. gemini-3.8-flash.`);
     s[field] = value;
   }
   if ('effort' in patch) {

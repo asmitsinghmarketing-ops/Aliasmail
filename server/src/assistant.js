@@ -371,7 +371,7 @@ const claudeToolResults = (results) => ({
 
 function friendly(err) {
   if (err instanceof HttpError) return err.message;
-  if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) return 'The Anthropic API key isn’t valid. The admin needs to check ANTHROPIC_API_KEY.';
+  if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) return 'The Claude API key isn’t valid. The admin can check it in Admin console → Assistant → AI settings.';
   if (err instanceof Anthropic.RateLimitError) return 'Claude is busy right now. Try again in a minute.';
   if (err instanceof Anthropic.APIConnectionError) return 'Couldn’t reach Claude. Check the connection and try again.';
   if (err instanceof Anthropic.APIError) return err.status >= 500 ? 'Claude is overloaded right now. Try again in a minute.' : `Claude couldn’t take that request (${err.status}).`;

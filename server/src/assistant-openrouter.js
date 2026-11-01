@@ -20,11 +20,11 @@ export const openrouterToolResults = (results) =>
 function failure(status, body) {
   const said = body?.error?.message || '';
   const model = settings().openrouterModel;
-  if (status === 401) return new HttpError(502, 'The OpenRouter API key isn’t valid. The admin needs to check OPENROUTER_API_KEY.');
-  if (status === 402) return new HttpError(502, 'OpenRouter says there is no credit left for this model. Choose a free model (ending in :free) in OPENROUTER_MODEL.');
+  if (status === 401) return new HttpError(502, 'The OpenRouter API key isn’t valid. The admin can check it in Admin console → Assistant → AI settings.');
+  if (status === 402) return new HttpError(502, 'OpenRouter says there is no credit left for this model. Choose a free model (ending in :free) in AI settings.');
   if (status === 429) return new HttpError(429, 'The free model’s limit has been reached for now. Try again in a minute (or tomorrow if the daily limit was used up).');
   if (status === 404 || /tool use|no endpoints|not a valid model|not found/i.test(said)) {
-    return new HttpError(502, `The model “${model}” can’t be used${said ? `: ${said.slice(0, 200)}` : ''}. Choose a free model that supports tools on openrouter.ai/models and put its name in OPENROUTER_MODEL.`);
+    return new HttpError(502, `The model “${model}” can’t be used${said ? `: ${said.slice(0, 200)}` : ''}. Choose a free model that supports tools on openrouter.ai/models and put its name in AI settings.`);
   }
   if (status >= 500) return new HttpError(502, 'OpenRouter or the model’s provider is overloaded right now. Try again in a minute.');
   return new HttpError(502, `OpenRouter couldn’t take that request${said ? `: ${said.slice(0, 200)}` : ` (${status})`}`);
