@@ -1839,3 +1839,10 @@ a.btn { color: inherit; text-decoration: none; }
   .nav-icon { width: 28px; height: 28px; }
   .labels-head { padding-top: 6px; }
 }
+
+/* Laptop: the menu button, Compose, folder icons and the labels "+" share one vertical line. */
+@media (min-width: 801px) {
+  .topbar .brand > .icon-btn:first-child { margin-left: 2px; }
+  .sidebar.collapsed .compose-btn { align-self: center; }
+  .sidebar.collapsed .labels-head { justify-content: center; padding-left: 0; padding-right: 0; }
+}
