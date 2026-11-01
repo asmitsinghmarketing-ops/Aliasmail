@@ -145,6 +145,12 @@ const config = {
     chat: bool('GOOGLE_CHAT', true),
     chatApiUrl: env('GOOGLE_CHAT_API_URL', 'https://chat.googleapis.com/v1'),
   },
+  // The Assistant (assistant.js): Claude through the Anthropic API. Off until a key is set.
+  assistant: {
+    apiKey: env('ANTHROPIC_API_KEY'),
+    model: env('ASSISTANT_MODEL', 'claude-opus-5-5'),
+    effort: env('ASSISTANT_EFFORT', 'medium'),
+  },
   appUrl: env('APP_URL').replace(/\/$/, ''),
   // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.
   ipLocation: env('IP_LOCATION', 'on').toLowerCase() !== 'off',

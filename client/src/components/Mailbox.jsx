@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { api, cachedMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
-import { escapeHtml, htmlFromText, sanitizeHtml } from './RichEditor.jsx';
+import { escapeHtml, htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
 import { withDriveLinks } from '../drivePicker.js';
 import { uploadAttachments, uploadProgress } from '../attachmentUpload.js';
 import LoginCodes from './LoginCodes.jsx';
@@ -15,6 +15,7 @@ import { LabelMenu, Popover, TimeMenu, shortTime, snoozeOptions } from './Menus.
 import MessageView from './MessageView.jsx';
 import MeetDialog from './MeetDialog.jsx';
 import InstantNotes from './InstantNotes.jsx';
+import Assistant from './Assistant.jsx';
 import { subscribe } from '../live.js';
 import { meetingText } from '../meet.js';
 import Pager from './Pager.jsx';
@@ -392,6 +393,9 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const [team, setTeam] = useState([]); // who can own a conversation
   // Instant notes: the panel, its unread badge, and the latest note pushed over the live connection.
   const [notesOpen, setNotesOpen] = useState(false);
+  // The Assistant (Claude): open or not, and whether it is set up.
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantStatus, setAssistantStatus] = useState(null);
   const [notesWith, setNotesWith] = useState(null);
   const [notesUnread, setNotesUnread] = useState(0);
   const [notesMe, setNotesMe] = useState('');
@@ -596,6 +600,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       .catch(() => {});
     api('/mail/people').then(setPeople).catch(() => {});
     api('/mail/team').then(setTeam).catch(() => {});
+    api('/assistant/status').then(setAssistantStatus).catch(() => {});
     api('/notes/unread')
       .then(({ me: self, unread }) => {
         setNotesMe(self);
@@ -922,6 +927,38 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   const compose = () => setDraft(signatureBlock() ? { html: signatureBlock() } : { text: '' });
 
+  // The Assistant's cards: emails go through the normal send (Undo, Outbox, signature); a reply
+  // carries the original's headers so it stays in the same conversation.
+  async function assistantEmail(card) {
+    const d = card.data;
+    let headers = {};
+    if (d.replyToId) {
+      const original = await api(/^d+$/.test(d.replyToId) ? `/mail/messages/${d.replyToId}?peek=1` : `/mail/sent/${encodeURIComponent(d.replyToId)}`).catch(() => null);
+      if (original) headers = { inReplyTo: original.messageId, references: [...asArray(original.references), original.messageId].filter(Boolean) };
+    }
+    const html = htmlFromText(d.body) + signatureBlock();
+    return { to: d.to.join(', '), cc: d.cc.join(', '), subject: d.subject, html, text: textFromHtml(html), ...headers };
+  }
+  const assistantActions = {
+    sendEmail: async (card) => {
+      handleSend({ ...(await assistantEmail(card)), files: [] });
+      return '';
+    },
+    editEmail: async (card) => {
+      const draftFields = await assistantEmail(card);
+      setAssistantOpen(false);
+      setDraft(draftFields);
+    },
+    createMeeting: async (card) => {
+      const meeting = await api('/mail/meet', { method: 'POST', body: card.data });
+      return meeting.link || '';
+    },
+    sendNote: async (card) => {
+      await api('/notes', { method: 'POST', body: { to: card.data.to, text: card.data.text, files: [] } });
+      return '';
+    },
+  };
+
   const reply = (msg) => setDraft({ ...replyHeaders(msg), to: (msg.replyTo || msg.from).address, html: quotedHtml(msg) });
 
   function replyAll(msg) {
@@ -1070,7 +1107,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
     if (tag === 'BUTTON' && e.key === 'Enter') return;
     // Keys pressed in Instant notes belong to it (Enter there must never open an email).
-    if (notesOpen || e.target.closest?.('.notes-panel')) return;
+    if (notesOpen || assistantOpen || e.target.closest?.('.notes-panel, .assistant')) return;
     if (modal) {
       if (e.key === 'Escape') setModal(null);
       return;
@@ -1287,6 +1324,11 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           );
         })}
         <span className="rail-fill" />
+        {!shared && (
+          <button type="button" className={`rail-btn ${assistantOpen ? 'on' : ''}`} title="Assistant" aria-label="Assistant" onClick={() => setAssistantOpen(!assistantOpen)}>
+            <Icon name="sparkle" size={22} />
+          </button>
+        )}
         <button type="button" className={`rail-btn ${notesOpen ? 'on' : ''}`} title="Instant notes" aria-label={`Instant notes${notesUnread ? `, ${notesUnread} unread` : ''}`} onClick={() => (notesOpen ? setNotesOpen(false) : openNotes())}>
           <Icon name="chat" size={22} />
           {notesUnread > 0 && <span className="rail-badge">{notesUnread > 99 ? '99+' : notesUnread}</span>}
@@ -1607,10 +1649,10 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         )}
         {!open && modal !== 'settings' && (
           <nav className="bottom-nav" aria-label="Folders">
-            {['inbox', 'sent'].map((id) => {
+            {['inbox'].map((id) => {
               const f = FOLDERS.find((x) => x.id === id);
               return (
-                <button key={id} type="button" className={folder === id && !notesOpen ? 'on' : ''} onClick={() => goTo(id)}>
+                <button key={id} type="button" className={folder === id && !notesOpen && !assistantOpen ? 'on' : ''} onClick={() => { setAssistantOpen(false); goTo(id); }}>
                   <span className="bottom-nav-icon">
                     <Icon name={f.icon} />
                     {f.count && counts[f.count] > 0 && <span className="bottom-nav-badge">{counts[f.count] > 99 ? '99+' : counts[f.count]}</span>}
@@ -1619,6 +1661,12 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 </button>
               );
             })}
+            {!shared && (
+              <button type="button" className={assistantOpen ? 'on' : ''} onClick={() => { setNotesOpen(false); setAssistantOpen(true); }}>
+                <span className="bottom-nav-icon"><Icon name="sparkle" /></span>
+                Assistant
+              </button>
+            )}
             <button type="button" className={notesOpen ? 'on' : ''} onClick={() => (notesOpen ? setNotesOpen(false) : openNotes())}>
               <span className="bottom-nav-icon">
                 <Icon name="chat" />
@@ -1626,7 +1674,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               </span>
               Notes
             </button>
-            <button type="button" className={['inbox', 'sent'].includes(folder) || notesOpen ? '' : 'on'} onClick={() => setCollapsed(false)}>
+            <button type="button" className={folder === 'inbox' || notesOpen || assistantOpen ? '' : 'on'} onClick={() => { setAssistantOpen(false); setCollapsed(false); }}>
               <span className="bottom-nav-icon"><Icon name="menu" /></span>
               More
             </button>
@@ -1969,6 +2017,14 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           onSend={handleSend}
           driveOn={driveOn}
           meetOn={meetOn}
+        />
+      )}
+
+      {assistantOpen && !shared && (
+        <Assistant
+          status={assistantStatus}
+          onClose={() => setAssistantOpen(false)}
+          actions={assistantActions}
         />
       )}
 

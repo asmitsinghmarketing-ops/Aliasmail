@@ -999,4 +999,74 @@ router.patch('/settings', async (req, res) => {
   res.json(settingsOf(accountOf(updated.address)));
 });
 
+/* ---------------------------------- for the Assistant ---------------------------------- */
+
+// Read-only views for the Assistant (assistant.js), with the same visibility and search rules
+// as the mailbox. Nothing here marks mail as read or changes it.
+
+const ASSISTANT_FOLDERS = ['inbox', 'unread', 'starred', 'important', 'sent', 'all'];
+
+/** Mail matching a search, newest first: { id, date, from, to, subject, snippet, unread, attachments }. */
+export function assistantSearch(me, { query = '', folder = 'inbox', limit = 10 } = {}) {
+  const where = ASSISTANT_FOLDERS.includes(folder) ? folder : 'inbox';
+  wakeSnoozed(me);
+  const items = where === 'sent'
+    ? sentItems(me)
+    : messagesFor(me)
+      .filter((m) => (where === 'unread' ? FOLDERS.inbox(stateOf(m, me)) && !stateOf(m, me).read : FOLDERS[where](stateOf(m, me))))
+      .map((m) => summary(m, me));
+  return items
+    .filter((i) => matchesQuery(i, query))
+    .sort(byDateDesc)
+    .slice(0, Math.min(Math.max(Number(limit) || 10, 1), 25))
+    .map((i) => ({
+      id: String(i.id),
+      date: i.date,
+      from: i.from,
+      to: (i.to || []).slice(0, 5),
+      subject: i.subject,
+      snippet: i.snippet,
+      unread: i.kind === 'inbox' ? !i.read : undefined,
+      attachments: i.hasAttachments || undefined,
+    }));
+}
+
+/** One message in full, as text (quoted replies left out): null if it isn't this person's. */
+export async function assistantRead(me, id) {
+  const value = String(id || '');
+  let meta;
+  let parsed;
+  if (/^\d+$/.test(value)) {
+    meta = db().messages[value];
+    if (!meta || !isVisibleTo(meta, me)) return null;
+    parsed = await fetchParsed(meta.uid);
+  } else if (SENT_ID.test(value)) {
+    meta = db().sentBox.messages[value.slice(1)];
+    if (!meta || !(isOwner(me) || meta.from.address === me)) return null;
+    parsed = await fetchParsed(meta.uid, 'sent');
+  } else {
+    const logged = db().sent.find((s) => s.id === value && (isOwner(me) || s.from.address === me));
+    if (!logged) return null;
+    meta = logged;
+    parsed = { text: logged.text, attachments: logged.attachments || [] };
+  }
+  if (!parsed) return null;
+  const text = String(parsed.text || '')
+    .split('\n')
+    .filter((line) => !line.startsWith('>'))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return {
+    id: value,
+    date: meta.date,
+    from: meta.from,
+    to: meta.to,
+    cc: meta.cc,
+    subject: meta.subject,
+    attachments: (parsed.attachments || []).filter((a) => !a.cid).map((a) => a.filename || 'attachment'),
+    text: text.length > 12000 ? `${text.slice(0, 12000)}\n[… the rest of this email was left out]` : text,
+  };
+}
+
 export default router;

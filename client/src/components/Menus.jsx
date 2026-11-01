@@ -21,7 +21,7 @@ export function Popover({ icon, title, label, className = '', align = 'left', ch
 
   return (
     <span className="popover-wrap" ref={wrap} onClick={(e) => e.stopPropagation()}>
-      <button type="button" className={className || 'icon-btn'} title={title} onClick={() => setOpen(!open)}>
+      <button type="button" className={className || 'icon-btn'} title={title} aria-expanded={open} onClick={() => setOpen(!open)}>
         {icon && <Icon name={icon} size={label ? 18 : 24} />}
         {label}
       </button>
