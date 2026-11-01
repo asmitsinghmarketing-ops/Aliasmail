@@ -11,12 +11,47 @@ const noReferrerOverrides = (html) =>
     .replace(/<meta\b[^>]*\bname\s*=\s*["']?referrer\b[^>]*>/gi, '')
     .replace(/\sreferrerpolicy\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
 
+// Where the earlier conversation starts in a reply, as Gmail, Outlook, Apple Mail, Thunderbird,
+// Yahoo and Nextspace itself mark it. Outlook's and Thunderbird's markers start a run that goes
+// on to the end of the message.
+const HTML_QUOTE_START = '.gmail_quote, blockquote[type="cite"], #divRplyFwdMsg, #appendonsend, .moz-cite-prefix, .yahoo_quoted';
+const RUNS_TO_END = '#divRplyFwdMsg, #appendonsend, .moz-cite-prefix';
+
+/** The elements holding the quoted history (folded away like Gmail), or none. */
+function quotedParts(doc) {
+  const body = doc.body;
+  let parts = [];
+  const start = body.querySelector(HTML_QUOTE_START);
+  if (start) {
+    parts = [start];
+    if (start.matches(RUNS_TO_END)) {
+      if (start.previousElementSibling?.tagName === 'HR') parts.unshift(start.previousElementSibling);
+      for (let next = start.nextElementSibling; next; next = next.nextElementSibling) parts.push(next);
+    }
+  } else {
+    // "On …, … wrote:" followed by a quote, as Nextspace and many apps write it.
+    const quote = [...body.querySelectorAll('blockquote')].find((q) => /wrote:\s*$/.test(q.previousElementSibling?.textContent || ''));
+    if (quote) parts = [quote.previousElementSibling, quote];
+  }
+  // The empty lines just above the quote go with it, so no gap is left above "•••".
+  for (let prev = parts[0]?.previousElementSibling; prev?.tagName === 'BR'; prev = prev.previousElementSibling) parts.unshift(prev);
+  // Fold only when something is left to read above it.
+  const quotedLength = parts.reduce((total, el) => total + el.textContent.trim().length, 0);
+  return body.textContent.trim().length - quotedLength > 1 ? parts : [];
+}
+
 function HtmlBody({ html }) {
   const frame = useRef(null);
+  const quoted = useRef([]);
+  const [hasQuote, setHasQuote] = useState(false);
+  const [showQuoted, setShowQuoted] = useState(false);
+  useEffect(() => {
+    for (const el of quoted.current) el.style.display = showQuoted ? '' : 'none';
+  }, [showQuoted]);
   // No allow-scripts: the email's own JavaScript never runs.
   // No referrer either: images and links in an email never learn where it was read.
   const doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><base target="_blank">
-<style>html{overflow:hidden}html,body{margin:0;padding:0}body{display:flow-root;font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#202124;overflow-wrap:break-word}img{max-width:100%;height:auto}a{color:#1a73e8}</style>
+<style>html{overflow:hidden}html,body{margin:0;padding:0}body{display:flow-root;font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#1b1f24;overflow-wrap:break-word}img{max-width:100%;height:auto}a{color:#0b5cd5}p{margin:0 0 .9em}blockquote{margin:.5em 0 .5em .4em;padding-left:12px;border-left:2px solid #d5dbe3;color:#5f6b7a}</style>
 </head><body>${noReferrerOverrides(html)}</body></html>`;
 
   useEffect(() => () => frame.current?._observers?.forEach((o) => o.disconnect()), []);
@@ -29,6 +64,10 @@ function HtmlBody({ html }) {
     // Addresses the sender left as plain text become clickable, like in Gmail.
     try {
       linkifyNode(el.contentDocument.body);
+      quoted.current = quotedParts(el.contentDocument);
+      for (const part of quoted.current) part.style.display = 'none';
+      setHasQuote(quoted.current.length > 0);
+      setShowQuoted(false);
     } catch {
       /* not reachable: leave the email as it is */
     }
@@ -66,15 +105,22 @@ function HtmlBody({ html }) {
   };
 
   return (
-    <iframe
-      ref={frame}
-      title="Message body"
-      className="mail-frame"
-      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      referrerPolicy="no-referrer"
-      srcDoc={doc}
-      onLoad={onLoad}
-    />
+    <>
+      <iframe
+        ref={frame}
+        title="Message body"
+        className="mail-frame"
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer"
+        srcDoc={doc}
+        onLoad={onLoad}
+      />
+      {hasQuote && (
+        <button type="button" className="quote-toggle" title={showQuoted ? 'Hide trimmed content' : 'Show trimmed content'} aria-expanded={showQuoted} onClick={() => setShowQuoted(!showQuoted)}>
+          •••
+        </button>
+      )}
+    </>
   );
 }
 
@@ -171,6 +217,9 @@ function Linkified({ text }) {
 // Where an earlier message is quoted in a reply: "On …, … wrote:" or the first "> " line.
 const QUOTE_START = /\n(?=On [^\n]{4,200}wrote:\s*\n|>[^\n]*\n?)/;
 
+// Quoted lines without their "> " marks: the quote is shown as an indented block instead.
+const unquote = (text) => text.replace(/^>[ \t]?/gm, '');
+
 /** Plain-text body; the quoted history of a reply folds away behind "•••", like Gmail. */
 function PlainBody({ text }) {
   const [showQuoted, setShowQuoted] = useState(false);
@@ -185,7 +234,7 @@ function PlainBody({ text }) {
           <button type="button" className="quote-toggle" title={showQuoted ? 'Hide trimmed content' : 'Show trimmed content'} aria-expanded={showQuoted} onClick={() => setShowQuoted(!showQuoted)}>
             •••
           </button>
-          {showQuoted && <pre className="plain quoted"><Linkified text={quoted.replace(/^\n+/, '')} /></pre>}
+          {showQuoted && <pre className="plain quoted"><Linkified text={unquote(quoted.replace(/^\n+/, ''))} /></pre>}
         </>
       )}
     </>

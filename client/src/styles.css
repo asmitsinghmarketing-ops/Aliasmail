@@ -1846,3 +1846,9 @@ a.btn { color: inherit; text-decoration: none; }
   .sidebar.collapsed .compose-btn { align-self: center; }
   .sidebar.collapsed .labels-head { justify-content: center; padding-left: 0; padding-right: 0; }
 }
+
+/* ----- reading an email: a comfortable line length and size ----- */
+.message-body { max-width: 860px; }
+.plain { font-size: 15px; line-height: 1.65; color: #1b1f24; }
+.plain.quoted { margin-top: 10px; padding-left: 14px; border-left: 2px solid #d5dbe3; color: var(--muted); }
+.message-body .quote-toggle { margin-top: 6px; }
