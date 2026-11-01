@@ -14,6 +14,7 @@ import Logo, { Wordmark } from './Logo.jsx';
 import { LabelMenu, Popover, TimeMenu, shortTime, snoozeOptions } from './Menus.jsx';
 import MessageView from './MessageView.jsx';
 import MeetDialog from './MeetDialog.jsx';
+import InstantNotes from './InstantNotes.jsx';
 import { meetingText } from '../meet.js';
 import Pager from './Pager.jsx';
 import Settings from './Settings.jsx';
@@ -21,8 +22,13 @@ import Settings from './Settings.jsx';
 // Gmail's folders, in Gmail's order. `count` is the key in /mail/folders shown beside it;
 // `color` tints the folder's icon tile in the sidebar.
 const FOLDERS = [
-  { id: 'inbox', label: 'Inbox', icon: 'inbox', count: 'inbox', color: 'var(--brand)' },
-  { id: 'starred', label: 'Starred', icon: 'star', color: '#f59f00' },
+  // Team triage: To do (needs you), Waiting on others, Done (= archived), and what you own.
+  { id: 'todo', label: 'To do', icon: 'inbox', count: 'todo', color: 'var(--brand)', section: 'Triage' },
+  { id: 'waiting', label: 'Waiting on others', icon: 'hourglass', count: 'waiting', plain: true, color: '#d97706', section: 'Triage' },
+  { id: 'done', label: 'Done', icon: 'checkCircle', color: '#16a34a', section: 'Triage' },
+  { id: 'assigned', label: 'Assigned to me', icon: 'person', count: 'assigned', plain: true, color: '#7048e8', section: 'Triage' },
+  { id: 'inbox', label: 'Inbox', icon: 'inbox', count: 'inbox', color: 'var(--brand)', hidden: true },
+  { id: 'starred', label: 'Starred', icon: 'star', color: '#f59f00', section: 'Folders' },
   { id: 'snoozed', label: 'Snoozed', icon: 'clock', color: '#0c8599' },
   { id: 'important', label: 'Important', icon: 'important', count: 'important', color: '#d6336c' },
   { id: 'sent', label: 'Sent', icon: 'send', color: '#1c7ed6' },
@@ -63,12 +69,32 @@ function dateGroup(date) {
 const UNGROUPED = new Set(['scheduled', 'outbox']);
 
 // Folders holding inbox messages (per-account state applies); the rest are special lists.
-const MAIL_FOLDERS = ['inbox', 'starred', 'snoozed', 'important', 'all'];
+const MAIL_FOLDERS = ['inbox', 'todo', 'waiting', 'done', 'assigned', 'starred', 'snoozed', 'important', 'all'];
+// Views of received mail narrowed by inbox category (Primary, Promotions, …).
+const CATEGORIZED = ['inbox', 'todo'];
+const TRIAGE = ['todo', 'waiting', 'done'];
+// A sender's organisation, from their address (none for personal mail providers).
+const PERSONAL_DOMAINS = /^(gmail|googlemail|yahoo|outlook|hotmail|live|icloud|me|aol|proton|protonmail|rediffmail|zoho)\./i;
+function orgOf(person) {
+  const domain = String(person?.address || '').split('@')[1] || '';
+  if (!domain || PERSONAL_DOMAINS.test(domain)) return '';
+  const name = domain.split('.').slice(-2, -1)[0] || domain;
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+const initialsOf = (name, address) => {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return (words[0] || String(address || '?')).slice(0, 2).toUpperCase();
+};
+const statusOf = (item) => (item?.archived ? 'done' : item?.waiting ? 'waiting' : 'todo');
 const isMailFolder = (folder) => MAIL_FOLDERS.includes(folder) || folder.startsWith('label:');
 
 // Toast text for each action, and the action that undoes it.
 const DONE = {
   archive: ['archived', 'inbox'],
+  done: ['marked done', 'todo'],
+  waiting: ['moved to Waiting', 'todo'],
+  todo: ['moved to To do', null],
   trash: ['moved to Trash', 'restore'],
   inbox: ['moved to Inbox', null],
   restore: ['restored', 'trash'],
@@ -82,7 +108,7 @@ const DONE = {
   retry: ['being sent again', null],
 };
 // Actions after which an open message no longer belongs in the current view.
-const LEAVES_VIEW = ['archive', 'trash', 'inbox', 'restore', 'delete', 'unread', 'spam', 'notSpam', 'snooze', 'cancel', 'retry'];
+const LEAVES_VIEW = ['archive', 'done', 'waiting', 'todo', 'trash', 'inbox', 'restore', 'delete', 'unread', 'spam', 'notSpam', 'snooze', 'cancel', 'retry'];
 
 const URLS = { inbox: '/mail/messages', sent: '/mail/sent', spam: '/mail/spam', scheduled: '/mail/scheduled' };
 
@@ -124,6 +150,134 @@ const QUOTE_STYLE = 'margin:0 0 0 0.8ex;border-left:1px solid #ccc;padding-left:
 const person = (p) => (p.name ? `${escapeHtml(p.name)} &lt;${escapeHtml(p.address || '')}&gt;` : escapeHtml(p.address || ''));
 
 const asArray = (v) => (Array.isArray(v) ? v : v ? [v] : []);
+
+/** Who owns a conversation: their avatar and first name ("You" for yourself). */
+function OwnerChip({ address, me, team, avatars }) {
+  const person = team.find((p) => p.address === address) || { address, name: '' };
+  const first = address === me ? 'You' : (person.name || address.split('@')[0]).split(' ')[0];
+  return (
+    <span className="owner-chip" title={`Owner: ${person.name || address}`}>
+      <Avatar url={avatars[address] || person.avatarUrl} person={person} color={person.color} size="sm" />
+      <span>{first}</span>
+    </span>
+  );
+}
+
+/**
+ * Beside an open conversation: who the sender is, its status, its owner, team notes (never sent
+ * to the sender) and a meeting shortcut.
+ */
+function ConversationPanel({ msg, status, me, team, avatars, onStatus, onTeam, onMeet }) {
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const view = msg.team || { assignee: null, notes: [] };
+  const from = msg.from || {};
+  const save = async (path, options) => {
+    setBusy(true);
+    setError('');
+    try {
+      onTeam(await api(path, options));
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <aside className="convo-panel" aria-label="About this conversation">
+      <section className="panel-card">
+        <div className="panel-person">
+          <Avatar url={avatars[from.address]} person={from} size="lg" />
+          <div>
+            <strong>{displayName(from)}</strong>
+            <span className="muted small">{[orgOf(from), from.address].filter(Boolean).join(' · ')}</span>
+          </div>
+        </div>
+        {msg.sender && (
+          <dl className="panel-facts">
+            <dt>Conversations</dt>
+            <dd>{msg.sender.threads}</dd>
+            <dt>First mail</dt>
+            <dd>{formatDate(msg.sender.since)}</dd>
+          </dl>
+        )}
+      </section>
+
+      <section className="panel-card">
+        <h2>Status</h2>
+        <div className="triage-switch" role="group" aria-label="Status">
+          {[['todo', 'To do'], ['waiting', 'Waiting'], ['done', 'Done']].map(([id, label]) => (
+            <button key={id} type="button" className={status === id ? 'on' : ''} aria-pressed={status === id} onClick={() => status !== id && onStatus(id)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel-card">
+        <h2>Owner</h2>
+        <label className="panel-owner">
+          <span className="sr-only">Owner</span>
+          <select
+            value={view.assignee || ''}
+            disabled={busy}
+            onChange={(e) => save(`/mail/messages/${msg.id}/team`, { method: 'PATCH', body: { assignee: e.target.value || null } })}
+          >
+            <option value="">Nobody yet</option>
+            {team.map((p) => (
+              <option key={p.address} value={p.address}>
+                {p.address === me ? `You (${p.name || p.address})` : p.name ? `${p.name} · ${p.address}` : p.address}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+
+      <section className="panel-card">
+        <h2>Team notes</h2>
+        <p className="muted small panel-hint">Only your team sees these. They are never sent.</p>
+        {view.notes.map((n) => (
+          <div key={n.id} className="panel-note">
+            <div className="panel-note-head">
+              <strong>{n.by === me ? 'You' : n.name || n.by.split('@')[0]}</strong>
+              <span className="muted small">{formatDate(n.at)}</span>
+              {n.by === me && (
+                <button type="button" className="link small" disabled={busy} onClick={() => save(`/mail/messages/${msg.id}/notes/${n.id}`, { method: 'DELETE' })}>
+                  Delete
+                </button>
+              )}
+            </div>
+            <p>{n.text}</p>
+          </div>
+        ))}
+        <form
+          className="panel-note-form"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (note.trim() && (await save(`/mail/messages/${msg.id}/notes`, { method: 'POST', body: { text: note } }))) setNote('');
+          }}
+        >
+          <label className="sr-only" htmlFor="team-note">Add a note for the team</label>
+          <textarea id="team-note" rows={2} maxLength={2000} placeholder="Add a note for the team…" value={note} onChange={(e) => setNote(e.target.value)} />
+          <button className="btn btn-outline" disabled={busy || !note.trim()}>Add note</button>
+        </form>
+      </section>
+
+      {onMeet && (
+        <section className="panel-card">
+          <h2>Talk it over</h2>
+          <button type="button" className="btn btn-outline panel-meet" onClick={onMeet}>
+            <Icon name="videocam" size={18} /> Schedule a meeting
+          </button>
+        </section>
+      )}
+      {error && <div className="alert">{error}</div>}
+    </aside>
+  );
+}
 
 /** True on phone-sized screens (the Gmail-app layout), updated as the window changes. */
 function usePhone() {
@@ -254,7 +408,16 @@ function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh
 }
 
 export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin }) {
-  const [folder, setFolder] = useState('inbox');
+  const [folder, setFolder] = useState('todo');
+  const [team, setTeam] = useState([]); // who can own a conversation
+  // Instant notes: the panel, its unread badge, and the latest note pushed over the live connection.
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesWith, setNotesWith] = useState(null);
+  const [notesUnread, setNotesUnread] = useState(0);
+  const [notesMe, setNotesMe] = useState('');
+  const [latestNote, setLatestNote] = useState(null);
+  const notesView = useRef({ open: false, me: '' });
+  notesView.current = { open: notesOpen, me: notesMe };
   const [category, setCategory] = useState('primary');
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState('');
@@ -298,7 +461,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const me = user.email;
 
   const labelsById = useMemo(() => Object.fromEntries(labels.map((l) => [l.id, l])), [labels]);
-  const showTabs = folder === 'inbox' && !search;
+  const showTabs = CATEGORIZED.includes(folder) && !search;
 
   // `extra`: { tone: 'error' | 'warning' | 'success', title, actions: [{ label, onClick }] }.
   const flash = (text, undo, ms = 6000, extra = {}) => {
@@ -314,7 +477,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const load = useCallback(async () => {
     const request = ++loadRequest.current;
     try {
-      const params = new URLSearchParams({ folder, page, q: search, ...(folder === 'inbox' && !search && { category }) });
+      const params = new URLSearchParams({ folder, page, q: search, ...(CATEGORIZED.includes(folder) && !search && { category }) });
       const path = `/mail/messages?${params}`;
       const cached = cachedMailboxList(path);
       const keepScrolled = (data) => (prev) => {
@@ -381,6 +544,23 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       timer = setTimeout(load, 150);
     };
     events.addEventListener('mail', update);
+    // Instant notes arrive here the moment they are sent.
+    events.addEventListener('note', (event) => {
+      const note = JSON.parse(event.data);
+      setLatestNote(note);
+      if (note.from === notesView.current.me) return;
+      if (!notesView.current.open) {
+        setNotesUnread((n) => n + 1);
+        const preview = note.text || `Sent ${note.files.length === 1 ? 'a file' : `${note.files.length} files`}`;
+        flash(preview.length > 140 ? `${preview.slice(0, 140)}…` : preview, null, 9000, {
+          tone: 'note',
+          title: `Note from ${note.fromName || note.from}`,
+          actions: [{ label: 'Reply', onClick: () => openNotes(note.from) }],
+        });
+      }
+    });
+    // Coming back after a dropped connection: catch up on the badge.
+    events.addEventListener('open', () => api('/notes/unread').then(({ unread }) => setNotesUnread(unread)).catch(() => {}));
     return () => { clearTimeout(timer); events.close(); };
   }, [load]);
 
@@ -427,6 +607,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       })
       .catch(() => {});
     api('/mail/people').then(setPeople).catch(() => {});
+    api('/mail/team').then(setTeam).catch(() => {});
+    api('/notes/unread')
+      .then(({ me: self, unread }) => {
+        setNotesMe(self);
+        setNotesUnread(unread);
+      })
+      .catch(() => {});
     api('/mail/settings')
       .then((s) => setSignature({ text: s.signature, html: s.signatureHtml }))
       .catch(() => {});
@@ -528,7 +715,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     const view = list.view;
     setLoadingMore(true);
     try {
-      const params = new URLSearchParams({ folder, page: next, q: search, ...(folder === 'inbox' && !search && { category }) });
+      const params = new URLSearchParams({ folder, page: next, q: search, ...(CATEGORIZED.includes(folder) && !search && { category }) });
       const data = await api(`/mail/messages?${params}`);
       setList((prev) => {
         if (prev.view !== view) return prev;
@@ -548,6 +735,12 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     watcher.observe(target);
     return () => watcher.disconnect();
   }, [hasMore, loadMore]);
+
+  function openNotes(withAddress = null) {
+    setNotesWith(withAddress);
+    setNotesOpen(true);
+    if (window.matchMedia('(max-width: 800px)').matches) setCollapsed(true);
+  }
 
   function goTo(nextFolder) {
     setFolder(nextFolder);
@@ -580,7 +773,9 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const removesFromView = (action) =>
     ['trash', 'delete', 'spam', 'notSpam', 'snooze', 'cancel'].includes(action) ||
     ['sent', 'drafts'].includes(folder) ||
-    (action === 'archive' && folder === 'inbox') ||
+    (['archive', 'done'].includes(action) && ['inbox', 'todo', 'waiting', 'assigned'].includes(folder)) ||
+    (action === 'waiting' && folder === 'todo') ||
+    (action === 'todo' && ['waiting', 'done'].includes(folder)) ||
     (action === 'restore' && folder === 'trash');
 
   async function act(ids, action, extra = {}, { silent = false } = {}) {
@@ -655,7 +850,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     if (!(await ask({ title: `Delete the label "${label.name}"?`, message: 'Messages stay in your mailbox; only this label is removed from them.', confirmLabel: 'Delete', danger: true }))) return;
     await api(`/mail/labels/${label.id}`, { method: 'DELETE' });
     setLabels((l) => l.filter((x) => x.id !== label.id));
-    if (folder === `label:${label.id}`) goTo('inbox');
+    if (folder === `label:${label.id}`) goTo('todo');
     else load();
   }
 
@@ -972,10 +1167,15 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     return (
       <>
         {allArchived ? (
-          <IconButton icon="inbox" title="Move to Inbox" size={size} onClick={() => act(ids, 'inbox')} />
+          <IconButton icon="inbox" title="Back to To do" size={size} onClick={() => act(ids, 'todo')} />
         ) : (
-          <IconButton icon="archive" title="Archive (e)" size={size} onClick={() => act(ids, 'archive')} />
+          <IconButton icon="checkCircle" title="Mark done (e)" size={size} onClick={() => act(ids, 'done')} />
         )}
+        {!allArchived && (items.every((i) => i.waiting) ? (
+          <IconButton icon="inbox" title="Back to To do" size={size} onClick={() => act(ids, 'todo')} />
+        ) : (
+          <IconButton icon="hourglass" title="Waiting on others" size={size} onClick={() => act(ids, 'waiting')} />
+        ))}
         <IconButton icon="trash" title="Delete (#)" danger size={size} onClick={() => act(ids, 'trash')} />
         {allRead ? (
           <IconButton icon="mail" title="Mark as unread (Shift+u)" size={size} onClick={() => act(ids, 'unread')} />
@@ -1082,7 +1282,43 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const drawerVisiblyOpen = !collapsed || (drawerDrag !== null && drawerDrag > 0);
 
   return (
-    <div className={`app ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.some((m) => m.phase === 'waiting') ? 'has-send-tray' : ''}`}>
+    <div className={`app has-rail ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.some((m) => m.phase === 'waiting') ? 'has-send-tray' : ''}`}>
+      <nav className="rail" aria-label="Mailboxes">
+        <Logo inverse size={46} className="rail-logo" />
+        <span className="rail-divider" aria-hidden="true" />
+        {[{ ...account, address: account.email, own: true }, ...mailboxes].map((m) => {
+          const current = m.address === me;
+          const label = m.own ? 'Your mailbox' : m.displayName || m.address;
+          return (
+            <button
+              key={m.address}
+              type="button"
+              className={`rail-box ${current ? 'on' : ''}`}
+              title={`${label} · ${m.address}`}
+              aria-label={label}
+              aria-current={current ? 'true' : undefined}
+              onClick={() => !current && onSwitchMailbox(m.own ? null : m.address)}
+            >
+              {initialsOf(m.displayName, m.address)}
+            </button>
+          );
+        })}
+        <span className="rail-fill" />
+        <button type="button" className={`rail-btn ${notesOpen ? 'on' : ''}`} title="Instant notes" aria-label={`Instant notes${notesUnread ? `, ${notesUnread} unread` : ''}`} onClick={() => (notesOpen ? setNotesOpen(false) : openNotes())}>
+          <Icon name="chat" size={22} />
+          {notesUnread > 0 && <span className="rail-badge">{notesUnread > 99 ? '99+' : notesUnread}</span>}
+        </button>
+        {meetOn && !shared && (
+          <button type="button" className="rail-btn" title="New meeting" aria-label="New meeting" onClick={() => setModal('meet')}>
+            <Icon name="videocam" size={22} />
+          </button>
+        )}
+        {!shared && (
+          <button type="button" className="rail-btn" title="Settings" aria-label="Settings" onClick={() => { setSettingsTab('profile'); setModal('settings'); }}>
+            <Icon name="settings" size={22} />
+          </button>
+        )}
+      </nav>
       <header className="topbar">
         <div className="brand">
           <button
@@ -1099,6 +1335,11 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           <Logo />
           <span className="brand-text"><Wordmark /></span>
         </div>
+        <nav className="crumbs" aria-label="You are in">
+          <span>{shared ? shared.displayName || me : 'Your mailbox'}</span>
+          <span aria-hidden="true">/</span>
+          <strong>{modal === 'settings' ? 'Settings' : search ? 'Search' : showTabs && category !== 'primary' ? `${folderLabel} · ${CATEGORY_TABS.find((t) => t.id === category)?.label}` : folderLabel}</strong>
+        </nav>
         <form
           className="search"
           onSubmit={(e) => {
@@ -1216,6 +1457,11 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               <Icon name="close" />
             </button>
           </div>
+          <div className="pane-head">
+            <span className="muted small">{(me.split('@')[1] || '').replace(/\.[a-z.]+$/i, '').replace(/^./, (c) => c.toUpperCase())}</span>
+            <strong>{shared ? shared.displayName || me : 'Your mailbox'}</strong>
+            <span className="muted small pane-address">{me}</span>
+          </div>
           <button
             className="compose-btn"
             onClick={() => {
@@ -1224,35 +1470,40 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             }}
             title="Compose (c)"
           >
-            <Icon name="edit" /> <span>Compose</span>
+            <Icon name="edit" /> <span>New message</span>
           </button>
           <nav>
-            {FOLDERS.filter((f) => !f.onlyWhenUsed || shownCounts[f.count] > 0 || folder === f.id).map((f) => (
-              <button key={f.id} className={`nav-item ${folder === f.id ? 'active' : ''}`} onClick={() => goTo(f.id)} title={f.label}>
-                <span className="nav-icon" style={{ '--c': f.color }}>
-                  <Icon name={f.icon} size={18} />
-                </span>
-                <span className="nav-label">{f.label}</span>
-                {f.count && shownCounts[f.count] > 0 && <span className={`count ${f.plain ? 'plain' : ''}`}>{shownCounts[f.count]}</span>}
-              </button>
-            )).flatMap((button, i, all) => (all[i].key === 'inbox'
-              ? [button, ...CATEGORY_TABS.map((t) => (
-                  <button
-                    key={`category-${t.id}`}
-                    className={`nav-item nav-sub mobile-only ${folder === 'inbox' && !search && category === t.id ? 'active' : ''}`}
-                    onClick={() => {
-                      setCategory(t.id);
-                      goTo('inbox');
-                    }}
-                  >
-                    <span className="nav-icon" style={{ '--c': t.color }}>
-                      <Icon name={t.icon} size={16} />
-                    </span>
-                    <span className="nav-label">{t.label}</span>
-                    {t.id !== 'primary' && counts.categories?.[t.id] > 0 && <span className="count">{counts.categories[t.id]}</span>}
-                  </button>
-                ))]
-              : [button]))}
+            {(() => {
+              const shown = FOLDERS.filter((f) => !f.hidden && (!f.onlyWhenUsed || shownCounts[f.count] > 0 || folder === f.id));
+              return shown.flatMap((f, i) => [
+                ...(f.section && f.section !== shown[i - 1]?.section ? [<div key={`section-${f.section}`} className="nav-section">{f.section}</div>] : []),
+                <button key={f.id} className={`nav-item ${folder === f.id ? 'active' : ''}`} onClick={() => goTo(f.id)} title={f.label}>
+                  <span className="nav-icon" style={{ '--c': f.color }}>
+                    <Icon name={f.icon} size={18} />
+                  </span>
+                  <span className="nav-label">{f.label}</span>
+                  {f.count && shownCounts[f.count] > 0 && <span className={`count ${f.plain ? 'plain' : ''}`}>{shownCounts[f.count]}</span>}
+                </button>,
+                ...(f.id === 'todo'
+                  ? CATEGORY_TABS.map((t) => (
+                      <button
+                        key={`category-${t.id}`}
+                        className={`nav-item nav-sub mobile-only ${folder === 'todo' && !search && category === t.id ? 'active' : ''}`}
+                        onClick={() => {
+                          setCategory(t.id);
+                          goTo('todo');
+                        }}
+                      >
+                        <span className="nav-icon" style={{ '--c': t.color }}>
+                          <Icon name={t.icon} size={16} />
+                        </span>
+                        <span className="nav-label">{t.label}</span>
+                        {t.id !== 'primary' && counts.categories?.[t.id] > 0 && <span className="count">{counts.categories[t.id]}</span>}
+                      </button>
+                    ))
+                  : []),
+              ]);
+            })()}
             {onOpenAdmin && (
               <button
                 className="nav-item admin-mobile-item"
@@ -1373,7 +1624,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         )}
         {!open && modal !== 'settings' && (
           <nav className="bottom-nav" aria-label="Folders">
-            {['inbox', 'starred', 'sent'].map((id) => {
+            {['todo', 'waiting'].map((id) => {
               const f = FOLDERS.find((x) => x.id === id);
               return (
                 <button key={id} type="button" className={folder === id ? 'on' : ''} onClick={() => goTo(id)}>
@@ -1381,11 +1632,18 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                     <Icon name={f.icon} />
                     {f.count && counts[f.count] > 0 && <span className="bottom-nav-badge">{counts[f.count] > 99 ? '99+' : counts[f.count]}</span>}
                   </span>
-                  {f.label}
+                  {id === 'waiting' ? 'Waiting' : f.label}
                 </button>
               );
             })}
-            <button type="button" className={['inbox', 'starred', 'sent'].includes(folder) ? '' : 'on'} onClick={() => setCollapsed(false)}>
+            <button type="button" className={notesOpen ? 'on' : ''} onClick={() => (notesOpen ? setNotesOpen(false) : openNotes())}>
+              <span className="bottom-nav-icon">
+                <Icon name="chat" />
+                {notesUnread > 0 && <span className="bottom-nav-badge">{notesUnread > 99 ? '99+' : notesUnread}</span>}
+              </span>
+              Notes
+            </button>
+            <button type="button" className={['todo', 'waiting'].includes(folder) || notesOpen ? '' : 'on'} onClick={() => setCollapsed(false)}>
               <span className="bottom-nav-icon"><Icon name="menu" /></span>
               More
             </button>
@@ -1421,6 +1679,21 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               noticeTone={open.outbox ? (open.failed ? 'error' : 'warning') : undefined}
               patch={livePatch}
               actions={actionButtons([open.id], [{ ...live, read: true }])}
+              aside={open.kind === 'inbox' && openMsg && String(openMsg.id) === String(open.id) ? (
+                <ConversationPanel
+                  msg={openMsg}
+                  status={statusOf(live)}
+                  me={me}
+                  team={team}
+                  avatars={people}
+                  onStatus={(action) => act([open.id], action)}
+                  onTeam={(view) => {
+                    setOpenMsg((m) => ({ ...m, team: view }));
+                    setList((l) => ({ ...l, items: l.items.map((i) => (String(i.id) === String(open.id) ? { ...i, assignee: view.assignee, notes: view.notes.length } : i)) }));
+                  }}
+                  onMeet={meetOn && !shared ? () => setModal('meet') : null}
+                />
+              ) : null}
               phoneMore={
                 <span className="mobile-only">
                   <Popover icon="moreVert" title="More" align="right">
@@ -1477,6 +1750,26 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             />
           ) : (
             <div className="view-enter" key={`${folder}|${category}|${search}`}>
+              <div className="view-head">
+                <div className="view-title">
+                  <h1>{search ? 'Search results' : folderLabel}</h1>
+                  <p className="muted">
+                    {folder === 'todo' && !search
+                      ? [`${counts.todo || 0} unread`, counts.assigned ? `${counts.assigned} assigned to you` : null, counts.waiting ? `${counts.waiting} waiting on others` : null].filter(Boolean).join(' · ')
+                      : list.total ? `${list.total} ${list.total === 1 ? 'conversation' : 'conversations'}` : ''}
+                  </p>
+                </div>
+                {TRIAGE.includes(folder) && !search && (
+                  <div className="triage-switch" role="group" aria-label="Status">
+                    {TRIAGE.map((id) => (
+                      <button key={id} type="button" className={folder === id ? 'on' : ''} aria-pressed={folder === id} onClick={() => goTo(id)}>
+                        {FOLDERS.find((f) => f.id === id).label.replace(' on others', '')}
+                        {id !== 'done' && counts[id] > 0 && <span className="triage-count">{counts[id]}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className={`toolbar ${selected.size > 0 ? 'selecting' : ''}`}>
                 {selected.size > 0 ? (
                   <button className="icon-btn mobile-only" title="Clear selection" onClick={() => selectBy('none')}>
@@ -1484,7 +1777,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                   </button>
                 ) : (
                   <span className="toolbar-title mobile-only">
-                    {folder === 'inbox' && showTabs ? CATEGORY_TABS.find((t) => t.id === category)?.label : folderLabel}
+                    {showTabs && folder === 'inbox' ? CATEGORY_TABS.find((t) => t.id === category)?.label : folderLabel}
                   </span>
                 )}
                 <span className="select-box">
@@ -1567,7 +1860,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               )}
               {folder === 'scheduled' && list.total > 0 && <div className="banner">These messages will be sent at the time shown. Cancel one to move it back to Drafts.</div>}
               {error && <div className="alert m">{error}</div>}
-              {folder === 'inbox' && !search && (
+              {CATEGORIZED.includes(folder) && !search && (
                 <LoginCodes
                   reloadKey={list}
                   onOpen={({ id, subject, from, date }) => {
@@ -1593,9 +1886,14 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                     <Icon name={search ? 'search' : 'inbox'} size={40} className="empty-icon" />
                     {search
                       ? 'No messages match your search.'
-                      : folder === 'inbox'
+                      : CATEGORIZED.includes(folder)
                         ? `Nothing in ${CATEGORY_TABS.find((t) => t.id === category)?.label} — you’re all caught up.`
                         : `Nothing in ${folderLabel}.`}
+                  </div>
+                )}
+                {!loading && list.items.length > 0 && MAIL_FOLDERS.includes(folder) && (
+                  <div className="list-head" aria-hidden="true">
+                    <span /><span>From</span><span>Conversation</span><span>Owner</span><span>Received</span>
                   </div>
                 )}
                 {!loading &&
@@ -1649,10 +1947,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                         {['sent', 'draft', 'scheduled'].includes(item.kind)
                           ? `To: ${(item.to || []).map((p) => personLabel(p, me)).join(', ') || '(no recipients)'}`
                           : personLabel(item.from, me)}
+                        {item.kind === 'inbox' && orgOf(item.from) && <span className="row-org">{orgOf(item.from)}</span>}
                       </span>
                       <span className="row-main">
                         {folder === 'all' && !item.archived && <span className="tag">Inbox</span>}
                         {search && item.category && item.category !== 'primary' && <span className="tag">{item.category}</span>}
+                        {item.waiting && folder !== 'waiting' && <span className="tag waiting-tag">Waiting</span>}
+                        {item.notes > 0 && <span className="tag notes-tag" title="Team notes">{item.notes} {item.notes === 1 ? 'note' : 'notes'}</span>}
                         {item.via === 'cc' && <span className="tag cc" title="You were CC'd">cc</span>}
                         {item.via === 'bcc' && <span className="tag bcc" title="You were BCC'd">bcc</span>}
                         {item.labels.map(
@@ -1668,6 +1969,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                         {item.snippet && <span className="row-snippet">{item.snippet}</span>}
                       </span>
                       {item.hasAttachments && <Icon name="attach" size={16} className="muted row-clip" />}
+                      <span className="row-owner">{item.assignee && <OwnerChip address={item.assignee} me={me} team={team} avatars={people} />}</span>
                       <span className="row-date" title={formatDate(item.date, true)}>{rowDate(item)}</span>
                       <span className="row-hover">{actionButtons([item.id], [item], { compact: true })}</span>
                     </div>
@@ -1697,6 +1999,16 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           onSend={handleSend}
           driveOn={driveOn}
           meetOn={meetOn}
+        />
+      )}
+
+      {notesOpen && (
+        <InstantNotes
+          me={notesMe}
+          incoming={latestNote}
+          startWith={notesWith}
+          onClose={() => setNotesOpen(false)}
+          onRead={(count) => setNotesUnread((n) => Math.max(0, n - count))}
         />
       )}
 
@@ -1742,7 +2054,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         <div className={`toast ${toast.tone ? `toast-card toast-${toast.tone}` : ''}`} role={toast.tone === 'error' ? 'alert' : 'status'}>
           {toast.tone && (
             <span className="toast-icon" aria-hidden="true">
-              <Icon name={toast.tone === 'success' ? 'check' : toast.tone === 'warning' ? 'outbox' : 'spam'} size={20} />
+              <Icon name={toast.tone === 'success' ? 'check' : toast.tone === 'note' ? 'chat' : toast.tone === 'warning' ? 'outbox' : 'spam'} size={20} />
             </span>
           )}
           {toast.tone ? (

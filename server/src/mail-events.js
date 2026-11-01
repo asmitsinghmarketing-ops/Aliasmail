@@ -4,6 +4,10 @@ import { EventEmitter } from 'node:events';
 export const mailEvents = new EventEmitter();
 mailEvents.setMaxListeners(0);
 
+// Instant notes: emitted as (addresses, payload); each open window passes on the ones for its person.
+export const noteEvents = new EventEmitter();
+noteEvents.setMaxListeners(0);
+
 let pending = null;
 /** Tell open mailboxes to refresh. Bursts (a bulk action, a sync batch) become one signal. */
 export function announceChange() {

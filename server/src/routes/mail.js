@@ -19,7 +19,8 @@ import { attachmentLink, deleteFromServer, fetchParsed, noteSend, sendPart, warm
 import { deliver, queueInOutbox, runScheduled } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
-import { announceChange, mailEvents } from '../mail-events.js';
+import { announceChange, mailEvents, noteEvents } from '../mail-events.js';
+import { personOf, teammates } from '../team.js';
 import { liveSync, noteActivity } from '../live-sync.js';
 import { chatEnabled, driveEnabled, meetEnabled } from '../google-auth.js';
 import { createSpace, listSpaces, readSpace } from '../google-chat.js';
@@ -67,12 +68,20 @@ router.get('/events', (req, res) => {
   res.write(`retry: 3000\n\n${pad}`);
   const changed = () => { if (!res.writableEnded) res.write(`event: mail\ndata: {}\n\n${pad}`); };
   mailEvents.on('changed', changed);
+  // Instant notes for this person: pushed straight away, with what's needed to show them.
+  const who = personOf(req.user);
+  const note = (to, payload) => { if (to.includes(who) && !res.writableEnded) res.write(`event: note\ndata: ${JSON.stringify(payload)}\n\n${pad}`); };
+  const noteRead = (to, payload) => { if (to.includes(who) && !res.writableEnded) res.write(`event: note-read\ndata: ${JSON.stringify(payload)}\n\n${pad}`); };
+  noteEvents.on('note', note);
+  noteEvents.on('note-read', noteRead);
   liveSync.nudge();
   const heartbeat = setInterval(() => res.write(': keepalive\n\n'), 15_000);
   // Periodic reconnect rechecks revoked/expired sessions.
   const lifetime = setTimeout(() => res.end(), 60_000);
   const cleanup = () => {
     mailEvents.off('changed', changed);
+    noteEvents.off('note', note);
+    noteEvents.off('note-read', noteRead);
     clearInterval(heartbeat);
     clearTimeout(lifetime);
   };
@@ -88,6 +97,10 @@ const live = (s) => !s.trashed;
 
 const FOLDERS = {
   inbox: (s) => !s.archived && live(s) && !isSnoozed(s),
+  // Team workflow views: To do is the inbox minus what waits on someone else; Done is archived.
+  todo: (s) => !s.archived && live(s) && !isSnoozed(s) && !s.waiting,
+  waiting: (s) => s.waiting && !s.archived && live(s),
+  done: (s) => s.archived && live(s),
   starred: (s) => s.starred && live(s),
   snoozed: (s) => isSnoozed(s) && live(s),
   important: (s) => s.important && live(s),
@@ -95,6 +108,15 @@ const FOLDERS = {
   trash: (s) => s.trashed,
 };
 const CATEGORIES = ['primary', 'promotions', 'social', 'updates'];
+// Views that can be narrowed to an inbox category (Primary, Promotions, …).
+const CATEGORIZED = new Set(['inbox', 'todo']);
+
+/* ----- team workflow: who owns a conversation, and notes only the team sees ----- */
+
+const MAX_NOTE = 2000;
+const MAX_NOTES = 200;
+const teamOf = (m) => m.team || {};
+const teamView = (m) => ({ assignee: teamOf(m).assignee || null, notes: teamOf(m).notes || [] });
 
 // How the account received the message, shown as "to me" / "cc me" / "bcc me".
 const via = (m, me) => (m.to.some((a) => a.address === me) ? 'to' : m.cc.some((a) => a.address === me) ? 'cc' : isOwner(me) ? null : 'bcc');
@@ -124,6 +146,9 @@ const summary = (m, me) => {
     trashed: Boolean(s.trashed),
     snoozedUntil: isSnoozed(s) ? s.snoozedUntil : null,
     labels: s.labels || [],
+    waiting: Boolean(s.waiting),
+    assignee: teamOf(m).assignee || null,
+    notes: (teamOf(m).notes || []).length,
   };
 };
 
@@ -272,6 +297,9 @@ router.get('/folders', (req, res) => {
 
   res.json({
     inbox: unread('inbox'),
+    todo: unread('todo'),
+    waiting: count(FOLDERS.waiting),
+    assigned: count((s, m) => teamOf(m).assignee === me && FOLDERS.inbox(s)),
     starred: count(FOLDERS.starred),
     snoozed: count(FOLDERS.snoozed),
     important: unread('important'),
@@ -313,9 +341,10 @@ router.get('/messages', (req, res) => {
   else {
     const labelId = folder.startsWith('label:') ? folder.slice(6) : null;
     const inFolder = labelId ? (s) => live(s) && (s.labels || []).includes(labelId) : FOLDERS[folder] || FOLDERS.inbox;
+    const assigned = folder === 'assigned';
     items = messagesFor(me)
-      .filter((m) => inFolder(stateOf(m, me)))
-      .filter((m) => !(folder === 'inbox' && CATEGORIES.includes(category) && !q) || (m.category || 'primary') === category)
+      .filter((m) => (assigned ? teamOf(m).assignee === me && FOLDERS.inbox(stateOf(m, me)) : inFolder(stateOf(m, me))))
+      .filter((m) => !(CATEGORIZED.has(folder) && CATEGORIES.includes(category) && !q) || (m.category || 'primary') === category)
       .map((m) => summary(m, me));
   }
 
@@ -376,7 +405,10 @@ router.get('/messages/:uid', async (req, res) => {
     save();
     syncSeenToServer([msg]);
   }
-  res.json({ ...summary(msg, me), replyTo: msg.replyTo, messageId: msg.messageId, ...bodyOf(parsed) });
+  // For the context panel: how often this sender has written, and since when.
+  const fromSender = messagesFor(me).filter((m) => m.from?.address && m.from.address === msg.from?.address);
+  const sender = { threads: fromSender.length, since: fromSender.reduce((first, m) => (m.date < first ? m.date : first), msg.date) };
+  res.json({ ...summary(msg, me), team: teamView(msg), sender, replyTo: msg.replyTo, messageId: msg.messageId, ...bodyOf(parsed) });
 });
 
 // Called once a message is actually on screen (not on hover): its large attachments start
@@ -416,6 +448,10 @@ const ACTIONS = {
   important: () => () => ({ important: true }),
   notImportant: () => () => ({ important: false }),
   archive: () => () => ({ archived: true }),
+  // Team workflow: waiting on someone else, back to To do, or done (= archived).
+  waiting: () => () => ({ waiting: true, archived: false }),
+  todo: () => () => ({ waiting: false, archived: false }),
+  done: () => () => ({ waiting: false, archived: true }),
   inbox: () => () => ({ archived: false, trashed: false, snoozedUntil: null }),
   trash: () => () => ({ trashed: true, trashedAt: new Date().toISOString() }),
   restore: () => () => ({ trashed: false }),
@@ -890,6 +926,44 @@ router.get('/contacts', (req, res) => {
   }
   const list = [...people.values()].sort((a, b) => b.score - a.score || a.address.localeCompare(b.address)).slice(0, 500);
   res.json(list.map(({ address, name, team }) => ({ address, name, team })));
+});
+
+/** Everyone who can own a conversation, for the owner picker. */
+router.get('/team', (req, res) => res.json(teammates()));
+
+/** Set (or clear, with null) who owns a conversation. Everyone who can see it sees the owner. */
+router.patch('/messages/:uid/team', (req, res) => {
+  const msg = ownMessage(req);
+  const assignee = req.body?.assignee == null ? null : normalize(req.body.assignee);
+  if (assignee && !teammates().some((p) => p.address === assignee)) throw new HttpError(400, 'Choose someone from your team');
+  msg.team = { ...teamOf(msg), assignee };
+  save();
+  audit(req, 'conversation-assigned', req.me, `${msg.subject?.slice(0, 80) || '(no subject)'} → ${assignee || 'nobody'}`);
+  res.json(teamView(msg));
+});
+
+/** A note on a conversation that only the team sees (never sent to the sender). */
+router.post('/messages/:uid/notes', (req, res) => {
+  const msg = ownMessage(req);
+  const text = String(req.body?.text || '').trim().slice(0, MAX_NOTE);
+  if (!text) throw new HttpError(400, 'Write a note first');
+  const author = req.user.role === 'admin' ? config.mailbox : req.user.email;
+  const name = teammates().find((p) => p.address === author)?.name || '';
+  const notes = [...(teamOf(msg).notes || []), { id: crypto.randomUUID(), by: author, name, text, at: new Date().toISOString() }].slice(-MAX_NOTES);
+  msg.team = { ...teamOf(msg), notes };
+  save();
+  res.status(201).json(teamView(msg));
+});
+
+router.delete('/messages/:uid/notes/:noteId', (req, res) => {
+  const msg = ownMessage(req);
+  const author = req.user.role === 'admin' ? config.mailbox : req.user.email;
+  const note = (teamOf(msg).notes || []).find((n) => n.id === req.params.noteId);
+  if (!note) throw new HttpError(404, 'Note not found');
+  if (note.by !== author && req.user.role !== 'admin') throw new HttpError(403, 'Only whoever wrote a note can delete it');
+  msg.team = { ...teamOf(msg), notes: teamOf(msg).notes.filter((n) => n.id !== note.id) };
+  save();
+  res.json(teamView(msg));
 });
 
 router.get('/people', (req, res) => {

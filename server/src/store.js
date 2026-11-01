@@ -21,6 +21,7 @@ const empty = () => ({
   security: { requireMfa: false },
   sending: { gateway: false, gatewayReplies: false }, // outside mail through GoDaddy's Node gateway (Admin → Speed)
   audit: [], // security activity log
+  instantNotes: [], // private notes between teammates (routes/notes.js)
   sync: { lastSyncAt: null, lastError: null },
 });
 

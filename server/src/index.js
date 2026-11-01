@@ -11,6 +11,7 @@ import { HttpError } from './errors.js';
 import { driveEnabled } from './google-auth.js';
 import authRoutes from './routes/auth.js';
 import mailRoutes from './routes/mail.js';
+import notesRoutes from './routes/notes.js';
 import adminRoutes from './routes/admin.js';
 
 // Log what kills the process, so the host's runtime logs show why requests got a 502.
@@ -110,6 +111,7 @@ app.use('/api/auth', authRoutes);
 // Health check for the host (GoDaddy pings the site to see that the app started).
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 app.use('/api/mail', mailRoutes);
+app.use('/api/notes', notesRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
