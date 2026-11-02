@@ -52,15 +52,37 @@ function HtmlBody({ html }) {
   // No referrer either: images and links in an email never learn where it was read.
   const doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><base target="_blank">
 <style>html{overflow:hidden}html,body{margin:0;padding:0}body{display:flow-root;font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#1b1f24;overflow-wrap:break-word}img{max-width:100%;height:auto}a{color:#0b5cd5}p{margin:0 0 .9em}blockquote{margin:.5em 0 .5em .4em;padding-left:12px;border-left:2px solid #d5dbe3;color:#5f6b7a}</style>
-</head><body>${noReferrerOverrides(html)}</body></html>`;
+</head><body data-nextspace>${noReferrerOverrides(html)}</body></html>`;
 
   useEffect(() => () => frame.current?._observers?.forEach((o) => o.disconnect()), []);
+
+  // Size the frame as soon as the email's text is laid out, without waiting for its images (the
+  // load event waits for every remote image, which left a short, cropped frame for seconds).
+  useEffect(() => {
+    let id;
+    const tick = () => {
+      const d = frame.current?.contentDocument;
+      if (d?.body?.hasAttribute('data-nextspace') && d.readyState !== 'loading') prepare();
+      else id = requestAnimationFrame(tick);
+    };
+    id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, [doc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fit the email to the frame like Gmail: newsletters built for a 600-700px column are scaled
   // down as a whole on a phone instead of having their tables squeezed. The frame then grows to
   // the content's height, and keeps adjusting as late images load or the window resizes.
-  const onLoad = () => {
+  // Runs once per email document (early, from the effect above, or on load at the latest).
+  const prepare = () => {
     const el = frame.current;
+    const d = el?.contentDocument;
+    if (!d?.body?.hasAttribute('data-nextspace')) return;
+    if (el._preparedFor === d) {
+      el._fit?.();
+      return;
+    }
+    el._preparedFor = d;
+    el._observers?.forEach((o) => o.disconnect());
     // Addresses the sender left as plain text become clickable, like in Gmail.
     try {
       linkifyNode(el.contentDocument.body);
@@ -92,7 +114,11 @@ function HtmlBody({ html }) {
         /* keep the CSS height */
       }
     };
+    el._fit = fit;
+    // The first size is set at once (no growing animation from the placeholder height).
+    el.style.transition = 'none';
     fit();
+    requestAnimationFrame(() => { el.style.transition = ''; });
     try {
       const content = new ResizeObserver(fit);
       content.observe(el.contentDocument.body);
@@ -103,6 +129,8 @@ function HtmlBody({ html }) {
       setTimeout(fit, 500);
     }
   };
+  // Images have arrived: one more fit (the observers usually got there already).
+  const onLoad = () => prepare();
 
   return (
     <>
