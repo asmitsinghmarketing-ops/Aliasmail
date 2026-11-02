@@ -2365,3 +2365,17 @@ button, input, select, textarea { font-family: inherit; }
 .notify-ok { color: #067647; }
 .notify-steps { padding: 14px 16px; border-radius: 12px; background: #f3f6fc; display: grid; gap: 8px; }
 .notify-steps ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+
+/* Assistant: back to the mailbox, and deleting chats */
+.ai-back {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px 6px 8px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--surface); color: var(--text); font: inherit; font-weight: 600; font-size: 14px; cursor: pointer;
+}
+.ai-back:hover { background: color-mix(in srgb, var(--brand) 8%, var(--surface)); }
+.ai-chat-item .icon-btn:hover { color: #b42318; background: #fee4e2; }
+@media (hover: none) { .ai-chat-item .icon-btn { opacity: 1; } }
+@media (max-width: 800px) {
+  .ai-back { border: 0; background: none; color: #fff; padding: 6px; }
+  .ai-back span { display: none; }
+  .ai-back:hover { background: rgb(255 255 255 / 14%); }
+}

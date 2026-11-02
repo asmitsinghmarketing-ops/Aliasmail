@@ -3,6 +3,7 @@
 // card's button (through the mailbox's normal sending). See server/src/assistant.js.
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
+import { ask as confirmDialog } from './Dialog.jsx';
 import { formatDate } from '../format.js';
 import Icon from './Icon.jsx';
 
@@ -237,10 +238,28 @@ export default function Assistant({ status, onClose, actions }) {
     setTimeout(() => box.current?.focus(), 0);
   }
 
-  async function removeChat(id) {
-    await api(`/assistant/chats/${id}`, { method: 'DELETE' }).catch((err) => setError(err.message));
-    if (id === chatId) newChat();
-    loadChats();
+  // Delete a chat after asking; it leaves the list at once (and comes back if deleting fails).
+  async function removeChat(chat) {
+    if (chat.id === chatId && busy) {
+      setError('This chat is still answering. Press Stop first, then delete it.');
+      return;
+    }
+    const sure = await confirmDialog({
+      title: 'Delete this chat?',
+      message: `“${chat.title}” and its answers will be deleted. Emails, meetings and notes already sent from it aren’t affected.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!sure) return;
+    setError('');
+    setChats((list) => list.filter((c) => c.id !== chat.id));
+    if (chat.id === chatId) newChat();
+    try {
+      await api(`/assistant/chats/${chat.id}`, { method: 'DELETE' });
+    } catch (err) {
+      setError(`Couldn’t delete “${chat.title}”: ${err.message}`);
+      loadChats();
+    }
   }
 
   // The answer being written: the server keeps it in the chat, and this reads it every moment
@@ -346,7 +365,7 @@ export default function Assistant({ status, onClose, actions }) {
                 <span className="ai-chat-title">{c.title}</span>
                 <span className="muted small">{formatDate(c.updatedAt)}</span>
               </button>
-              <button type="button" className="icon-btn" aria-label={`Delete ${c.title}`} onClick={() => removeChat(c.id)}>
+              <button type="button" className="icon-btn" aria-label={`Delete ${c.title}`} title="Delete chat" onClick={() => removeChat(c)}>
                 <Icon name="trash" size={16} />
               </button>
             </div>
@@ -356,15 +375,16 @@ export default function Assistant({ status, onClose, actions }) {
 
       <div className="ai-main">
         <header className="ai-head">
+          <button type="button" className="ai-back" title="Back to mailbox" aria-label="Back to mailbox" onClick={onClose}>
+            <Icon name="back" size={20} />
+            <span>Mailbox</span>
+          </button>
           <button type="button" className="icon-btn ai-chats-toggle" aria-label="Chats" onClick={() => setShowChats(!showChats)}>
             <Icon name="menu" />
           </button>
           <span className="ai-head-title"><Icon name="sparkle" size={20} /> Assistant</span>
           <button type="button" className="icon-btn ai-chats-toggle" aria-label="New chat" onClick={newChat}>
             <Icon name="edit" />
-          </button>
-          <button type="button" className="icon-btn" aria-label="Close Assistant" onClick={onClose}>
-            <Icon name="close" />
           </button>
         </header>
 
