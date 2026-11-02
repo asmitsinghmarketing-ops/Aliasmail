@@ -60,7 +60,7 @@ test.before(async () => {
     },
     stdio: 'ignore',
   });
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 300; i++) {
     try { if ((await fetch(`${BASE}/api/health`)).ok) return; } catch { /* starting */ }
     await new Promise((r) => setTimeout(r, 100));
   }

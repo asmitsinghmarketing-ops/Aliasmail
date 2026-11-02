@@ -7,6 +7,9 @@ import { HttpError } from './errors.js';
 import { settings } from './assistant-settings.js';
 
 const CALL_TIMEOUT_MS = 90_000;
+// Answers that mean "busy right now, try again": asked again after these waits.
+const BUSY = new Set([500, 502, 503, 504]);
+const RETRY_WAITS_MS = [2000, 5000];
 
 const functions = (tools) =>
   tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
@@ -47,8 +50,8 @@ export async function callOpenRouter({ system, history, tools, onText, signal: c
   const timedOut = () => both.signal.aborted && !cancel?.aborted;
 
   let res;
-  try {
-    res = await fetch(`${openrouterUrl}/chat/completions`, {
+  const send = () =>
+    fetch(`${openrouterUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -67,6 +70,15 @@ export async function callOpenRouter({ system, history, tools, onText, signal: c
       }),
       signal: both.signal,
     });
+  try {
+    res = await send();
+    // The model's provider is busy: it usually passes in seconds, so wait and ask again.
+    for (const wait of RETRY_WAITS_MS) {
+      if (!BUSY.has(res.status) || cancel?.aborted || both.signal.aborted) break;
+      console.info(`[assistant] openrouter ${openrouterModel} busy (${res.status}), asking again in ${wait / 1000} s`);
+      await new Promise((r) => setTimeout(r, wait));
+      res = await send();
+    }
   } catch (err) {
     clearTimeout(timer);
     if (cancel?.aborted) throw err;

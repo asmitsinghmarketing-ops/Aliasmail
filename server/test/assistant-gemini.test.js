@@ -17,6 +17,8 @@ let server;
 let gemini;
 let dir;
 const requests = [];
+let busyOnce = true; // the first request gets Google's "model is overloaded"
+let busyAnswers = 0;
 
 function sse(res, chunks) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -30,6 +32,12 @@ test.before(async () => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
+      if (busyOnce) {
+        busyOnce = false;
+        busyAnswers++;
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: { code: 503, message: 'The model is overloaded. Please try again later.', status: 'UNAVAILABLE' } }));
+      }
       const parsed = JSON.parse(body);
       if (parsed.systemInstruction?.parts?.[0]?.text?.includes('You route requests')) {
         return sse(res, [{ candidates: [{ content: { role: 'model', parts: [{ text: '{"intent":"other"}' }] }, finishReason: 'STOP' }], usageMetadata: usage }]);
@@ -61,7 +69,7 @@ test.before(async () => {
     },
     stdio: 'ignore',
   });
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 300; i++) {
     try { if ((await fetch(`${BASE}/api/health`)).ok) return; } catch { /* starting */ }
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -99,6 +107,8 @@ test('with only a Gemini key, the Assistant uses Gemini: tools, cards and stream
   const parts = await answered(call, chat.id, { message: 'Ask the vendor to resend the invoice', timeZone: 'Asia/Kolkata' });
   assert.equal(textOf(parts), 'Looking for it.The email is ready to send.');
   const card = parts.find((p) => p.type === 'card').card;
+  // The overloaded answer was asked again, and the turn still went through.
+  assert.equal(busyAnswers, 1);
   assert.deepEqual([card.kind, card.data.to, card.status], ['email', ['billing@vendor.test'], 'pending']);
 
   // The request: the key in a header (not the URL), the model, function declarations.

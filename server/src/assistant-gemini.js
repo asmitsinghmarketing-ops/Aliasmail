@@ -20,6 +20,9 @@ function schema(value) {
 }
 
 const CALL_TIMEOUT_MS = 90_000;
+// Answers that mean "busy right now, try again": asked again after these waits.
+const BUSY = new Set([500, 502, 503, 504]);
+const RETRY_WAITS_MS = [2000, 5000];
 let noThinkingLevel = false; // the model said it doesn't take a thinking level
 
 const declarations = (tools) => [{
@@ -92,6 +95,14 @@ export async function callGemini({ system, history, tools, onText, signal: cance
         noThinkingLevel = true;
         res = await send(null);
       }
+    }
+    // "The model is overloaded" (Google's busy times, mostly on the free tier): it usually
+    // passes in seconds, so wait and ask again before giving up.
+    for (const wait of RETRY_WAITS_MS) {
+      if (!BUSY.has(res.status) || cancel?.aborted || timeout.aborted) break;
+      console.info(`[assistant] gemini ${geminiModel} busy (${res.status}), asking again in ${wait / 1000} s`);
+      await new Promise((r) => setTimeout(r, wait));
+      res = await send(geminiThinking !== 'off' && !noThinkingLevel ? geminiThinking : null);
     }
   } catch (err) {
     if (cancel?.aborted) throw err;
