@@ -6,6 +6,7 @@ import RichEditor, { htmlFromText, sanitizeHtml } from './RichEditor.jsx';
 import Icon from './Icon.jsx';
 import SecurityPanel from './SecurityPanel.jsx';
 import GoogleApps from './GoogleApps.jsx';
+import NotificationSettings from './NotificationSettings.jsx';
 
 const GOOGLE_SIGNUP = 'https://accounts.google.com/signup';
 
@@ -253,6 +254,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
         {[
           ['profile', 'Profile', 'people'],
           ['security', 'Security', 'shield'],
+          ['notifications', 'Notifications', 'bell'],
           ...(googleOn ? [['google', 'Google apps', 'apps']] : []),
         ].map(([id, label, icon]) => (
           <button type="button" role="tab" aria-selected={tab === id} key={id} className={`settings-tab ${tab === id ? 'on' : ''}`} onClick={() => setTab(id)}>
@@ -261,7 +263,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
         ))}
       </div>
       <div className="view-enter settings-body" key={tab}>
-        {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <div className="muted">Loading…</div>}
+        {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : tab === 'notifications' ? <NotificationSettings /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <div className="muted">Loading…</div>}
       </div>
       {privateHelp && <PrivateTabHelp onClose={() => setPrivateHelp(false)} />}
       {cropping && <AvatarCropper file={cropping} onCancel={() => setCropping(null)} onDone={saveAvatar} />}

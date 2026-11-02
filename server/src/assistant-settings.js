@@ -1,32 +1,15 @@
 // The Assistant's AI settings: which provider, its API key and model. Set by the admin in
 // Admin console → Assistant (kept in the database, keys encrypted), or in the hosting's
 // environment variables; a value saved in Nextspace wins over the hosting's.
-import crypto from 'node:crypto';
 import config from './config.js';
 import { db, save } from './store.js';
 import { HttpError } from './errors.js';
+import { seal as sealWith, unseal as unsealWith } from './secret-box.js';
 
-// Keys are encrypted with a key derived from the app's secret (JWT_SECRET).
-const SECRET = crypto.createHash('sha256').update(`nextspace-assistant-keys:${config.jwtSecret}`).digest();
-
-function seal(text) {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', SECRET, iv);
-  const data = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-  return `v1:${iv.toString('base64')}:${cipher.getAuthTag().toString('base64')}:${data.toString('base64')}`;
-}
-
-function unseal(sealed) {
-  try {
-    const [version, iv, tag, data] = String(sealed).split(':');
-    if (version !== 'v1') return '';
-    const decipher = crypto.createDecipheriv('aes-256-gcm', SECRET, Buffer.from(iv, 'base64'));
-    decipher.setAuthTag(Buffer.from(tag, 'base64'));
-    return Buffer.concat([decipher.update(Buffer.from(data, 'base64')), decipher.final()]).toString('utf8');
-  } catch {
-    return ''; // the app's secret changed: the saved key can't be read any more
-  }
-}
+// Keys are encrypted (secret-box.js); the purpose keeps them apart from other secrets.
+const PURPOSE = 'nextspace-assistant-keys';
+const seal = (text) => sealWith(text, PURPOSE);
+const unseal = (sealed) => unsealWith(sealed, PURPOSE);
 
 const stored = () => ((db().assistant ||= {}).settings ||= {});
 

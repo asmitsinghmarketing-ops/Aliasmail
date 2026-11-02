@@ -556,6 +556,32 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     if (!notesOpen) api('/notes/unread').then(({ unread }) => setNotesUnread(unread)).catch(() => {});
   }, [notesOpen]);
 
+  // Opened from a notification: ?message=<id> opens that email, ?notes=<address> those notes
+  // (also when Nextspace was already open: the service worker passes the link on).
+  useEffect(() => {
+    const openFrom = (href) => {
+      const params = new URL(href, window.location.origin).searchParams;
+      const id = params.get('message');
+      const notesFrom = params.get('notes');
+      if (id && /^d+$/.test(id)) {
+        setAssistantOpen(false);
+        setNotesOpen(false);
+        setModal(null);
+        setOpen({ id: Number(id), kind: 'inbox', subject: '', from: { name: '', address: '' }, date: '', to: [], cc: [], labels: [], read: true });
+        setOpenMsg(null);
+      } else if (notesFrom) {
+        openNotes(notesFrom);
+      }
+    };
+    if (/[?&](message|notes)=/.test(window.location.search)) {
+      openFrom(window.location.href);
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    const onMessage = (e) => e.data?.type === 'open' && openFrom(e.data.url);
+    navigator.serviceWorker?.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker?.removeEventListener('message', onMessage);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Back from connecting Google in Settings → Security: reopen it and say how it went.
   const [settingsTab, setSettingsTab] = useState('profile');
   useEffect(() => {

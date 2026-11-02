@@ -2350,3 +2350,18 @@ button, input, select, textarea { font-family: inherit; }
 .ai-provider-hint { margin-top: -4px !important; }
 .ai-provider-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
 .ai-provider-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Settings → Notifications */
+.notify-settings { display: grid; gap: 14px; max-width: 620px; }
+.notify-settings h3 { margin: 0; font-size: 18px; }
+.notify-settings p { margin: 0; line-height: 1.5; }
+.notify-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.notify-state { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--muted); }
+.notify-state.on { color: #067647; }
+.notify-row .btn, .notify-test { display: inline-flex; align-items: center; gap: 6px; }
+.notify-test { justify-self: start; }
+.notify-check { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.notify-check input { width: 18px; height: 18px; accent-color: var(--brand); }
+.notify-ok { color: #067647; }
+.notify-steps { padding: 14px 16px; border-radius: 12px; background: #f3f6fc; display: grid; gap: 8px; }
+.notify-steps ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }

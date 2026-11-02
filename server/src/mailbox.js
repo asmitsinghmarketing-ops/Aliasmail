@@ -8,7 +8,7 @@ import { GATEWAY_LIMITS, GatewayError, gatewaySend } from './godaddy-gateway.js'
 import config from './config.js';
 import { mailTransport } from './mail-transport.js';
 import { messageCache } from './message-cache.js';
-import { announceChange } from './mail-events.js';
+import { announceChange, mailEvents } from './mail-events.js';
 import { db, save } from './store.js';
 import { normalize } from './aliases.js';
 import { HttpError, describeError } from './errors.js';
@@ -133,6 +133,8 @@ async function syncFolder(folder, cache, quick = false) {
     announceChange();
   }
   if (folder === 'inbox') for (const record of records) noteReceive(record, bridgeMs);
+  // New mail for notifications (push.js).
+  if (folder === 'inbox' && records.length) mailEvents.emit('arrived', records);
   return { hasMore: result.hasMore === true, changed, bridgeMs, via: result.transport || 'bridge', fetched: records.length, total: (result.uids || []).length, bridge: result.timing || null };
 }
 

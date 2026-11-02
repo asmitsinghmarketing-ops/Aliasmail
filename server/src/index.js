@@ -13,6 +13,8 @@ import authRoutes from './routes/auth.js';
 import mailRoutes from './routes/mail.js';
 import notesRoutes from './routes/notes.js';
 import assistantRoutes from './routes/assistant.js';
+import pushRoutes from './routes/push.js';
+import { startPush } from './push.js';
 import { attachLive } from './live.js';
 import adminRoutes from './routes/admin.js';
 
@@ -129,6 +131,7 @@ app.post('/api/client-error', (req, res) => {
 app.use('/api/mail', mailRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/assistant', assistantRoutes);
+app.use('/api/push', pushRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -151,6 +154,8 @@ app.use((err, req, res, next) => {
 const server = app.listen(config.port, () => console.log(`Nextspace API running on http://localhost:${config.port}`));
 // Live WebSocket for the mailbox: mail changes, instant notes, who is online and typing.
 attachLive(server);
+// Notifications for new mail and instant notes.
+startPush();
 checkDeployment();
 
 if (config.configured) {

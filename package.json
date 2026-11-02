@@ -24,6 +24,7 @@
     "mysql2": "^3.24.6",
     "nodemailer": "^10.2.1",
     "pg": "^8.23.1",
+    "web-push": "^3.6.7",
     "ws": "^8.22.1"
   },
   "devDependencies": {
