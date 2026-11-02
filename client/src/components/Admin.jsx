@@ -11,16 +11,21 @@ import MessageView from './MessageView.jsx';
 import Pager from './Pager.jsx';
 
 const TABS = [
-  { id: 'overview', label: 'Overview', icon: 'dashboard' },
-  { id: 'aliases', label: 'Aliases', icon: 'people' },
-  { id: 'roles', label: 'Roles', icon: 'shield' },
-  { id: 'mail', label: 'All mail', icon: 'inbox' },
-  { id: 'speed', label: 'Speed', icon: 'clock' },
-  { id: 'assistant', label: 'Assistant', icon: 'sparkle' },
+  { id: 'overview', label: 'Overview', icon: 'dashboard', group: 'Workspace' },
+  { id: 'aliases', label: 'Aliases', icon: 'people', group: 'People' },
+  { id: 'roles', label: 'Roles', icon: 'shield', group: 'People' },
+  { id: 'mail', label: 'All mail', icon: 'inbox', group: 'Mail' },
+  { id: 'speed', label: 'Speed', icon: 'clock', group: 'Mail' },
+  { id: 'assistant', label: 'Assistant', icon: 'sparkle', group: 'AI' },
 ];
 
 export default function Admin({ user, onLogout, onOpenMail, onRolesChanged }) {
   const [tab, setTab] = useState('overview');
+  const [intent, setIntent] = useState(null); // 'add' when the Overview sends you to add a person or role
+  const go = (next, wish = null) => {
+    setIntent(wish);
+    setTab(next);
+  };
   const [overview, setOverview] = useState(null);
   const [error, setError] = useState('');
 
@@ -65,16 +70,17 @@ export default function Admin({ user, onLogout, onOpenMail, onRolesChanged }) {
       </header>
 
       <div className="layout">
-        <aside className="sidebar">
+        <aside className="sidebar admin-nav">
           <nav>
-            {TABS.map((t) => (
-              <button key={t.id} className={`nav-item ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
+            {TABS.map((t, i) => [
+              t.group !== TABS[i - 1]?.group && <div key={`g-${t.group}`} className="admin-nav-group">{t.group}</div>,
+              <button key={t.id} className={`nav-item ${tab === t.id ? 'active' : ''}`} onClick={() => go(t.id)}>
                 <Icon name={t.icon} />
                 <span>{t.label}</span>
                 {t.id === 'aliases' && overview && <span className="count plain">{overview.totals.aliases}</span>}
                 {t.id === 'mail' && overview && <span className="count plain">{overview.totals.messages}</span>}
-              </button>
-            ))}
+              </button>,
+            ])}
           </nav>
         </aside>
 
@@ -83,8 +89,8 @@ export default function Admin({ user, onLogout, onOpenMail, onRolesChanged }) {
           {!overview && !error && <div className="empty">Loading…</div>}
           {overview && (
             <div className="view-enter" key={tab}>
-              {tab === 'overview' && <Overview overview={overview} onReload={reload} />}
-              {tab === 'aliases' && <Aliases overview={overview} onChanged={reload} />}
+              {tab === 'overview' && <Overview overview={overview} onReload={reload} onNavigate={go} />}
+              {tab === 'aliases' && <Aliases overview={overview} onChanged={reload} startAdding={intent === 'add'} />}
               {tab === 'roles' && (
                 <Roles
                   overview={overview}
@@ -92,7 +98,8 @@ export default function Admin({ user, onLogout, onOpenMail, onRolesChanged }) {
                     reload();
                     onRolesChanged?.();
                   }}
-                  onOpenAliases={() => setTab('aliases')}
+                  onOpenAliases={() => go('aliases')}
+                  startAdding={intent === 'add'}
                 />
               )}
               {tab === 'mail' && <AllMail overview={overview} onChanged={reload} />}
@@ -121,7 +128,7 @@ function workerSummary(w) {
   return ` Workers: ${lanes.join(', ')}.${anyDown ? ' Reads without a worker log in to the mail server each time and are slower - start worker.php on the PHP host.' : ''}`;
 }
 
-function Overview({ overview, onReload }) {
+function Overview({ overview, onReload, onNavigate }) {
   const [busy, setBusy] = useState('');
   const [result, setResult] = useState(null);
   const { totals, sync, aliases } = overview;
@@ -147,15 +154,31 @@ function Overview({ overview, onReload }) {
   }
 
   const tiles = [
-    { label: 'Messages in inbox', value: totals.messages, color: 'var(--teal)', icon: 'inbox' },
-    { label: 'Aliases', value: totals.aliases, color: 'var(--violet)', icon: 'people' },
-    { label: 'Unassigned mail', value: totals.unassigned, color: 'var(--orange)', icon: 'mail' },
-    { label: 'Sent mail', value: totals.sent, color: 'var(--pink)', icon: 'send' },
+    { label: 'Messages in inbox', value: totals.messages, color: 'var(--teal)', icon: 'inbox', to: 'mail', hint: 'Open all mail' },
+    { label: 'Aliases', value: totals.aliases, color: 'var(--violet)', icon: 'people', to: 'aliases', hint: 'Manage people' },
+    { label: 'Unassigned mail', value: totals.unassigned, color: 'var(--orange)', icon: 'mail', to: 'mail', hint: 'See mail that reached no alias' },
+    { label: 'Sent mail', value: totals.sent, color: 'var(--pink)', icon: 'send', to: 'mail', hint: 'Open all mail' },
   ];
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const healthy = overview.configured && !sync.lastError;
 
   return (
     <>
-      <h1 className="page-title">Overview</h1>
+      <div className="admin-hello">
+        <div>
+          <h1 className="page-title">{greeting}</h1>
+          <p className="muted">
+            {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })} ·{' '}
+            {healthy ? 'Everything is running normally.' : 'The mailbox needs attention.'}
+          </p>
+        </div>
+        <div className="admin-quick">
+          <button type="button" className="btn btn-outline" onClick={() => onNavigate('aliases', 'add')}><Icon name="add" size={18} /> Add person</button>
+          <button type="button" className="btn btn-outline" onClick={() => onNavigate('roles', 'add')}><Icon name="shield" size={18} /> Add role</button>
+          <button type="button" className="btn btn-outline" onClick={() => onNavigate('assistant')}><Icon name="sparkle" size={18} /> AI settings</button>
+        </div>
+      </div>
 
       <section className="card status-card">
         <div className="status-main">
@@ -196,13 +219,16 @@ function Overview({ overview, onReload }) {
 
       <section className="tiles">
         {tiles.map((t) => (
-          <div key={t.label} className="tile" style={{ '--tile': t.color }}>
+          <button type="button" key={t.label} className="tile tile-link" style={{ '--tile': t.color }} title={t.hint} onClick={() => onNavigate(t.to)}>
             <span className="tile-icon" aria-hidden="true"><Icon name={t.icon} size={22} /></span>
             <div className="tile-value">{t.value}</div>
             <div className="tile-label">{t.label}</div>
-          </div>
+            <span className="tile-go" aria-hidden="true"><Icon name="chevronRight" size={18} /></span>
+          </button>
         ))}
       </section>
+
+      <SetupChecklist overview={overview} onNavigate={onNavigate} />
 
       <SecurityCard />
 
@@ -231,6 +257,63 @@ function Overview({ overview, onReload }) {
   );
 }
 
+/** What's left to set up, each with a button; shows as done once everything recommended is. */
+function SetupChecklist({ overview, onNavigate }) {
+  const [state, setState] = useState(null);
+  const [open, setOpen] = useState(true);
+  useEffect(() => {
+    Promise.all([
+      api('/admin/security').catch(() => ({})),
+      api('/assistant/settings').catch(() => null),
+      api('/admin/roles').catch(() => []),
+    ]).then(([security, ai, roles]) => setState({ security, ai, roles }));
+  }, [overview]);
+  if (!state) return null;
+
+  const people = overview.aliases.filter((a) => a.type !== 'group');
+  const groups = overview.aliases.filter((a) => a.type === 'group');
+  const toSecurity = () => document.getElementById('security-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const steps = [
+    { done: overview.configured && !overview.sync.lastError, title: 'Mailbox connected', text: 'Nextspace receives and sends your mail.', action: null },
+    { done: people.length > 0, title: 'Add your team', text: 'Give each person their own address and sign-in.', action: ['Add person', () => onNavigate('aliases', 'add')] },
+    { done: Boolean(state.security.adminMfaEnabled), title: 'Protect your admin account', text: 'Turn on 2-Step Verification in Mailbox → Settings → Security.', action: ['Show', toSecurity] },
+    { done: Boolean(state.security.requireMfa), title: 'Require 2-Step Verification for everyone', text: 'Each person signs in with a code from Google Authenticator.', action: ['Review', toSecurity] },
+    { done: Boolean(state.ai?.inUse?.enabled), title: 'Set up the AI Assistant', text: 'Add a Claude, Gemini or OpenRouter key.', action: ['Open AI settings', () => onNavigate('assistant')] },
+    { done: groups.length === 0 || state.roles.length > 0, title: 'Share group mailboxes', text: groups.length ? 'Give people access to shared mailboxes with a role.' : 'Not needed: you have no group mailboxes.', action: ['Add role', () => onNavigate('roles', 'add')] },
+  ];
+  const done = steps.filter((x) => x.done).length;
+  const all = done === steps.length;
+
+  return (
+    <section className={`card setup ${all ? 'setup-done' : ''}`}>
+      <button type="button" className="setup-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="setup-ring" style={{ '--p': `${(done / steps.length) * 100}%` }}><span>{done}/{steps.length}</span></span>
+        <span className="grow setup-title">
+          <strong>{all ? 'All set up' : 'Finish setting up Nextspace'}</strong>
+          <span className="muted small">{all ? 'Everything recommended is done.' : `${steps.length - done} step${steps.length - done === 1 ? '' : 's'} left`}</span>
+        </span>
+        <span className={`setup-caret ${open ? 'open' : ''}`} aria-hidden="true"><Icon name="chevronRight" size={20} /></span>
+      </button>
+      {open && (
+        <ol className="setup-steps">
+          {steps.map((x) => (
+            <li key={x.title} className={x.done ? 'done' : ''}>
+              <span className="setup-check" aria-label={x.done ? 'Done' : 'To do'}>{x.done && <Icon name="checkCircle" size={22} />}</span>
+              <span className="grow setup-title">
+                <strong>{x.title}</strong>
+                <span className="muted small">{x.text}</span>
+              </span>
+              {!x.done && x.action && (
+                <button type="button" className="btn btn-outline" onClick={x.action[1]}>{x.action[0]}</button>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 function SecurityCard() {
   const [security, setSecurity] = useState(null);
   const [message, setMessage] = useState('');
@@ -256,7 +339,7 @@ function SecurityCard() {
   }
 
   return (
-    <section className="card">
+    <section className="card" id="security-card">
       <h2 className="card-title">Sign-in security</h2>
       <div className="sec-row">
         <div className="grow">
@@ -387,8 +470,21 @@ function ActivityLog() {
 
 /* ---------------------------------- Aliases ---------------------------------- */
 
-function Aliases({ overview, onChanged }) {
-  const [editing, setEditing] = useState(null); // null | 'new' | alias | { address } of a detected alias
+// Filter chips above the list: [id, label, test].
+const ALIAS_FILTERS = [
+  ['all', 'All', () => true],
+  ['personal', 'Personal', (a) => a.type !== 'group'],
+  ['group', 'Group', (a) => a.type === 'group'],
+  ['disabled', 'Disabled', (a) => !a.active],
+  ['no2step', '2-step off', (a) => a.type !== 'group' && !a.mfaEnabled],
+  ['locked', 'Locked', (a) => Boolean(a.lockedUntil)],
+];
+
+function Aliases({ overview, onChanged, startAdding }) {
+  const [editing, setEditing] = useState(startAdding ? 'new' : null); // null | 'new' | alias | { address } of a detected alias
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [copied, setCopied] = useState('');
   const [detected, setDetected] = useState([]);
   const [error, setError] = useState('');
 
@@ -406,6 +502,18 @@ function Aliases({ overview, onChanged }) {
       setError(err.message);
     }
   }
+
+  const copy = (address) => {
+    navigator.clipboard?.writeText(address).then(() => {
+      setCopied(address);
+      setTimeout(() => setCopied((c) => (c === address ? '' : c)), 1500);
+    });
+  };
+  const words = query.trim().toLowerCase();
+  const test = ALIAS_FILTERS.find((f) => f[0] === filter)?.[2] || (() => true);
+  const shown = overview.aliases.filter(
+    (a) => test(a) && (!words || `${a.address} ${a.displayName || ''} ${a.ownerName || ''} ${(a.roles || []).join(' ')}`.toLowerCase().includes(words)),
+  );
 
   async function remove(alias) {
     if (!(await ask({ title: `Delete ${alias.address}?`, message: 'The person will lose access. Their mail stays in the mailbox.', confirmLabel: 'Delete alias', danger: true }))) return;
@@ -451,6 +559,25 @@ function Aliases({ overview, onChanged }) {
         </div>
       )}
 
+      <div className="list-tools">
+        <label className="list-search">
+          <Icon name="search" size={18} />
+          <span className="sr-only">Search aliases</span>
+          <input type="search" placeholder="Search by address, name or role" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </label>
+        <div className="filter-chips" role="group" aria-label="Show">
+          {ALIAS_FILTERS.map(([id, label, f]) => {
+            const n = overview.aliases.filter(f).length;
+            if (id !== 'all' && id !== filter && n === 0) return null;
+            return (
+              <button key={id} type="button" className={`filter-chip ${filter === id ? 'on' : ''}`} aria-pressed={filter === id} onClick={() => setFilter(id)}>
+                {label} <span className="filter-chip-count">{n}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="card table-card">
         <table className="table">
           <thead>
@@ -468,16 +595,32 @@ function Aliases({ overview, onChanged }) {
           <tbody>
             {overview.aliases.length === 0 && (
               <tr>
-                <td colSpan={8} className="empty">No aliases yet.</td>
+                <td colSpan={8} className="empty">
+                  No aliases yet.{' '}
+                  <button type="button" className="link" onClick={() => setEditing('new')}>Add the first one</button>
+                </td>
               </tr>
             )}
-            {overview.aliases.map((a) => (
-              <tr key={a.id}>
+            {overview.aliases.length > 0 && shown.length === 0 && (
+              <tr>
+                <td colSpan={8} className="empty">
+                  Nothing matches.{' '}
+                  <button type="button" className="link" onClick={() => { setQuery(''); setFilter('all'); }}>Show everyone</button>
+                </td>
+              </tr>
+            )}
+            {shown.map((a) => (
+              <tr key={a.id} className={a.active ? '' : 'row-off'}>
                 <td>
                   <div className="alias-cell">
                     <Avatar url={a.avatar ? `/api/avatars/${a.avatar}` : null} person={{ name: a.displayName, address: a.address }} color={a.color} size="sm" />
-                    <div>
-                      <strong>{a.address}</strong>
+                    <div className="alias-name">
+                      <span className="alias-address">
+                        <strong>{a.address}</strong>
+                        <button type="button" className="copy-btn" title="Copy address" aria-label={`Copy ${a.address}`} onClick={() => copy(a.address)}>
+                          <Icon name={copied === a.address ? 'checkCircle' : 'copy'} size={15} />
+                        </button>
+                      </span>
                       {a.displayName && <div className="muted small">{a.displayName}</div>}
                     </div>
                   </div>
@@ -513,9 +656,22 @@ function Aliases({ overview, onChanged }) {
                   )}
                 </td>
                 <td>
-                  <button className={`toggle ${a.active ? 'on' : ''}`} onClick={() => patch(a, { active: !a.active })}>
-                    {a.active ? 'Active' : 'Disabled'}
-                  </button>
+                  <label className="status-switch">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={a.active}
+                      aria-label={`${a.address} is ${a.active ? 'active' : 'disabled'}`}
+                      className={`switch ${a.active ? 'on' : ''}`}
+                      onClick={async () => {
+                        if (a.active && !(await ask({ title: `Disable ${a.address}?`, message: 'They’re signed out and can’t sign in until you turn it back on. Their mail stays.', confirmLabel: 'Disable', danger: true }))) return;
+                        patch(a, { active: !a.active });
+                      }}
+                    >
+                      <span />
+                    </button>
+                    <span className={a.active ? 'status-on' : 'muted'}>{a.active ? 'Active' : 'Disabled'}</span>
+                  </label>
                   {a.lockedUntil && (
                     <div className="lock-cell" title="Too many wrong passwords or codes">
                       <span className="pill warn">Locked until {new Date(a.lockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
@@ -692,9 +848,9 @@ function AliasForm({ alias, initialAddress, palette, onClose, onSaved }) {
 
 const aliasLabel = (a) => a.displayName || a.address;
 
-function Roles({ overview, onChanged, onOpenAliases }) {
+function Roles({ overview, onChanged, onOpenAliases, startAdding }) {
   const [roles, setRoles] = useState(null);
-  const [editing, setEditing] = useState(null); // null | 'new' | role
+  const [editing, setEditing] = useState(startAdding ? 'new' : null); // null | 'new' | role
   const [error, setError] = useState('');
   const byId = Object.fromEntries(overview.aliases.map((a) => [a.id, a]));
   const groups = overview.aliases.filter((a) => a.type === 'group');
@@ -747,7 +903,21 @@ function Roles({ overview, onChanged, onOpenAliases }) {
       )}
 
       {!roles && !error && <div className="empty">Loading…</div>}
-      {roles?.length === 0 && <div className="card empty">No roles yet. Create one to share group mailboxes with people.</div>}
+      {roles?.length === 0 && (
+        <div className="card empty-state">
+          <span className="empty-mark" aria-hidden="true"><Icon name="shield" size={30} /></span>
+          <h2>No roles yet</h2>
+          <p className="muted">
+            A role lets a group of people open a shared mailbox, like access@ or sales@, from their own sign-in.
+            {groups.length === 0 && ' First add a group mailbox in Aliases.'}
+          </p>
+          {groups.length === 0 ? (
+            <button type="button" className="btn btn-primary" onClick={onOpenAliases}><Icon name="people" size={18} /> Go to Aliases</button>
+          ) : (
+            <button type="button" className="btn btn-primary" onClick={() => setEditing('new')}><Icon name="add" size={18} /> Create the first role</button>
+          )}
+        </div>
+      )}
       <div className="role-list">
         {roles?.map((r) => (
           <div key={r.id} className="card role-card">
