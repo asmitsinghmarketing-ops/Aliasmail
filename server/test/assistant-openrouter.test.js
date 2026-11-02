@@ -28,12 +28,25 @@ function sse(res, chunks) {
 const delta = (d, finish = null) => ({ choices: [{ index: 0, delta: d, finish_reason: finish }] });
 const usage = { usage: { prompt_tokens: 700, completion_tokens: 40 }, choices: [] };
 
+// The fast path's "what does the person want?" answers, by the latest message.
+let planned = 0;
+function plan(prompt) {
+  planned++;
+  const latest = prompt.split('Latest message:').pop();
+  if (/hello there/i.test(latest)) return JSON.stringify({ intent: 'answer', answer: 'Hi! How can I help?' });
+  if (/email billing/i.test(latest)) return JSON.stringify({ intent: 'email', to: ['billing@vendor.test'], subject: 'Invoice', body: 'Hello,\n\nCould you send the invoice?' });
+  if (/payroll/i.test(latest)) return 'Sure: ```json\n' + JSON.stringify({ intent: 'summarise', folder: 'unread', query: 'payroll' }) + '\n```';
+  return JSON.stringify({ intent: 'other' });
+}
+
 test.before(async () => {
   router = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       const request = { url: req.url, headers: req.headers, body: JSON.parse(body) };
+      const planning = request.body.messages[0]?.content?.includes?.('You route requests');
+      if (planning) return sse(res, [delta({ content: plan(request.body.messages.at(-1).content) }, 'stop'), usage]);
       requests.push(request);
       const turn = request.body.messages.filter((m) => m.role === 'assistant').length;
       if (turn === 0) {
@@ -121,5 +134,35 @@ test('with only an OpenRouter key and model, the Assistant uses OpenRouter: tool
   assert.deepEqual(second.at(-1), { role: 'tool', tool_call_id: 'call_a', content: 'No messages found.' });
 
   const used = await (await call('/assistant/usage')).json();
-  assert.deepEqual([used.provider, used.total.requests, used.total.usd], ['openrouter', 3, 0]);
+  assert.deepEqual([used.provider, used.total.requests, used.total.usd], ['openrouter', 4, 0]);
+});
+
+test('common requests take the fast path: one call to understand, Nextspace does the rest', async () => {
+  const login = await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: HEADERS, body: JSON.stringify(ADMIN) });
+  const cookie = login.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+  const call = (p, options = {}) => fetch(`${BASE}/api${p}`, { ...options, headers: { ...HEADERS, Cookie: cookie } });
+  const chat = await (await call('/assistant/chats', { method: 'POST' })).json();
+  const stepByStep = requests.length;
+
+  // Small talk: answered by the understand call itself.
+  let before = planned;
+  let parts = await answered(call, chat.id, { message: 'Hello there' });
+  assert.equal(textOf(parts), 'Hi! How can I help?');
+  assert.equal(planned - before, 1);
+
+  // A new email: written in the same call, shown as a card.
+  before = planned;
+  parts = await answered(call, chat.id, { message: 'Email billing@vendor.test asking for the invoice' });
+  const card = parts.find((p) => p.type === 'card').card;
+  assert.deepEqual([card.kind, card.status, card.data.to, card.data.subject, card.data.body], ['email', 'pending', ['billing@vendor.test'], 'Invoice', 'Hello,\n\nCould you send the invoice?']);
+  assert.match(textOf(parts), /ready below/);
+  assert.equal(planned - before, 1);
+
+  // A summary of nothing: the search runs here, no second call needed (and fenced JSON is read).
+  parts = await answered(call, chat.id, { message: 'Anything about payroll in my unread mail?' });
+  assert.match(textOf(parts), /didn’t find any unread mail about “payroll”/);
+  assert.deepEqual(parts.filter((p) => p.type === 'step').map((p) => p.text), ['Understanding your request', 'Searching mail for “payroll”']);
+
+  // None of these needed the step-by-step loop.
+  assert.equal(requests.length, stepByStep);
 });

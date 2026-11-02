@@ -14,6 +14,7 @@ import { meetEnabled } from './google-auth.js';
 import { assistantRead, assistantSearch } from './routes/mail.js';
 import { callGemini, geminiToolResults, geminiUserMessage } from './assistant-gemini.js';
 import { settings } from './assistant-settings.js';
+import { tryFastPath } from './assistant-fast.js';
 import { callOpenRouter, openrouterToolResults, openrouterUserMessage } from './assistant-openrouter.js';
 
 const MAX_STEPS = 10; // model calls for one message, tools included
@@ -406,7 +407,71 @@ export async function runTurn({ chat, person, name, message, now, timeZone, emit
   const tools = toolsFor();
   const call = { gemini: callGemini, openrouter: callOpenRouter }[via] ?? callClaude;
   const toolResults = { gemini: geminiToolResults, openrouter: openrouterToolResults }[via] ?? claudeToolResults;
+  const userMessage = (text) => ({ gemini: geminiUserMessage, openrouter: openrouterUserMessage }[via]?.(text) ?? { role: 'user', content: [{ type: 'text', text }] });
   let spent = 0;
+
+  // Common requests: understand once, then Nextspace does the steps (assistant-fast.js). Anything
+  // it doesn't take on goes to the step-by-step loop below.
+  let fastText = null;
+  const fast = await tryFastPath({
+    call,
+    userMessage,
+    record: (usage) => record(person, model, usage),
+    me: person,
+    name,
+    when,
+    userText,
+    items: chat.items,
+    signal,
+    step: (label) => {
+      reply.parts.push({ type: 'step', text: label });
+      emit('step', { text: label });
+      save();
+    },
+    onText: (delta) => {
+      if (!fastText) {
+        fastText = { type: 'text', text: '' };
+        reply.parts.push(fastText);
+      }
+      fastText.text += delta;
+      emit('delta', { text: delta });
+    },
+    card: async (tool, input) => {
+      try {
+        const { card } = await runTool(tool, input, person);
+        const full = { id: `fast_${crypto.randomUUID()}`, status: 'pending', ...card };
+        reply.parts.push({ type: 'card', card: full });
+        emit('card', full);
+        return full;
+      } catch (err) {
+        if (err instanceof BadInput) return null;
+        throw err;
+      }
+    },
+  }).catch((err) => {
+    // Refused, stopped, or the AI service failing (busy, limits): say so, don't try again the long way.
+    if (err.refused) return { refused: true, spent: 0 };
+    if (signal?.aborted || err instanceof HttpError || err instanceof Anthropic.APIError) throw err;
+    console.warn('[assistant] fast path failed, using the step-by-step loop:', describeError(err));
+    return { handled: false, spent: 0 };
+  });
+  spent += fast.spent || 0;
+  if (fast.refused) {
+    reply.parts.push({ type: 'error', text: 'The AI couldn’t help with that request.' });
+    emit('error', { error: 'The AI couldn’t help with that request.' });
+    save();
+    return { spent };
+  }
+  if (fast.handled) {
+    // Kept in the conversation too, so a later step-by-step answer knows what happened.
+    const cards = reply.parts.filter((p) => p.type === 'card').map((p) => `[Prepared a ${p.card.kind} card: ${p.card.title}. Not sent yet: the person presses the button.]`);
+    const text = [fast.said, ...cards].filter(Boolean).join('\n') || 'Done.';
+    chat.history.push({ gemini: { role: 'model', parts: [{ text }] }, openrouter: { role: 'assistant', content: text } }[via] ?? { role: 'assistant', content: [{ type: 'text', text }] });
+    chat.updatedAt = new Date().toISOString();
+    save();
+    return { spent };
+  }
+  // Not for the fast path: what it showed (its steps) stays; the loop takes over.
 
   for (let step = 0; step < MAX_STEPS; step++) {
     checkLimits(person);

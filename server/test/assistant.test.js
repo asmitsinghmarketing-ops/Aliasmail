@@ -16,7 +16,8 @@ const HEADERS = { 'Content-Type': 'application/json', 'X-Requested-With': 'Alias
 let server;
 let claude;
 let dir;
-const requests = []; // what Nextspace sent to "Claude"
+const requests = []; // what Nextspace sent to "Claude" (the step-by-step calls)
+const plans = []; // the fast path's "what does the person want?" calls
 
 // One streamed reply in the Messages API's event format.
 function sse(res, content, stopReason) {
@@ -44,6 +45,10 @@ test.before(async () => {
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       const request = { headers: req.headers, body: JSON.parse(body) };
+      if (JSON.stringify(request.body.system || '').includes('You route requests')) {
+        plans.push(request);
+        return sse(res, [{ type: 'text', text: '{"intent":"other"}' }], 'end_turn');
+      }
       requests.push(request);
       const turn = request.body.messages.filter((m) => m.role === 'assistant').length;
       if (turn === 0) return sse(res, [{ type: 'text', text: 'Let me look.' }, { type: 'tool_use', id: 'tu_1', name: 'search_mail', input: { query: 'proposal' } }], 'tool_use');
@@ -102,7 +107,9 @@ test('a turn searches mail, prepares an email card and answers; usage and limits
   assert.equal((await (await call('/assistant/status')).json()).enabled, true);
   const chat = await (await call('/assistant/chats', { method: 'POST' })).json();
   const parts = await answered(call, chat.id, { message: 'Reply to Prince about the proposal', now: 'Sunday 1 November 2026, 15:30', timeZone: 'Asia/Kolkata' });
-  assert.deepEqual(parts.map((p) => p.type), ['text', 'step', 'step', 'card', 'text']);
+  // The fast path's understanding step (it chose the step-by-step loop here), then the loop.
+  assert.deepEqual(parts.map((p) => p.type), ['step', 'text', 'step', 'step', 'card', 'text']);
+  assert.equal(parts[0].text, 'Understanding your request');
   assert.equal(textOf(parts), 'Let me look.Your reply is ready. Check the card and press **Send**.');
   const card = parts.find((p) => p.type === 'card').card;
   assert.deepEqual([card.kind, card.status, card.data.to, card.data.subject], ['email', 'pending', ['prince@client.test'], 'Phase 1']);
@@ -132,12 +139,14 @@ test('a turn searches mail, prepares an email card and answers; usage and limits
   assert.equal((await call(`/assistant/chats/${chat.id}`, {}, john)).status, 404);
   assert.equal((await call('/assistant/usage', {}, john)).status, 403);
 
-  // Usage: three requests at Opus 5.5 prices.
   const usage = await (await call('/assistant/usage')).json();
-  assert.equal(usage.total.requests, 3);
-  assert.equal(usage.total.input, 3000);
-  assert.equal(usage.total.cacheRead, 9000);
-  assert.ok(Math.abs(usage.total.usd - (3000 * 4 + 600 * 20 + 9000 * 0.2) / 1e6) < 1e-9);
+  // Three step-by-step calls plus the fast path's one, at Opus 5.5 prices.
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].body.tools, undefined);
+  assert.equal(usage.total.requests, 4);
+  assert.equal(usage.total.input, 4000);
+  assert.equal(usage.total.cacheRead, 12000);
+  assert.ok(Math.abs(usage.total.usd - (4000 * 4 + 800 * 20 + 12000 * 0.2) / 1e6) < 1e-9);
 
   // A limit that has been reached stops the next message before it reaches Claude.
   await call('/assistant/limits', { method: 'PUT', body: JSON.stringify({ monthlyUsd: 0.01, perPersonUsd: 0 }) });

@@ -30,7 +30,11 @@ test.before(async () => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
-      requests.push({ url: req.url, headers: req.headers, body: JSON.parse(body) });
+      const parsed = JSON.parse(body);
+      if (parsed.systemInstruction?.parts?.[0]?.text?.includes('You route requests')) {
+        return sse(res, [{ candidates: [{ content: { role: 'model', parts: [{ text: '{"intent":"other"}' }] }, finishReason: 'STOP' }], usageMetadata: usage }]);
+      }
+      requests.push({ url: req.url, headers: req.headers, body: parsed });
       const turn = JSON.parse(body).contents.filter((c) => c.role === 'model').length;
       if (turn === 0) {
         return sse(res, [
@@ -114,6 +118,6 @@ test('with only a Gemini key, the Assistant uses Gemini: tools, cards and stream
 
   // Free tier: counted, at no cost.
   const used = await (await call('/assistant/usage')).json();
-  assert.deepEqual([used.provider, used.total.requests, used.total.usd], ['gemini', 3, 0]);
-  assert.equal(used.total.output, 3 * 80);
+  assert.deepEqual([used.provider, used.total.requests, used.total.usd], ['gemini', 4, 0]);
+  assert.equal(used.total.output, 4 * 80);
 });
