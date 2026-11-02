@@ -539,8 +539,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         const preview = note.text || `Sent ${note.files.length === 1 ? 'a file' : `${note.files.length} files`}`;
         flash(preview.length > 140 ? `${preview.slice(0, 140)}…` : preview, null, 9000, {
           tone: 'note',
-          title: `Note from ${note.fromName || note.from}`,
-          actions: [{ label: 'Reply', onClick: () => openNotes(note.from) }],
+          title: note.group ? `${note.fromName || note.from} in ${note.groupName || 'a group'}` : `Note from ${note.fromName || note.from}`,
+          actions: [{ label: 'Reply', onClick: () => openNotes(note.group ? `group:${note.group}` : note.from) }],
         });
       } else if (message.type === 'open') {
         // Connected again after a drop: catch up on anything missed.

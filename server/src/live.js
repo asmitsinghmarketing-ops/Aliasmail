@@ -7,7 +7,7 @@ import { currentSession, endSessions } from './sessions.js';
 import { findAlias, typeOf } from './aliases.js';
 import { mailEvents, noteEvents } from './mail-events.js';
 import { personOf, teammates } from './team.js';
-import { createNote, markNotesRead } from './instant-notes.js';
+import { createNote, groups, markGroupRead, markNotesRead } from './instant-notes.js';
 import { describeError } from './errors.js';
 
 const PATH = '/api/live';
@@ -96,6 +96,9 @@ export function attachLive(server) {
     mailEvents.on('changed', onMail);
     noteEvents.on('note', onNote);
     noteEvents.on('note-read', onNoteRead);
+    // A group made, renamed, joined or left: its members' lists change.
+    const onGroup = (to, payload) => to.includes(who) && send(ws, { type: 'group', ...payload });
+    noteEvents.on('group', onGroup);
 
     // Heartbeat: a socket that stops answering pings is closed (the browser reconnects).
     let alive = true;
@@ -125,11 +128,16 @@ export function attachLive(server) {
         if (message.type === 'note') {
           send(ws, { type: 'sent', ref, note: await createNote(who, message) });
         } else if (message.type === 'read') {
-          send(ws, { type: 'done', ref, changed: markNotesRead(who, message.with) });
+          send(ws, { type: 'done', ref, changed: message.group ? markGroupRead(who, String(message.group)) : markNotesRead(who, message.with) });
         } else if (message.type === 'typing') {
-          // Passed straight on; only to a teammate.
-          const to = String(message.to || '').toLowerCase();
-          if (to !== who && teammates().some((p) => p.address === to)) sendTo(to, { type: 'typing', from: who });
+          // Passed straight on: to a teammate, or to the rest of a group I'm in.
+          if (message.group) {
+            const group = groups().find((g) => g.id === String(message.group) && g.members.includes(who));
+            for (const member of group?.members || []) if (member !== who) sendTo(member, { type: 'typing', from: who, group: group.id });
+          } else {
+            const to = String(message.to || '').toLowerCase();
+            if (to !== who && teammates().some((p) => p.address === to)) sendTo(to, { type: 'typing', from: who });
+          }
         }
       } catch (err) {
         if (ref) send(ws, { type: 'error', ref, error: err.status ? err.message : describeError(err) });
@@ -142,6 +150,7 @@ export function attachLive(server) {
       mailEvents.off('changed', onMail);
       noteEvents.off('note', onNote);
       noteEvents.off('note-read', onNoteRead);
+      noteEvents.off('group', onGroup);
       leave(ws, who);
     });
   });

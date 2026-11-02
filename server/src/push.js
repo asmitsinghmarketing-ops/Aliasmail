@@ -153,15 +153,24 @@ export function startPush() {
   started = true;
   mailEvents.on('arrived', notifyNewMail);
   noteEvents.on('note', (to, note) => {
-    const recipient = to.find((a) => a !== note.from);
-    if (!recipient) return;
     const files = note.files?.length ? `${note.files.length === 1 ? 'A file' : `${note.files.length} files`}` : '';
-    void notify(recipient, 'notes', {
-      kind: 'note',
-      title: `Note from ${note.fromName || note.from}`,
-      body: short(note.text || files || 'New note', 140),
-      url: `/?notes=${encodeURIComponent(note.from)}`,
-      tag: `note-${note.from}`,
-    });
+    const sender = note.fromName || note.from;
+    for (const recipient of to.filter((a) => a !== note.from)) {
+      void notify(recipient, 'notes', note.group
+        ? {
+          kind: 'note',
+          title: note.groupName || 'Group note',
+          body: short(`${sender}: ${note.text || files || 'New note'}`, 140),
+          url: `/?notes=${encodeURIComponent(`group:${note.group}`)}`,
+          tag: `note-group-${note.group}`,
+        }
+        : {
+          kind: 'note',
+          title: `Note from ${sender}`,
+          body: short(note.text || files || 'New note', 140),
+          url: `/?notes=${encodeURIComponent(note.from)}`,
+          tag: `note-${note.from}`,
+        });
+    }
   });
 }

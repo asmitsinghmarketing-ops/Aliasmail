@@ -68,3 +68,12 @@ test('instant notes notify the recipient; switched-off kinds and gone devices ar
   fail = null;
   assert.deepEqual(push.devicesOf('john@example.com'), []);
 });
+
+test('a group note notifies every other member, titled with the group', async () => {
+  push.subscribe('lee@example.com', device(3));
+  sent.length = 0;
+  noteEvents.emit('note', ['john@example.com', 'mary@example.com', 'lee@example.com'], { from: 'john@example.com', group: 'g1', groupName: 'Sales', fromName: 'John', text: 'Price approved', files: [] });
+  await flush();
+  // Mary turned notes off on her phone earlier; John sent it.
+  assert.deepEqual(sent.map((s) => [s.endpoint, s.title, s.body, s.url]), [['https://push.example/3', 'Sales', 'John: Price approved', '/?notes=group%3Ag1']]);
+});
