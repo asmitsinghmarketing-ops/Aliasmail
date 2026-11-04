@@ -15,6 +15,7 @@ import { LabelMenu, Popover, TimeMenu, shortTime, snoozeOptions } from './Menus.
 import MessageView from './MessageView.jsx';
 import MeetDialog from './MeetDialog.jsx';
 import InstantNotes from './InstantNotes.jsx';
+import NotifyPrompt from './NotifyPrompt.jsx';
 import Assistant from './Assistant.jsx';
 import { subscribe } from '../live.js';
 import { meetingText } from '../meet.js';
@@ -64,6 +65,8 @@ function dateGroup(date) {
 }
 // Lists in date order get the groups; Scheduled and the Outbox are ordered by send time instead.
 const UNGROUPED = new Set(['scheduled', 'outbox']);
+// Emails at the top of a list loaded in the background, so opening them is instant.
+const PRELOAD_TOP = 8;
 
 // Folders holding inbox messages (per-account state applies); the rest are special lists.
 const MAIL_FOLDERS = ['inbox', 'starred', 'snoozed', 'important', 'all'];
@@ -905,6 +908,34 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   // Preload a message when the pointer rests on its row for a moment.
   const hoverTimer = useRef(null);
+  // Load the top of the list in the background (phones can't hover), one email at a time and
+  // each only once (getMessage keeps them). Skipped when the device asks to save data.
+  useEffect(() => {
+    if (navigator.connection?.saveData) return undefined;
+    const wanted = list.items.filter((i) => i.kind !== 'draft' && i.kind !== 'scheduled' && i.kind !== 'outbox').slice(0, PRELOAD_TOP);
+    let stop = false;
+    const run = async () => {
+      for (const item of wanted) {
+        if (stop || document.visibilityState !== 'visible') return;
+        await preloadMessage(messageUrl(item));
+      }
+    };
+    const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 300));
+    const handle = idle(() => run());
+    return () => {
+      stop = true;
+      (window.cancelIdleCallback || clearTimeout)(handle);
+    };
+  }, [list.items]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // An email is open: get the next two ready, so moving on is instant.
+  useEffect(() => {
+    if (!open) return;
+    const index = list.items.findIndex((i) => i.id === open.id && i.kind === open.kind);
+    if (index < 0) return;
+    for (const next of list.items.slice(index + 1, index + 3)) preload(next);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const onRowEnter = (item) => {
     clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => preload(item), 120);
@@ -959,7 +990,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     const d = card.data;
     let headers = {};
     if (d.replyToId) {
-      const original = await api(/^d+$/.test(d.replyToId) ? `/mail/messages/${d.replyToId}?peek=1` : `/mail/sent/${encodeURIComponent(d.replyToId)}`).catch(() => null);
+      const original = await api(/^\d+$/.test(d.replyToId) ? `/mail/messages/${d.replyToId}?peek=1` : `/mail/sent/${encodeURIComponent(d.replyToId)}`).catch(() => null);
       if (original) headers = { inReplyTo: original.messageId, references: [...asArray(original.references), original.messageId].filter(Boolean) };
     }
     const html = htmlFromText(d.body) + signatureBlock();
@@ -1905,6 +1936,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               )}
               {folder === 'scheduled' && list.total > 0 && <div className="banner">These messages will be sent at the time shown. Cancel one to move it back to Drafts.</div>}
               {error && <div className="alert m">{error}</div>}
+              {folder === 'inbox' && !search && !shared && <NotifyPrompt onOpenSettings={() => { setSettingsTab('notifications'); setModal('settings'); }} />}
               {CATEGORIZED.includes(folder) && !search && (
                 <LoginCodes
                   reloadKey={list}
@@ -1952,6 +1984,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                       style={{ '--i': Math.min(i, 15) }}
                       onClick={() => openAt(i)}
                       onMouseEnter={() => onRowEnter(item)}
+                      onPointerDown={() => preload(item)}
                       onMouseLeave={onRowLeave}
                     >
                       <input type="checkbox" checked={selected.has(item.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleSelect(item.id)} />

@@ -2498,3 +2498,18 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .group-form-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
 .group-form-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
 .group-leave { color: #b42318; }
+
+/* "Turn on notifications" banner at the top of the inbox */
+.notify-prompt {
+  display: flex; align-items: center; gap: 12px; margin: 10px 16px 6px; padding: 12px 14px; border-radius: 14px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--brand) 10%, var(--surface)), var(--surface));
+  border: 1px solid color-mix(in srgb, var(--brand) 25%, var(--border));
+}
+.notify-prompt-icon { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; color: #fff; background: var(--brand); }
+.notify-prompt-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.notify-prompt-error { color: #b42318; }
+.notify-prompt-actions { display: flex; gap: 6px; flex: none; }
+@media (max-width: 800px) {
+  .notify-prompt { flex-wrap: wrap; margin: 10px 12px 4px; }
+  .notify-prompt-actions { width: 100%; justify-content: flex-end; }
+}
