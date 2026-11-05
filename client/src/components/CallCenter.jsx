@@ -6,12 +6,93 @@ import { subscribe } from '../live.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 
+let audioContext = null;
+let audioUnlocked = false;
+
+function contextForCall() {
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  if (!Audio) return null;
+  audioContext ||= new Audio();
+  return audioContext;
+}
+
+// Chrome and Safari only allow later background audio after audio has been unlocked by a real
+// click/key press. Do that silently on the person's first interaction with Nextspace.
+async function unlockCallAudio() {
+  try {
+    const context = contextForCall();
+    if (!context) return;
+    await context.resume();
+    const source = context.createBufferSource();
+    source.buffer = context.createBuffer(1, 1, context.sampleRate);
+    source.connect(context.destination);
+    source.start();
+    audioUnlocked = true;
+  } catch { /* desktop notification remains the fallback */ }
+}
+
+function startRingtone() {
+  try {
+    const context = contextForCall();
+    if (!context) return null;
+    if (context.state === 'suspended') void context.resume().catch(() => {});
+    const seconds = 2;
+    const buffer = context.createBuffer(1, context.sampleRate * seconds, context.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) {
+      const t = i / context.sampleRate;
+      const tone = t < 0.24 ? { start: 0, frequency: 660 } : t >= 0.32 && t < 0.56 ? { start: 0.32, frequency: 880 } : null;
+      if (!tone) continue;
+      const local = t - tone.start;
+      const envelope = Math.min(1, local / 0.025, (0.24 - local) / 0.035);
+      samples[i] = Math.sin(2 * Math.PI * tone.frequency * local) * Math.max(0, envelope) * 0.14;
+    }
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    source.connect(context.destination);
+    source.start();
+    return source;
+  } catch {
+    return null;
+  }
+}
+
+function desktopRing(call) {
+  if (document.visibilityState === 'visible' || !('Notification' in window) || Notification.permission !== 'granted') return;
+  navigator.serviceWorker?.ready.then((worker) => worker.showNotification(`Incoming call from ${call.fromName}`, {
+    body: 'Open Nextspace to answer the call.',
+    tag: `call-${call.id}`,
+    renotify: true,
+    requireInteraction: true,
+    silent: false,
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    data: { url: `/?call=${encodeURIComponent(call.id)}` },
+  })).catch(() => {});
+}
+
 export default function CallCenter() {
   const [call, setCall] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const current = useRef(null);
   current.current = call;
+
+  useEffect(() => {
+    if (audioUnlocked) return undefined;
+    const unlock = () => {
+      void unlockCallAudio();
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
 
   useEffect(() => {
     const showFromUrl = (href) => {
@@ -26,7 +107,10 @@ export default function CallCenter() {
     const onWorker = (event) => event.data?.type === 'open' && showFromUrl(event.data.url);
     navigator.serviceWorker?.addEventListener('message', onWorker);
     const stop = subscribe((message) => {
-      if (message.type === 'incoming-call') setCall(message.call);
+      if (message.type === 'incoming-call') {
+        setCall(message.call);
+        desktopRing(message.call);
+      }
       else if (message.type === 'call-ended' && message.id === current.current?.id) setCall(null);
     });
     return () => {
@@ -35,31 +119,12 @@ export default function CallCenter() {
     };
   }, []);
 
-  // A short repeating ringtone while the incoming-call card is open. Browser autoplay rules can
-  // mute it before the person has interacted with the site; the persistent desktop push remains.
+  // One looping audio buffer keeps ringing when Chrome throttles timers in a minimized tab.
   useEffect(() => {
     if (!call) return undefined;
-    let context;
-    const ring = () => {
-      try {
-        context ||= new (window.AudioContext || window.webkitAudioContext)();
-        for (const [offset, frequency] of [[0, 660], [0.18, 880]]) {
-          const oscillator = context.createOscillator();
-          const gain = context.createGain();
-          oscillator.frequency.value = frequency;
-          gain.gain.setValueAtTime(0.0001, context.currentTime + offset);
-          gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + offset + 0.02);
-          gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + offset + 0.16);
-          oscillator.connect(gain).connect(context.destination);
-          oscillator.start(context.currentTime + offset);
-          oscillator.stop(context.currentTime + offset + 0.18);
-        }
-      } catch { /* visual and push notification still ring */ }
-    };
-    ring();
-    const timer = setInterval(ring, 1800);
+    const ringtone = startRingtone();
     const expires = setTimeout(() => setCall(null), Math.max(0, Date.parse(call.expiresAt) - Date.now()));
-    return () => { clearInterval(timer); clearTimeout(expires); context?.close().catch(() => {}); };
+    return () => { ringtone?.stop(); clearTimeout(expires); };
   }, [call]);
 
   if (!call) return null;

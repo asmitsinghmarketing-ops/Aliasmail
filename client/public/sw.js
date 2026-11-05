@@ -1,4 +1,4 @@
-// Nextspace notifications (service worker). Shows new mail and instant notes sent by the server
+// Nextspace notifications (service worker). Shows mail, tasks, notes and calls sent by the server
 // (Web Push), even when Nextspace isn't open; a tap opens it. Nothing else: no caching.
 
 self.addEventListener('install', () => self.skipWaiting());
