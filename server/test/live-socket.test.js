@@ -97,6 +97,32 @@ test('presence, typing and notes travel over the socket; strangers and other sit
   const arrived = await waitFor(mary.got, (m) => m.type === 'note');
   assert.deepEqual([arrived.note.text, arrived.note.fromName], ['Over the socket', 'John']);
 
+  // A call started from Instant Notes rings every open window of the recipient; accepting it
+  // tells the caller and returns the already validated Google Meet link.
+  const callResponse = await fetch(`${BASE}/api/calls`, {
+    method: 'POST',
+    headers: { Cookie: johnCookie, 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' },
+    body: JSON.stringify({ to: 'mary@example.com', link: 'https://meet.google.com/abc-defg-hij' }),
+  });
+  assert.equal(callResponse.status, 201);
+  const call = await callResponse.json();
+  const ringing = await waitFor(mary.got, (m) => m.type === 'incoming-call' && m.call.id === call.id);
+  assert.deepEqual([ringing.call.from, ringing.call.to, ringing.call.link], ['john@example.com', 'mary@example.com', 'https://meet.google.com/abc-defg-hij']);
+  const accepted = await fetch(`${BASE}/api/calls/${call.id}/respond`, {
+    method: 'POST',
+    headers: { Cookie: maryCookie, 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' },
+    body: JSON.stringify({ answer: 'accept' }),
+  });
+  assert.equal((await accepted.json()).status, 'accepted');
+  assert.equal((await waitFor(john.got, (m) => m.type === 'call-response' && m.id === call.id)).status, 'accepted');
+
+  const badCall = await fetch(`${BASE}/api/calls`, {
+    method: 'POST',
+    headers: { Cookie: johnCookie, 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' },
+    body: JSON.stringify({ to: 'mary@example.com', link: 'https://evil.example/fake-meeting' }),
+  });
+  assert.equal(badCall.status, 400);
+
   john.send({ type: 'note', ref: 'r2', to: 'nobody@else.test', text: 'x' });
   assert.match((await waitFor(john.got, (m) => m.type === 'error' && m.ref === 'r2')).error, /team/);
 

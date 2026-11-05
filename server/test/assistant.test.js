@@ -5,6 +5,15 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { geminiUserMessage } from '../src/assistant-gemini.js';
+import { openrouterUserMessage } from '../src/assistant-openrouter.js';
+
+const PIXEL = { name: 'pixel.png', mediaType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xw4AAAAASUVORK5CYII=' };
+
+test('image messages use each provider’s vision format', () => {
+  assert.deepEqual(geminiUserMessage('Look', PIXEL).parts[1], { inlineData: { mimeType: 'image/png', data: PIXEL.data } });
+  assert.deepEqual(openrouterUserMessage('Look', PIXEL).content[1], { type: 'image_url', image_url: { url: `data:image/png;base64,${PIXEL.data}` } });
+});
 
 // The Assistant against a stand-in for the Anthropic API: a turn that searches mail, prepares an
 // email card and answers; usage and limits; and that nobody else can read the chat.
@@ -139,14 +148,29 @@ test('a turn searches mail, prepares an email card and answers; usage and limits
   assert.equal((await call(`/assistant/chats/${chat.id}`, {}, john)).status, 404);
   assert.equal((await call('/assistant/usage', {}, john)).status, 403);
 
+  // Image-only prompts skip the text fast path, reach Claude as a vision block, and only small
+  // metadata (not the base64 data) is retained in the visible chat.
+  const imageChat = await (await call('/assistant/chats', { method: 'POST' })).json();
+  const imageRequest = requests.length;
+  await answered(call, imageChat.id, { message: '', image: PIXEL, now: 'Sunday 1 November 2026, 15:35', timeZone: 'Asia/Kolkata' });
+  assert.deepEqual(requests[imageRequest].body.messages[0].content[1], {
+    type: 'image',
+    source: { type: 'base64', media_type: 'image/png', data: PIXEL.data },
+  });
+  const savedImageChat = await (await call(`/assistant/chats/${imageChat.id}`)).json();
+  assert.deepEqual(savedImageChat.items[0].image, { name: 'pixel.png', mediaType: 'image/png' });
+  assert.equal(JSON.stringify(savedImageChat).includes(PIXEL.data), false);
+
   const usage = await (await call('/assistant/usage')).json();
-  // Three step-by-step calls plus the fast path's one, at Opus 5.5 prices.
+  // Six step-by-step calls plus the first text turn's fast path, at Opus 5.5 prices.
   assert.equal(plans.length, 1);
   assert.equal(plans[0].body.tools, undefined);
-  assert.equal(usage.total.requests, 4);
-  assert.equal(usage.total.input, 4000);
-  assert.equal(usage.total.cacheRead, 12000);
-  assert.ok(Math.abs(usage.total.usd - (4000 * 4 + 800 * 20 + 12000 * 0.2) / 1e6) < 1e-9);
+  assert.equal(plans[0].body.max_tokens, 1200);
+  assert.deepEqual(plans[0].body.output_config, { effort: 'low' });
+  assert.equal(usage.total.requests, 7);
+  assert.equal(usage.total.input, 7000);
+  assert.equal(usage.total.cacheRead, 21000);
+  assert.ok(Math.abs(usage.total.usd - (7000 * 4 + 1400 * 20 + 21000 * 0.2) / 1e6) < 1e-9);
 
   // A limit that has been reached stops the next message before it reaches Claude.
   await call('/assistant/limits', { method: 'PUT', body: JSON.stringify({ monthlyUsd: 0.01, perPersonUsd: 0 }) });

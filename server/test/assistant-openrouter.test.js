@@ -30,6 +30,7 @@ const usage = { usage: { prompt_tokens: 700, completion_tokens: 40 }, choices: [
 
 // The fast path's "what does the person want?" answers, by the latest message.
 let planned = 0;
+const planningRequests = [];
 function plan(prompt) {
   planned++;
   const latest = prompt.split('Latest message:').pop();
@@ -46,7 +47,10 @@ test.before(async () => {
     req.on('end', () => {
       const request = { url: req.url, headers: req.headers, body: JSON.parse(body) };
       const planning = request.body.messages[0]?.content?.includes?.('You route requests');
-      if (planning) return sse(res, [delta({ content: plan(request.body.messages.at(-1).content) }, 'stop'), usage]);
+      if (planning) {
+        planningRequests.push(request);
+        return sse(res, [delta({ content: plan(request.body.messages.at(-1).content) }, 'stop'), usage]);
+      }
       requests.push(request);
       const turn = request.body.messages.filter((m) => m.role === 'assistant').length;
       if (turn === 0) {
@@ -149,6 +153,7 @@ test('common requests take the fast path: one call to understand, Nextspace does
   let parts = await answered(call, chat.id, { message: 'Hello there' });
   assert.equal(textOf(parts), 'Hi! How can I help?');
   assert.equal(planned - before, 1);
+  assert.equal(planningRequests.at(-1).body.max_tokens, 1200);
 
   // A new email: written in the same call, shown as a card.
   before = planned;

@@ -12,6 +12,10 @@ noteEvents.setMaxListeners(0);
 export const notificationEvents = new EventEmitter();
 notificationEvents.setMaxListeners(0);
 
+// Instant team calls: emitted as (recipient, payload) for open windows.
+export const callEvents = new EventEmitter();
+callEvents.setMaxListeners(0);
+
 let pending = null;
 /** Tell open mailboxes to refresh. Bursts (a bulk action, a sync batch) become one signal. */
 export function announceChange() {

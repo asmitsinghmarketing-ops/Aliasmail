@@ -109,7 +109,7 @@ function TaskImport({ preview, projectsById, peopleByAddress, importing, error, 
   );
 }
 
-export default function Tasks({ user, onClose }) {
+export default function Tasks({ user, startTask, onClose }) {
   const [data, setData] = useState({ me: '', team: [], projects: [], tasks: [], activity: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -137,6 +137,15 @@ export default function Tasks({ user, onClose }) {
       clearInterval(timer);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!startTask || !data.tasks.length) return;
+    const wanted = data.tasks.find((task) => task.id === startTask);
+    if (wanted) { setScope(`project:${wanted.projectId}`); setEditor(wanted); }
+    const url = new URL(window.location.href);
+    url.searchParams.delete('task');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [startTask, data.tasks]);
 
   const projectsById = useMemo(() => Object.fromEntries(data.projects.map((project) => [project.id, project])), [data.projects]);
   const peopleByAddress = useMemo(() => Object.fromEntries(data.team.map((person) => [person.address, person])), [data.team]);
@@ -245,6 +254,7 @@ export default function Tasks({ user, onClose }) {
   return (
     <div className="tasks-app">
       <header className="tasks-topbar">
+        <button type="button" className="icon-btn tasks-back" onClick={onClose} title="Back to mailbox" aria-label="Back to mailbox"><Icon name="back" /></button>
         <button className="tasks-brand" type="button" onClick={onClose} title="Back to mail"><Logo /><Wordmark /></button>
         <span className="tasks-divider" />
         <strong>Tasks</strong>
@@ -260,7 +270,6 @@ export default function Tasks({ user, onClose }) {
         <input ref={spreadsheetPicker} className="task-spreadsheet-input" type="file" accept=".xlsx,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/tab-separated-values" onChange={chooseSpreadsheet} />
         <button type="button" className="btn btn-outline task-import-btn" onClick={() => data.projects.length ? setImportOpen(true) : createProject()}><Icon name="upload" size={18} /><span>Import</span></button>
         <button type="button" className="btn btn-primary" onClick={() => openNew()}><Icon name="add" size={18} /><span>New task</span></button>
-        <button type="button" className="icon-btn" onClick={onClose} title="Back to mailbox"><Icon name="close" /></button>
       </header>
 
       <div className="tasks-layout">

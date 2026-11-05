@@ -14,7 +14,15 @@ const RETRY_WAITS_MS = [2000, 5000];
 const functions = (tools) =>
   tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
 
-export const openrouterUserMessage = (text) => ({ role: 'user', content: text });
+export const openrouterUserMessage = (text, image) => ({
+  role: 'user',
+  content: image
+    ? [
+        { type: 'text', text },
+        { type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } },
+      ]
+    : text,
+});
 
 /** Tool results: one "tool" message per call, as this format wants. */
 export const openrouterToolResults = (results) =>
@@ -37,7 +45,7 @@ function failure(status, body) {
  * One model call, streamed. `onText(delta)` gets text as it arrives. Returns { message (for the
  * history), uses: [{ id, name, input }], stop, usage }.
  */
-export async function callOpenRouter({ system, history, tools, onText, signal: cancel }) {
+export async function callOpenRouter({ system, history, tools, onText, signal: cancel, fast = false }) {
   const { openrouterKey, openrouterModel, openrouterUrl } = settings();
   const started = Date.now();
   // Never wait forever (combined by hand: AbortSignal.any() needs Node 20).
@@ -65,7 +73,7 @@ export async function callOpenRouter({ system, history, tools, onText, signal: c
         messages: [{ role: 'system', content: system }, ...history],
         ...(tools.length && { tools: functions(tools), tool_choice: 'auto' }),
         stream: true,
-        max_tokens: 4096,
+        max_tokens: fast ? 1200 : 4096,
         usage: { include: true },
       }),
       signal: both.signal,

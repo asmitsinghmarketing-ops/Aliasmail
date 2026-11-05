@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { db, save } from './store.js';
 import { notificationEvents } from './mail-events.js';
+import { notify } from './push.js';
 
 const MAX_PER_PERSON = 200;
 
@@ -28,6 +29,11 @@ export function createNotification({ to, type, title, body = '', entity = null, 
   for (const old of mine.slice(MAX_PER_PERSON)) store().splice(store().indexOf(old), 1);
   save();
   notificationEvents.emit('notification', to, item);
+  if (item.type.startsWith('task-')) {
+    void notify(to, 'tasks', {
+      kind: 'task', title: item.title, body: item.body, url: `/?task=${encodeURIComponent(item.entity?.id || '')}`, tag: `task-${item.id}`,
+    });
+  }
   return item;
 }
 

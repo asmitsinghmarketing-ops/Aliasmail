@@ -325,18 +325,18 @@ async function runTool(name, input, me) {
 /* ---------------------------------- one model call ---------------------------------- */
 
 /** One Claude call, streamed. Same shape as callGemini(): { message, uses, stop, usage }. */
-async function callClaude({ system, history, tools, onText, onReset, signal }) {
+async function callClaude({ system, history, tools, onText, onReset, signal, fast = false }) {
   const { model, effort } = settings();
   for (let attempt = 0; ; attempt++) {
     const stream = anthropic().beta.messages.stream(
       {
         model,
-        max_tokens: MAX_TOKENS,
+        max_tokens: fast ? 1200 : MAX_TOKENS,
         system: [{ type: 'text', text: system }],
         ...(tools.length && { tools }),
         messages: history,
         cache_control: { type: 'ephemeral' },
-        output_config: { effort },
+        output_config: { effort: fast ? 'low' : effort },
         ...(FALLBACK_MODELS.has(model) && { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }),
       },
       { signal },
@@ -383,21 +383,31 @@ function friendly(err) {
  * Answer one message in a chat. `emit(event, data)` streams to the browser: 'delta' (text),
  * 'reset', 'step', 'card', 'error'. The chat (history and what the person sees) is saved as it goes.
  */
-export async function runTurn({ chat, person, name, message, now, timeZone, emit, signal }) {
+export async function runTurn({ chat, person, name, message, image, now, timeZone, emit, signal }) {
   const via = provider();
   if ((chat.provider || 'anthropic') !== via) throw new HttpError(409, 'This chat was with a different AI model. Start a new chat.');
   const model = modelName();
   const userText = String(message || '').trim().slice(0, 8000);
-  if (!userText) throw new HttpError(400, 'Write a message');
+  if (!userText && !image) throw new HttpError(400, 'Write a message or attach an image');
   if (JSON.stringify(chat.history).length > MAX_CHAT_BYTES) throw new HttpError(400, 'This chat is very long. Start a new chat to carry on.');
   checkLimits(person);
 
   const when = `[${String(now || new Date().toISOString()).slice(0, 60)}, time zone ${String(timeZone || 'UTC').slice(0, 60)}]`;
   const updates = chat.updates.splice(0);
-  const asked = `${updates.length ? `${updates.join('\n')}\n\n` : ''}${when}\n\n${userText}`;
-  chat.history.push({ gemini: geminiUserMessage, openrouter: openrouterUserMessage }[via]?.(asked) ?? { role: 'user', content: [{ type: 'text', text: asked }] });
-  if (!chat.items.length) chat.title = userText.replace(/\s+/g, ' ').slice(0, 60);
-  chat.items.push({ role: 'user', text: userText, at: new Date().toISOString() });
+  const prompt = userText || 'Describe this image.';
+  const imageNote = image ? `\n\n[Attached image: ${image.name}]` : '';
+  const asked = `${updates.length ? `${updates.join('\n')}\n\n` : ''}${when}\n\n${prompt}${imageNote}`;
+  const providerMessage = (text, attachedImage) => ({ gemini: geminiUserMessage, openrouter: openrouterUserMessage }[via]?.(text, attachedImage) ?? {
+    role: 'user',
+    content: [
+      { type: 'text', text },
+      ...(attachedImage ? [{ type: 'image', source: { type: 'base64', media_type: attachedImage.mediaType, data: attachedImage.data } }] : []),
+    ],
+  });
+  const userHistoryIndex = chat.history.length;
+  chat.history.push(providerMessage(asked));
+  if (!chat.items.length) chat.title = (userText || image.name).replace(/\s+/g, ' ').slice(0, 60);
+  chat.items.push({ role: 'user', text: userText, ...(image && { image: { name: image.name, mediaType: image.mediaType } }), at: new Date().toISOString() });
   const reply = { role: 'assistant', parts: [], at: new Date().toISOString() };
   chat.items.push(reply);
   chat.updatedAt = reply.at;
@@ -413,7 +423,7 @@ export async function runTurn({ chat, person, name, message, now, timeZone, emit
   // Common requests: understand once, then Nextspace does the steps (assistant-fast.js). Anything
   // it doesn't take on goes to the step-by-step loop below.
   let fastText = null;
-  const fast = await tryFastPath({
+  const fast = image ? { handled: false, spent: 0 } : await tryFastPath({
     call,
     userMessage,
     record: (usage) => record(person, model, usage),
@@ -478,7 +488,9 @@ export async function runTurn({ chat, person, name, message, now, timeZone, emit
     let textPart = null;
     const response = await call({
       system,
-      history: chat.history,
+      // The base64 image exists only in this provider request. Chat storage keeps a small
+      // attachment marker, so images do not make the saved conversation grow by megabytes.
+      history: image ? chat.history.map((entry, index) => (index === userHistoryIndex ? providerMessage(asked, image) : entry)) : chat.history,
       tools,
       signal,
       onText: (delta) => {

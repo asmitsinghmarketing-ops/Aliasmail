@@ -7,6 +7,7 @@ import { DialogHost } from './components/Dialog.jsx';
 import UpdateNotice from './components/UpdateNotice.jsx';
 import Tasks from './components/Tasks.jsx';
 import AriaTooltip from './components/AriaTooltip.jsx';
+import CallCenter from './components/CallCenter.jsx';
 
 const OWNER_COLOR = '#e8590c';
 
@@ -25,7 +26,8 @@ function Screen() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
   const [adminView, setAdminView] = useState('mail'); // admin only: 'mail' | 'console'
-  const [workspace, setWorkspace] = useState('mail'); // 'mail' | 'tasks'
+  const [workspace, setWorkspace] = useState(() => new URLSearchParams(window.location.search).has('task') ? 'tasks' : 'mail'); // 'mail' | 'tasks'
+  const [taskToOpen, setTaskToOpen] = useState(() => new URLSearchParams(window.location.search).get('task'));
   const [shared, setShared] = useState(null); // address of an open group mailbox, or null
 
   const switchMailbox = (address) => {
@@ -56,6 +58,16 @@ function Screen() {
       window.removeEventListener(LOGOUT_EVENT, onLogout);
       window.removeEventListener(MAILBOX_REVOKED_EVENT, onRevoked);
     };
+  }, []);
+
+  useEffect(() => {
+    const onOpen = (event) => {
+      if (event.data?.type !== 'open') return;
+      const id = new URL(event.data.url, window.location.origin).searchParams.get('task');
+      if (id) { setTaskToOpen(id); setWorkspace('tasks'); }
+    };
+    navigator.serviceWorker?.addEventListener('message', onOpen);
+    return () => navigator.serviceWorker?.removeEventListener('message', onOpen);
   }, []);
 
   const logout = async () => {
@@ -89,31 +101,31 @@ function Screen() {
   // The admin is the owner of the main mailbox address: a full mailbox, plus the console.
   if (user.role === 'admin' && (adminView === 'console' || !user.mailbox)) {
     return (
-      <Admin
-        user={user}
-        onLogout={logout}
-        onRolesChanged={refreshAccount}
-        onOpenMail={user.mailbox ? () => setAdminView('mail') : null}
-      />
+      <><Admin
+          user={user}
+          onLogout={logout}
+          onRolesChanged={refreshAccount}
+          onOpenMail={user.mailbox ? () => setAdminView('mail') : null}
+        /><CallCenter /></>
     );
   }
 
   const sharedBox = shared ? user.mailboxes?.find((m) => m.address === shared) : null;
   const view = sharedBox ? { ...own, email: sharedBox.address, displayName: sharedBox.displayName, color: sharedBox.color, avatarUrl: sharedBox.avatarUrl } : own;
-  if (workspace === 'tasks') return <Tasks user={user} onClose={() => setWorkspace('mail')} />;
+  if (workspace === 'tasks') return <><Tasks user={user} startTask={taskToOpen} onClose={() => { setTaskToOpen(null); setWorkspace('mail'); }} /><CallCenter /></>;
   return (
-    <Mailbox
-      key={sharedBox ? `shared:${sharedBox.address}` : 'own'}
-      user={view}
-      account={own}
-      mailboxes={user.mailboxes || []}
-      shared={sharedBox}
-      onSwitchMailbox={switchMailbox}
-      onRefreshMailboxes={refreshAccount}
-      onLogout={logout}
-      onUserChange={onUserChange}
-      onOpenAdmin={user.role === 'admin' ? () => setAdminView('console') : undefined}
-      onOpenTasks={() => setWorkspace('tasks')}
-    />
+    <><Mailbox
+        key={sharedBox ? `shared:${sharedBox.address}` : 'own'}
+        user={view}
+        account={own}
+        mailboxes={user.mailboxes || []}
+        shared={sharedBox}
+        onSwitchMailbox={switchMailbox}
+        onRefreshMailboxes={refreshAccount}
+        onLogout={logout}
+        onUserChange={onUserChange}
+        onOpenAdmin={user.role === 'admin' ? () => setAdminView('console') : undefined}
+        onOpenTasks={() => setWorkspace('tasks')}
+      /><CallCenter /></>
   );
 }

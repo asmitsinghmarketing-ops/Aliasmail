@@ -14,6 +14,30 @@ import { assistantEnabled, modelName, provider, chatsOf, checkLimits, findChat, 
 const router = Router();
 router.use(requireAuth());
 
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+function uploadedImage(value) {
+  if (value == null) return null;
+  if (!value || typeof value !== 'object') throw new HttpError(400, 'The attached image is invalid');
+  const mediaType = String(value.mediaType || '').toLowerCase();
+  const data = String(value.data || '').replace(/\s/g, '');
+  const name = String(value.name || 'image').replace(/[\u0000-\u001f]/g, '').slice(0, 160) || 'image';
+  if (!IMAGE_TYPES.has(mediaType)) throw new HttpError(400, 'Use a JPG, PNG or WebP image');
+  if (!data || data.length > Math.ceil(MAX_IMAGE_BYTES * 4 / 3) + 8 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+    throw new HttpError(400, 'The attached image is invalid or larger than 4 MB');
+  }
+  const bytes = Buffer.from(data, 'base64');
+  if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new HttpError(400, 'The image must be 4 MB or smaller');
+  const matches = mediaType === 'image/jpeg'
+    ? bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+    : mediaType === 'image/png'
+      ? bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+      : bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP';
+  if (!matches) throw new HttpError(400, 'The image contents do not match its file type');
+  return { name, mediaType, data };
+}
+
 // Why the Assistant is off, for the person trying to use it.
 const notSetUp = () =>
   provider() === 'openrouter' && settings().openrouterKey
@@ -90,13 +114,14 @@ router.post('/chats/:id/messages', (req, res) => {
   if (running.has(chat.id)) throw new HttpError(409, 'Still answering the last message');
   checkLimits(me);
   const body = req.body ?? {};
-  if (!String(body.message || '').trim()) throw new HttpError(400, 'Write a message');
+  const image = uploadedImage(body.image);
+  if (!String(body.message || '').trim() && !image) throw new HttpError(400, 'Write a message or attach an image');
   countMessage(me);
 
   const abort = new AbortController();
   running.set(chat.id, abort);
   const name = teammates().find((p) => p.address === me)?.name || '';
-  runTurn({ chat, person: me, name, message: body.message, now: body.now, timeZone: body.timeZone, emit: () => {}, signal: abort.signal })
+  runTurn({ chat, person: me, name, message: body.message, image, now: body.now, timeZone: body.timeZone, emit: () => {}, signal: abort.signal })
     .catch((err) => {
       const error = abort.signal.aborted ? 'Stopped.' : friendly(err);
       if (!abort.signal.aborted && !(err instanceof HttpError)) console.warn('[assistant]', error);

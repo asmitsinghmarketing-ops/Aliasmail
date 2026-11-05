@@ -55,7 +55,7 @@ export default function NotificationSettings() {
   return (
     <div className="settings-section notify-settings">
       <h3>Notifications on this device</h3>
-      <p className="muted">Get a notification for new mail and instant notes, even when Nextspace is closed. Turn it on separately on each phone or computer.</p>
+      <p className="muted">Get notifications for mail, tasks, notes and incoming calls, even when Nextspace is closed. Turn it on separately on each phone or computer.</p>
 
       {!state ? (
         <p className="muted">Checking…</p>
@@ -90,6 +90,14 @@ export default function NotificationSettings() {
               <label className="notify-check">
                 <input type="checkbox" checked={state.notes !== false} disabled={busy} onChange={(e) => run(() => setKinds({ notes: e.target.checked }))} />
                 Instant notes from your team
+              </label>
+              <label className="notify-check">
+                <input type="checkbox" checked={state.tasks !== false} disabled={busy} onChange={(e) => run(() => setKinds({ tasks: e.target.checked }))} />
+                Task assignments and updates
+              </label>
+              <label className="notify-check">
+                <input type="checkbox" checked={state.calls !== false} disabled={busy} onChange={(e) => run(() => setKinds({ calls: e.target.checked }))} />
+                Incoming team calls
               </label>
               <button type="button" className="btn btn-outline notify-test" disabled={busy} onClick={() => run(test, 'Test sent. It should appear in a moment.')}>
                 <Icon name="send" size={18} /> Send a test

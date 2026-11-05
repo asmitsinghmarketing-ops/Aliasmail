@@ -5,7 +5,7 @@ import { WebSocketServer } from 'ws';
 import config from './config.js';
 import { currentSession, endSessions } from './sessions.js';
 import { findAlias, typeOf } from './aliases.js';
-import { mailEvents, noteEvents, notificationEvents } from './mail-events.js';
+import { callEvents, mailEvents, noteEvents, notificationEvents } from './mail-events.js';
 import { personOf, teammates } from './team.js';
 import { createNote, groups, markGroupRead, markNotesRead } from './instant-notes.js';
 import { describeError } from './errors.js';
@@ -101,6 +101,12 @@ export function attachLive(server) {
     noteEvents.on('group', onGroup);
     const onNotification = (to, notification) => to === who && send(ws, { type: 'notification', notification });
     notificationEvents.on('notification', onNotification);
+    const onCall = (to, call) => to === who && send(ws, { type: 'incoming-call', call });
+    const onCallResponse = (to, response) => to === who && send(ws, { type: 'call-response', ...response });
+    const onCallEnded = (to, response) => to === who && send(ws, { type: 'call-ended', ...response });
+    callEvents.on('call', onCall);
+    callEvents.on('response', onCallResponse);
+    callEvents.on('ended', onCallEnded);
 
     // Heartbeat: a socket that stops answering pings is closed (the browser reconnects).
     let alive = true;
@@ -154,6 +160,9 @@ export function attachLive(server) {
       noteEvents.off('note-read', onNoteRead);
       noteEvents.off('group', onGroup);
       notificationEvents.off('notification', onNotification);
+      callEvents.off('call', onCall);
+      callEvents.off('response', onCallResponse);
+      callEvents.off('ended', onCallEnded);
       leave(ws, who);
     });
   });

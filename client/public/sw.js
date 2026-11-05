@@ -14,7 +14,7 @@ self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
     // Nextspace is open and in front: it shows its own pop-up, so don't ring twice.
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    if (data.kind !== 'test' && windows.some((w) => w.focused && w.visibilityState === 'visible')) return;
+    if (!['test', 'call'].includes(data.kind) && windows.some((w) => w.focused && w.visibilityState === 'visible')) return;
     await self.registration.showNotification(data.title || 'Nextspace', {
       body: data.body || '',
       tag: data.tag || undefined,
@@ -22,6 +22,8 @@ self.addEventListener('push', (event) => {
       icon: '/icon-192.png',
       badge: '/icon-192.png',
       data: { url: data.url || '/' },
+      requireInteraction: data.kind === 'call',
+      silent: false,
     });
   })());
 });

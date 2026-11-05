@@ -7,6 +7,7 @@ import { formatDate, formatSize } from '../format.js';
 import { notify, onlineNow, request, subscribe } from '../live.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
+import { createMeeting } from '../meet.js';
 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -63,6 +64,8 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   const [text, setText] = useState('');
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [calling, setCalling] = useState(false);
+  const [callNotice, setCallNotice] = useState('');
   const [error, setError] = useState('');
   const [online, setOnline] = useState(onlineNow); // addresses online; null when unknown
   const [typing, setTyping] = useState({}); // "<conversation key>|<address>" -> when "typing" arrived
@@ -230,6 +233,31 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
     }
   }
 
+  async function startCall() {
+    if (!thread || isGroup(thread) || calling) return;
+    setCalling(true); setError(''); setCallNotice('');
+    const callWindow = window.open('', '_blank');
+    if (callWindow) {
+      callWindow.document.title = 'Starting call…';
+      callWindow.document.body.textContent = 'Creating your secure Google Meet call…';
+    }
+    try {
+      const meeting = await createMeeting({ title: `Call with ${nameOf(thread)}` });
+      if (!meeting) { callWindow?.close(); return; }
+      const call = await api('/calls', { method: 'POST', body: { to: thread.address, link: meeting.link } });
+      setCallNotice(`Calling ${nameOf(thread)}…`);
+      if (callWindow) {
+        callWindow.opener = null;
+        callWindow.location.replace(call.link);
+      } else window.open(call.link, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      callWindow?.close();
+      setError(err.message);
+    } finally {
+      setCalling(false);
+    }
+  }
+
   const memberOf = (address) => (isGroup(thread) ? thread.members.find((m) => m.address === address) : null) || { address };
   const seenBy = (n) => (n.readBy || []).map((a) => nameOf(memberOf(a)));
 
@@ -268,6 +296,11 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
             {isGroup(thread) && (
               <button type="button" className="icon-btn" aria-label="Group info" title="Group info" onClick={() => setView('group-info')}>
                 <Icon name="info" />
+              </button>
+            )}
+            {!isGroup(thread) && (
+              <button type="button" className="icon-btn notes-call" aria-label={`Call ${nameOf(thread)}`} title={`Call ${nameOf(thread)}`} disabled={calling} onClick={startCall}>
+                <Icon name="videocam" />
               </button>
             )}
           </>
@@ -439,6 +472,7 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
         </>
       )}
       {error && <div className="alert notes-error">{error}</div>}
+      {callNotice && <div className="notes-call-notice"><Icon name="videocam" size={17} /> {callNotice}</div>}
     </aside>
   );
 }

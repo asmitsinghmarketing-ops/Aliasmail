@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Avatar, { checkImageFile } from './Avatar.jsx';
 import AvatarCropper from './AvatarCropper.jsx';
-import RichEditor, { htmlFromText, sanitizeHtml } from './RichEditor.jsx';
+import RichEditor, { htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
 import Icon from './Icon.jsx';
 import SecurityPanel from './SecurityPanel.jsx';
 import GoogleApps from './GoogleApps.jsx';
@@ -79,6 +79,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
   const [cropping, setCropping] = useState(null); // the picked photo, being positioned
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
+  const [signatureMode, setSignatureMode] = useState('visual');
 
   useEffect(() => {
     api('/mail/settings')
@@ -192,17 +193,47 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
               <input type="text" {...field('displayName')} placeholder={form.address} />
             </label>
             <div className="signature-field">
-              <span>Signature <span className="muted">· added to new messages and replies</span></span>
-              <div className="signature-editor">
-                <RichEditor
-                  initialHtml={form.signatureHtml || htmlFromText(form.signature)}
-                  onChange={({ html, text }) => setForm((f) => ({ ...f, signature: text, signatureHtml: text || html.includes('<img') ? html : '' }))}
-                  placeholder={'Best regards,\nJohn'}
-                  className="signature-body"
-                  toolbarClassName="signature-tools"
-                  richTools
-                />
+              <div className="signature-label">
+                <span>Signature <span className="muted">· added to new messages and replies</span></span>
+                <div className="signature-mode" role="tablist" aria-label="Signature editor mode">
+                  <button type="button" role="tab" aria-selected={signatureMode === 'visual'} className={signatureMode === 'visual' ? 'on' : ''} onClick={() => setSignatureMode('visual')}>Visual</button>
+                  <button type="button" role="tab" aria-selected={signatureMode === 'html'} className={signatureMode === 'html' ? 'on' : ''} onClick={() => setSignatureMode('html')}>HTML</button>
+                </div>
               </div>
+              {signatureMode === 'visual' ? (
+                <div className="signature-editor">
+                  <RichEditor
+                    key="signature-visual"
+                    initialHtml={form.signatureHtml || htmlFromText(form.signature)}
+                    onChange={({ html, text }) => setForm((f) => ({ ...f, signature: text, signatureHtml: text || html.includes('<img') ? html : '' }))}
+                    placeholder={'Best regards,\nJohn'}
+                    className="signature-body"
+                    toolbarClassName="signature-tools"
+                    richTools
+                  />
+                </div>
+              ) : (
+                <div className="signature-html-editor">
+                  <label>
+                    <span>HTML source</span>
+                    <textarea
+                      value={form.signatureHtml || htmlFromText(form.signature)}
+                      maxLength={400000}
+                      spellCheck="false"
+                      placeholder={'<table>\n  <tr><td>Best regards,</td></tr>\n</table>'}
+                      onChange={(e) => {
+                        const html = e.target.value;
+                        setForm((f) => ({ ...f, signature: textFromHtml(html), signatureHtml: html }));
+                      }}
+                    />
+                  </label>
+                  <div className="signature-html-preview">
+                    <span>Safe preview</span>
+                    <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(form.signatureHtml || htmlFromText(form.signature)) }} />
+                  </div>
+                  <p className="muted small">Scripts, forms, iframes and unsafe styles are removed. Images must use HTTPS or an embedded base64 image.</p>
+                </div>
+              )}
             </div>
             <section className="sec-card google-account-card">
               <div>

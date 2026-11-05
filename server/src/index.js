@@ -16,6 +16,7 @@ import assistantRoutes from './routes/assistant.js';
 import pushRoutes from './routes/push.js';
 import tasksRoutes from './routes/tasks.js';
 import notificationRoutes from './routes/notifications.js';
+import callRoutes from './routes/calls.js';
 import { startPush } from './push.js';
 import { attachLive } from './live.js';
 import adminRoutes from './routes/admin.js';
@@ -136,6 +137,7 @@ app.use('/api/assistant', assistantRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/calls', callRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

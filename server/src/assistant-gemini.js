@@ -33,7 +33,13 @@ const declarations = (tools) => [{
   })),
 }];
 
-export const geminiUserMessage = (text) => ({ role: 'user', parts: [{ text }] });
+export const geminiUserMessage = (text, image) => ({
+  role: 'user',
+  parts: [
+    { text },
+    ...(image ? [{ inlineData: { mimeType: image.mediaType, data: image.data } }] : []),
+  ],
+});
 
 /** Tool results, answered in one turn: [{ use: { id, name }, content, isError }]. */
 export const geminiToolResults = (results) => ({
@@ -59,7 +65,7 @@ function failure(status, body) {
  * One model call, streamed. `onText(delta)` gets text as it arrives. Returns { message (for the
  * history, as Gemini sent it), uses: [{ id, name, input }], stop, usage }.
  */
-export async function callGemini({ system, history, tools, onText, signal: cancel }) {
+export async function callGemini({ system, history, tools, onText, signal: cancel, fast = false }) {
   const { geminiKey, geminiModel, geminiUrl, geminiThinking } = settings();
   const started = Date.now();
   // Never wait forever: a call that takes longer than this ends with a message.
@@ -80,13 +86,13 @@ export async function callGemini({ system, history, tools, onText, signal: cance
         systemInstruction: { parts: [{ text: system }] },
         contents: history,
         ...(tools.length && { tools: declarations(tools), toolConfig: { functionCallingConfig: { mode: 'AUTO' } } }),
-        generationConfig: { maxOutputTokens: 8192, ...(thinking && { thinkingConfig: { thinkingLevel: thinking } }) },
+        generationConfig: { maxOutputTokens: fast ? 2048 : 8192, ...(thinking && { thinkingConfig: { thinkingLevel: thinking } }) },
       }),
       signal,
     });
   let res;
   try {
-    const thinking = geminiThinking !== 'off' && !noThinkingLevel ? geminiThinking : null;
+    const thinking = geminiThinking !== 'off' && !noThinkingLevel ? (fast ? 'minimal' : geminiThinking) : null;
     res = await send(thinking);
     // A model that doesn't take a thinking level: ask again without it, and remember.
     if (thinking && res.status === 400) {
@@ -102,7 +108,7 @@ export async function callGemini({ system, history, tools, onText, signal: cance
       if (!BUSY.has(res.status) || cancel?.aborted || timeout.aborted) break;
       console.info(`[assistant] gemini ${geminiModel} busy (${res.status}), asking again in ${wait / 1000} s`);
       await new Promise((r) => setTimeout(r, wait));
-      res = await send(geminiThinking !== 'off' && !noThinkingLevel ? geminiThinking : null);
+      res = await send(geminiThinking !== 'off' && !noThinkingLevel ? (fast ? 'minimal' : geminiThinking) : null);
     }
   } catch (err) {
     if (cancel?.aborted) throw err;

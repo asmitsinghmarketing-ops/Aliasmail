@@ -77,3 +77,16 @@ test('a group note notifies every other member, titled with the group', async ()
   // Mary turned notes off on her phone earlier; John sent it.
   assert.deepEqual(sent.map((s) => [s.endpoint, s.title, s.body, s.url]), [['https://push.example/3', 'Sales', 'John: Price approved', '/?notes=group%3Ag1']]);
 });
+
+test('task and call notification preferences are delivered independently', async () => {
+  push.subscribe('sara@example.com', device(4));
+  sent.length = 0;
+  assert.equal(await push.notify('sara@example.com', 'tasks', { kind: 'task', title: 'Task assigned', body: 'Review proposal' }), 1);
+  assert.equal(await push.notify('sara@example.com', 'calls', { kind: 'call', title: 'Incoming call', body: 'John is calling' }), 1);
+  assert.deepEqual(sent.map((item) => item.kind), ['task', 'call']);
+
+  push.updateDevice('sara@example.com', 'https://push.example/4', { tasks: false, calls: false });
+  sent.length = 0;
+  assert.equal(await push.notify('sara@example.com', 'tasks', { title: 'Task' }), 0);
+  assert.equal(await push.notify('sara@example.com', 'calls', { title: 'Call' }), 0);
+});

@@ -17,6 +17,7 @@ let server;
 let gemini;
 let dir;
 const requests = [];
+const plans = [];
 let busyOnce = true; // the first request gets Google's "model is overloaded"
 let busyAnswers = 0;
 
@@ -40,6 +41,7 @@ test.before(async () => {
       }
       const parsed = JSON.parse(body);
       if (parsed.systemInstruction?.parts?.[0]?.text?.includes('You route requests')) {
+        plans.push(parsed);
         return sse(res, [{ candidates: [{ content: { role: 'model', parts: [{ text: '{"intent":"other"}' }] }, finishReason: 'STOP' }], usageMetadata: usage }]);
       }
       requests.push({ url: req.url, headers: req.headers, body: parsed });
@@ -120,6 +122,8 @@ test('with only a Gemini key, the Assistant uses Gemini: tools, cards and stream
   assert.equal(first.body.tools[0].functionDeclarations.find((f) => f.name === 'list_team').parameters, undefined);
   assert.match(first.body.systemInstruction.parts[0].text, /Nextspace Assistant/);
   assert.deepEqual(first.body.generationConfig.thinkingConfig, { thinkingLevel: 'low' });
+  assert.equal(plans[0].generationConfig.maxOutputTokens, 2048);
+  assert.deepEqual(plans[0].generationConfig.thinkingConfig, { thinkingLevel: 'minimal' });
 
   // The model's turn goes back unchanged (thought signature included), then the function result.
   const second = requests[1].body.contents;

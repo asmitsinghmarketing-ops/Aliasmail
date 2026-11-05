@@ -15,7 +15,7 @@ router.post('/status', (req, res) => {
   const device = req.body?.endpoint ? deviceFor(me, String(req.body.endpoint)) : null;
   res.json({
     publicKey: publicKey(),
-    device: device ? { mail: device.mail, notes: device.notes } : null,
+    device: device ? { mail: device.mail, notes: device.notes, tasks: device.tasks, calls: device.calls } : null,
     devices: devicesOf(me).length,
   });
 });

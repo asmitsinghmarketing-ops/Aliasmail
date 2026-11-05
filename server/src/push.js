@@ -44,7 +44,7 @@ export const publicKey = () => keys().publicKey;
 
 const contact = () => (config.appUrl ? config.appUrl : `mailto:${config.mailbox || 'admin@localhost'}`);
 
-const view = (s) => ({ id: s.id, device: s.device, createdAt: s.createdAt, mail: s.mail, notes: s.notes });
+const view = (s) => ({ id: s.id, device: s.device, createdAt: s.createdAt, mail: s.mail, notes: s.notes, tasks: s.tasks, calls: s.calls });
 
 /** This browser allows notifications: { subscription: { endpoint, keys: { p256dh, auth } }, device }. */
 export function subscribe(person, input = {}) {
@@ -70,6 +70,8 @@ export function subscribe(person, input = {}) {
     createdAt: new Date().toISOString(),
     mail: input.mail !== false,
     notes: input.notes !== false,
+    tasks: input.tasks !== false,
+    calls: input.calls !== false,
   };
   p.subscriptions.push(entry);
   const mine = p.subscriptions.filter((s) => s.person === person);
@@ -90,6 +92,8 @@ export function updateDevice(person, endpoint, prefs = {}) {
   if (!s) throw new HttpError(404, 'This device doesn’t get notifications');
   if ('mail' in prefs) s.mail = Boolean(prefs.mail);
   if ('notes' in prefs) s.notes = Boolean(prefs.notes);
+  if ('tasks' in prefs) s.tasks = Boolean(prefs.tasks);
+  if ('calls' in prefs) s.calls = Boolean(prefs.calls);
   save();
   return view(s);
 }
@@ -107,7 +111,7 @@ export async function notify(person, kind, payload) {
     try {
       await send({ endpoint: s.endpoint, keys: s.keys }, JSON.stringify(payload), {
         vapidDetails: { subject: contact(), publicKey: pub, privateKey },
-        TTL: kind === 'mail' ? 6 * 3600 : 3600,
+        TTL: kind === 'mail' ? 6 * 3600 : kind === 'calls' ? 90 : 3600,
         urgency: 'high',
         topic: payload.tag?.replace(/[^\w-]/g, '').slice(0, 32) || undefined,
       });

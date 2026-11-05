@@ -103,9 +103,9 @@ function resolvePerson(me, who) {
 export async function tryFastPath(ctx) {
   const { call, record, me, name, when, userText, items, step, signal } = ctx;
   let spent = 0;
-  const ask = async (system, prompt, onText = () => {}) => {
+  const ask = async (system, prompt, onText = () => {}, fast = false) => {
     let text = '';
-    const response = await call({ system, history: [ctx.userMessage(prompt)], tools: [], onText: (t) => { text += t; onText(t); }, onReset: () => { text = ''; }, signal });
+    const response = await call({ system, history: [ctx.userMessage(prompt)], tools: [], onText: (t) => { text += t; onText(t); }, onReset: () => { text = ''; }, signal, fast });
     spent += record(response.usage);
     if (response.stop === 'refusal') throw Object.assign(new Error('refused'), { refused: true });
     return text.trim();
@@ -115,7 +115,7 @@ export async function tryFastPath(ctx) {
   step('Understanding your request');
   const team = teammates().filter((p) => p.address !== me).map((p) => `${p.name || p.address} <${p.address}>`).join(', ') || 'nobody yet';
   const history = transcript(items);
-  const plan = parsePlan(await ask(PLANNER, `The person: ${name || me} <${me}>. Their local time: ${when}. Their team: ${team}. Google Meet is ${meetEnabled() ? 'available' : 'not set up'}.\n\n${history ? `Conversation so far:\n${history}\n\n` : ''}Latest message:\n${userText}`));
+  const plan = parsePlan(await ask(PLANNER, `The person: ${name || me} <${me}>. Their local time: ${when}. Their team: ${team}. Google Meet is ${meetEnabled() ? 'available' : 'not set up'}.\n\n${history ? `Conversation so far:\n${history}\n\n` : ''}Latest message:\n${userText}`, () => {}, true));
   if (!plan || plan.intent === 'other') return { handled: false, spent };
 
   // 2. Do it.
@@ -205,4 +205,3 @@ export async function tryFastPath(ctx) {
 
   return { handled: false, spent };
 }
-

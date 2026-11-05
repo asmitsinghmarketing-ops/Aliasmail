@@ -7,7 +7,9 @@ import { ask as confirmDialog } from './Dialog.jsx';
 import { formatDate } from '../format.js';
 import Icon from './Icon.jsx';
 
-const POLL_MS = 700; // how often the answer being written is read
+const POLL_MS = 300; // keep progress feeling live without holding a proxy connection open
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const ACCEPTED_IMAGES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 const SUGGESTIONS = [
   { text: 'Summarise my unread mail', icon: 'inbox' },
@@ -25,6 +27,46 @@ function localNow() {
   const pad = (n) => String(Math.floor(Math.abs(n))).padStart(2, '0');
   const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}${offset >= 0 ? '+' : '-'}${pad(offset / 60)}:${pad(offset % 60)}`;
   return `${pretty} (${iso})`;
+}
+
+const readDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(new Error('Couldn’t read that image.'));
+  reader.readAsDataURL(file);
+});
+
+const loadImage = (url) => new Promise((resolve, reject) => {
+  const img = new Image();
+  img.onload = () => resolve(img);
+  img.onerror = () => reject(new Error('That image couldn’t be opened.'));
+  img.src = url;
+});
+
+async function prepareImage(file) {
+  if (!ACCEPTED_IMAGES.has(file.type)) throw new Error('Choose a JPG, PNG or WebP image.');
+  if (file.size > 12 * 1024 * 1024) throw new Error('Choose an image smaller than 12 MB.');
+  const original = await readDataUrl(file);
+  const img = await loadImage(original);
+  const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const context = canvas.getContext('2d');
+  context.drawImage(img, 0, 0, canvas.width, canvas.height);
+  let mediaType = file.type;
+  let preview = canvas.toDataURL(mediaType, 0.86);
+  let data = preview.split(',')[1] || '';
+  if (Math.ceil(data.length * 0.75) > MAX_IMAGE_BYTES) {
+    mediaType = 'image/jpeg';
+    context.globalCompositeOperation = 'destination-over';
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    preview = canvas.toDataURL(mediaType, 0.76);
+    data = preview.split(',')[1] || '';
+  }
+  if (!data || Math.ceil(data.length * 0.75) > MAX_IMAGE_BYTES) throw new Error('The image is still larger than 4 MB after resizing. Choose a smaller image.');
+  return { name: file.name.slice(0, 160), mediaType, data, preview };
 }
 
 /* ----- a small, safe Markdown subset: paragraphs, bullet and numbered lists, **bold**, `code` ----- */
@@ -192,12 +234,15 @@ export default function Assistant({ status, onClose, actions }) {
   const [chatId, setChatId] = useState(null);
   const [items, setItems] = useState([]);
   const [input, setInput] = useState('');
+  const [image, setImage] = useState(null);
+  const [imageBusy, setImageBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [spent, setSpent] = useState(status?.spentUsd || 0);
   const [showChats, setShowChats] = useState(false);
   const bottom = useRef(null);
   const box = useRef(null);
+  const imageInput = useRef(null);
   const enabled = Boolean(status?.enabled);
 
   const loadChats = () => api('/assistant/chats').then(setChats).catch(() => {});
@@ -234,6 +279,7 @@ export default function Assistant({ status, onClose, actions }) {
     setShowChats(false);
     setChatId(null);
     setItems([]);
+    setImage(null);
     setError('');
     setTimeout(() => box.current?.focus(), 0);
   }
@@ -270,8 +316,6 @@ export default function Assistant({ status, onClose, actions }) {
     setBusy(true);
     try {
       for (let errors = 0; run === polling.current; ) {
-        await new Promise((r) => setTimeout(r, POLL_MS));
-        if (run !== polling.current) return;
         let chat;
         try {
           chat = await api(`/assistant/chats/${id}`);
@@ -284,6 +328,7 @@ export default function Assistant({ status, onClose, actions }) {
         setSpent(chat.spentUsd ?? 0);
         setItems(chat.running ? chat.items.map((item, i) => (i === chat.items.length - 1 && item.role === 'assistant' ? { ...item, live: true } : item)) : chat.items);
         if (!chat.running) break;
+        await new Promise((r) => setTimeout(r, POLL_MS));
       }
     } catch (err) {
       setError(err.message);
@@ -302,24 +347,36 @@ export default function Assistant({ status, onClose, actions }) {
 
   async function ask(text) {
     const message = text.trim();
-    if (!message || busy || !enabled) return;
+    const attached = image;
+    if ((!message && !attached) || busy || imageBusy || !enabled) return;
     setError('');
     setInput('');
+    setImage(null);
     let id = chatId;
     try {
       if (!id) {
         id = (await api('/assistant/chats', { method: 'POST' })).id;
         setChatId(id);
       }
-      setItems((list) => [...list, { role: 'user', text: message }, { role: 'assistant', parts: [], live: true }]);
+      setItems((list) => [...list, {
+        role: 'user',
+        text: message,
+        ...(attached && { image: { name: attached.name, mediaType: attached.mediaType, preview: attached.preview } }),
+      }, { role: 'assistant', parts: [], live: true }]);
       setBusy(true);
       await api(`/assistant/chats/${id}/messages`, {
         method: 'POST',
-        body: { message, now: localNow(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        body: {
+          message,
+          ...(attached && { image: { name: attached.name, mediaType: attached.mediaType, data: attached.data } }),
+          now: localNow(),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
       });
       follow(id);
     } catch (err) {
       setError(err.message);
+      if (attached) setImage(attached);
       setItems((list) => (list.at(-1)?.role === 'assistant' && !(list.at(-1).parts || []).length ? list.slice(0, -1) : list));
       setBusy(false);
     }
@@ -425,7 +482,17 @@ export default function Assistant({ status, onClose, actions }) {
               )}
               {items.map((item, i) =>
                 item.role === 'user' ? (
-                  <div key={i} className="ai-user"><div>{item.text}</div></div>
+                  <div key={i} className="ai-user">
+                    <div>
+                      {item.image && (
+                        <div className="ai-user-image">
+                          {item.image.preview ? <img src={item.image.preview} alt={item.image.name} /> : <Icon name="image" size={18} />}
+                          <span>{item.image.name}</span>
+                        </div>
+                      )}
+                      {item.text && <div>{item.text}</div>}
+                    </div>
+                  </div>
                 ) : (
                   <Reply key={i} item={item} live={item.live} />
                 ),
@@ -438,6 +505,41 @@ export default function Assistant({ status, onClose, actions }) {
 
         <form className="ai-compose" onSubmit={(e) => { e.preventDefault(); ask(input); }}>
           <div className="ai-box">
+            {image && (
+              <div className="ai-image-preview">
+                <img src={image.preview} alt="Image to send" />
+                <span title={image.name}>{image.name}</span>
+                <button type="button" className="icon-btn" aria-label="Remove image" title="Remove image" onClick={() => setImage(null)}>
+                  <Icon name="close" size={18} />
+                </button>
+              </div>
+            )}
+            <input
+              ref={imageInput}
+              className="sr-only"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (!file) return;
+                setError('');
+                setImageBusy(true);
+                try { setImage(await prepareImage(file)); }
+                catch (err) { setError(err.message); }
+                finally { setImageBusy(false); }
+              }}
+            />
+            <button
+              type="button"
+              className="icon-btn ai-attach"
+              aria-label="Attach image"
+              title="Attach image"
+              disabled={!enabled || busy || imageBusy}
+              onClick={() => imageInput.current?.click()}
+            >
+              <Icon name="image" size={21} />
+            </button>
             <label className="sr-only" htmlFor="ai-input">Message the Assistant</label>
             <textarea
               id="ai-input"
@@ -464,7 +566,7 @@ export default function Assistant({ status, onClose, actions }) {
                 <span className="ai-stop-square" />
               </button>
             ) : (
-              <button className="ai-send" aria-label="Send" disabled={!enabled || !input.trim()}>
+              <button className="ai-send" aria-label="Send" disabled={!enabled || imageBusy || (!input.trim() && !image)}>
                 <Icon name="send" size={20} />
               </button>
             )}
