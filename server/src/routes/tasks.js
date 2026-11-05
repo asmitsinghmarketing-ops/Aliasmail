@@ -83,6 +83,32 @@ function activity(actor, action, item, detail = '') {
   if (list.length > 500) list.splice(0, list.length - 500);
 }
 
+function makeTask(input, actor, now = new Date().toISOString()) {
+  const parent = project(clean(input?.projectId, 80, 'Project', true));
+  const status = STATUSES.has(input?.status) ? input.status : 'todo';
+  const priority = PRIORITIES.has(input?.priority) ? input.priority : 'medium';
+  return {
+    id: crypto.randomUUID(),
+    projectId: parent.id,
+    title: clean(input?.title, 200, 'Task title', true),
+    description: longText(input?.description, 10000),
+    status,
+    priority,
+    assignee: assignee(input?.assignee),
+    dueDate: dueDate(input?.dueDate),
+    createdBy: actor,
+    createdAt: now,
+    updatedAt: now,
+    completedAt: status === 'done' ? now : null,
+  };
+}
+
+function recordCreated(created) {
+  store().items.push(created);
+  activity(created.createdBy, 'task-created', created, created.title);
+  notifyAssignment(created, created.createdBy);
+}
+
 router.get('/', (req, res) => {
   const data = store();
   res.json({
@@ -145,29 +171,30 @@ router.delete('/projects/:id', (req, res) => {
 });
 
 router.post('/items', (req, res) => {
-  const parent = project(clean(req.body?.projectId, 80, 'Project', true));
-  const now = new Date().toISOString();
-  const status = STATUSES.has(req.body?.status) ? req.body.status : 'todo';
-  const priority = PRIORITIES.has(req.body?.priority) ? req.body.priority : 'medium';
-  const created = {
-    id: crypto.randomUUID(),
-    projectId: parent.id,
-    title: clean(req.body?.title, 200, 'Task title', true),
-    description: longText(req.body?.description, 10000),
-    status,
-    priority,
-    assignee: assignee(req.body?.assignee),
-    dueDate: dueDate(req.body?.dueDate),
-    createdBy: personOf(req.user),
-    createdAt: now,
-    updatedAt: now,
-    completedAt: status === 'done' ? now : null,
-  };
-  store().items.push(created);
-  activity(created.createdBy, 'task-created', created, created.title);
-  notifyAssignment(created, created.createdBy);
+  const created = makeTask(req.body, personOf(req.user));
+  recordCreated(created);
   save();
   res.status(201).json(created);
+});
+
+// Spreadsheet rows are validated as one batch before anything is written, so a bad row never
+// leaves the workspace half-imported. The browser resolves project/person names to IDs/emails.
+router.post('/items/import', (req, res) => {
+  const rows = req.body?.tasks;
+  if (!Array.isArray(rows) || !rows.length) throw new HttpError(400, 'Choose a spreadsheet containing at least one task');
+  if (rows.length > 500) throw new HttpError(400, 'A spreadsheet can import at most 500 tasks at once');
+  const actor = personOf(req.user);
+  const now = new Date().toISOString();
+  const created = rows.map((row, index) => {
+    try {
+      return makeTask(row, actor, now);
+    } catch (err) {
+      throw new HttpError(err.status || 400, `Row ${index + 2}: ${err.message || 'Invalid task'}`);
+    }
+  });
+  created.forEach(recordCreated);
+  save();
+  res.status(201).json({ imported: created.length, tasks: created });
 });
 
 router.patch('/items/:id', (req, res) => {

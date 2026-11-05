@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
 import { ask } from './Dialog.jsx';
 import NotificationCenter from './NotificationCenter.jsx';
+import { downloadTaskTemplate, readTaskSpreadsheet } from '../taskSpreadsheet.js';
 
 const COLUMNS = [
   { id: 'backlog', label: 'Backlog', color: '#868e96' },
@@ -78,16 +79,44 @@ function TaskEditor({ draft, projects, team, saving, onChange, onSave, onDelete,
   );
 }
 
+function TaskImport({ preview, projectsById, peopleByAddress, importing, error, onImport, onChoose, onTemplate, onClose }) {
+  return (
+    <div className="task-drawer-backdrop task-import-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="task-import" role="dialog" aria-label="Import tasks from spreadsheet">
+        <header>
+          <div><span className="muted small">Spreadsheet import</span><h2>{preview.tasks.length} task{preview.tasks.length === 1 ? '' : 's'} ready</h2></div>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
+        </header>
+        <div className="task-import-file"><Icon name="upload" size={22} /><div><strong>{preview.fileName}</strong><span>Excel, CSV and TSV are supported</span></div><button type="button" className="btn btn-outline" onClick={onChoose}>Choose another</button></div>
+        {error && <div className="task-import-error" role="alert">{error}</div>}
+        <div className="task-import-preview">
+          <table><thead><tr><th>Task</th><th>Project</th><th>Assignee</th><th>Priority</th><th>Status</th><th>Due</th></tr></thead><tbody>
+            {preview.tasks.slice(0, 10).map((task, index) => <tr key={`${task.title}-${index}`}><td>{task.title}</td><td>{projectsById[task.projectId]?.name}</td><td>{peopleByAddress[task.assignee]?.name || task.assignee || 'Unassigned'}</td><td><span className={`task-priority ${task.priority}`}>{task.priority}</span></td><td>{COLUMNS.find((column) => column.id === task.status)?.label}</td><td>{task.dueDate || '—'}</td></tr>)}
+          </tbody></table>
+          {preview.tasks.length > 10 && <p>And {preview.tasks.length - 10} more tasks…</p>}
+        </div>
+        <div className="task-import-help"><strong>Expected columns</strong><span>Task, Project, Assignee, Priority, Status, Due date, Description. Project and assignee names or emails are matched automatically.</span><button type="button" className="link" onClick={onTemplate}>Download CSV template</button></div>
+        <footer><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={importing} onClick={onImport}><Icon name="upload" size={17} /> {importing ? 'Importing…' : `Import ${preview.tasks.length} tasks`}</button></footer>
+      </section>
+    </div>
+  );
+}
+
 export default function Tasks({ user, onClose }) {
   const [data, setData] = useState({ me: '', team: [], projects: [], tasks: [], activity: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [scope, setScope] = useState('all');
   const [view, setView] = useState('board');
   const [query, setQuery] = useState('');
   const [priority, setPriority] = useState('all');
   const [editor, setEditor] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState('');
+  const spreadsheetPicker = useRef(null);
 
   const load = () => api('/tasks').then(setData).catch((err) => setError(err.message)).finally(() => setLoading(false));
   useEffect(() => {
@@ -179,6 +208,34 @@ export default function Tasks({ user, onClose }) {
     } catch (err) { setError(err.message); }
   };
 
+  const selectedProject = () => scope.startsWith('project:') && projectsById[scope.slice(8)] ? projectsById[scope.slice(8)] : data.projects[0];
+  const chooseSpreadsheet = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setError('');
+    setImportError('');
+    try {
+      const tasks = await readTaskSpreadsheet(file, { projects: data.projects, team: data.team, defaultProjectId: selectedProject()?.id });
+      setImportPreview({ fileName: file.name, tasks });
+    } catch (err) {
+      if (importPreview) setImportError(err.message);
+      else setError(err.message);
+    }
+  };
+
+  const importTasks = async () => {
+    setImporting(true); setImportError('');
+    try {
+      const result = await api('/tasks/items/import', { method: 'POST', body: { tasks: importPreview.tasks } });
+      setData((current) => ({ ...current, tasks: [...result.tasks, ...current.tasks] }));
+      setImportPreview(null);
+      setScope('all'); setPriority('all'); setQuery('');
+      setNotice(`${result.imported} task${result.imported === 1 ? '' : 's'} imported successfully.`);
+    } catch (err) { setImportError(err.message); }
+    finally { setImporting(false); }
+  };
+
   return (
     <div className="tasks-app">
       <header className="tasks-topbar">
@@ -194,6 +251,8 @@ export default function Tasks({ user, onClose }) {
           <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')} title="Board view"><Icon name="dashboard" size={18} /></button>
           <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')} title="List view"><Icon name="bulletList" size={18} /></button>
         </div>
+        <input ref={spreadsheetPicker} className="task-spreadsheet-input" type="file" accept=".xlsx,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/tab-separated-values" onChange={chooseSpreadsheet} />
+        <button type="button" className="btn btn-outline task-import-btn" onClick={() => data.projects.length ? spreadsheetPicker.current?.click() : createProject()}><Icon name="upload" size={18} /><span>Import</span></button>
         <button type="button" className="btn btn-primary" onClick={() => openNew()}><Icon name="add" size={18} /><span>New task</span></button>
         <button type="button" className="icon-btn" onClick={onClose} title="Back to mailbox"><Icon name="close" /></button>
       </header>
@@ -227,6 +286,7 @@ export default function Tasks({ user, onClose }) {
             <label className="task-filter">Priority<select value={priority} onChange={(event) => setPriority(event.target.value)}><option value="all">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
           </div>
           {error && <div className="alert"><span>{error}</span><button className="link" onClick={() => setError('')}>Dismiss</button></div>}
+          {notice && <div className="alert ok"><span>{notice}</span><button className="link" onClick={() => setNotice('')}>Dismiss</button></div>}
           {loading ? <div className="empty">Loading tasks…</div> : !data.projects.length ? (
             <div className="tasks-empty"><span><Icon name="checkCircle" size={36} /></span><h2>Plan your team’s work</h2><p>Create a project, add tasks, choose owners and track work from start to finish.</p><button className="btn btn-primary" onClick={createProject}><Icon name="add" size={18} /> Create project</button></div>
           ) : view === 'board' ? (
@@ -262,6 +322,7 @@ export default function Tasks({ user, onClose }) {
         </main>
       </div>
       {editor && <TaskEditor draft={editor} projects={data.projects} team={data.team} saving={saving} onChange={(patch) => setEditor((current) => ({ ...current, ...patch }))} onSave={saveTask} onDelete={deleteTask} onClose={() => setEditor(null)} />}
+      {importPreview && <TaskImport preview={importPreview} projectsById={projectsById} peopleByAddress={peopleByAddress} importing={importing} error={importError} onImport={importTasks} onChoose={() => spreadsheetPicker.current?.click()} onTemplate={() => downloadTaskTemplate(selectedProject()?.name, data.me)} onClose={() => { setImportPreview(null); setImportError(''); }} />}
     </div>
   );
 }

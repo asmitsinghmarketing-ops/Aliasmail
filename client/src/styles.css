@@ -2577,6 +2577,7 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .task-filter { width: 140px; margin-left: auto; color: var(--muted); }
 .task-filter select { padding: 7px 10px; }
 .tasks-main > .alert { max-width: 1500px; margin: 0 auto 16px; display: flex; align-items: center; }
+.tasks-main > .alert > span { white-space: pre-line; }
 .tasks-main > .alert .link { margin-left: auto; }
 .task-board { min-width: 940px; max-width: 1500px; min-height: calc(100% - 80px); margin: auto; display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 14px; align-items: start; }
 .task-column { min-width: 0; border-radius: 13px; background: #eef1f5; border: 1px solid #e5e9ef; }
@@ -2631,6 +2632,29 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .task-drawer input[type='date'] { width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
 .task-form-actions { display: flex; align-items: center; gap: 6px; padding-top: 4px; }
 .task-delete { color: var(--red); }
+.task-spreadsheet-input { display: none; }
+.task-import-backdrop { align-items: center; justify-content: center; padding: 24px; }
+.task-import {
+  width: min(980px, 100%); max-height: min(760px, calc(100vh - 48px)); overflow: auto;
+  border-radius: 18px; background: #fff; box-shadow: 0 24px 70px rgb(15 23 42 / 28%); animation: rise-in .18s ease-out;
+}
+.task-import > header { min-height: 78px; display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.task-import > header > div { min-width: 0; flex: 1; }
+.task-import > header h2 { margin-top: 3px; font-size: 21px; }
+.task-import-file { display: flex; align-items: center; gap: 12px; margin: 18px 20px; padding: 13px 14px; border: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border)); border-radius: 12px; background: color-mix(in srgb, var(--brand) 4%, white); color: var(--brand); }
+.task-import-file > div { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.task-import-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.task-import-file span { color: var(--muted); font-size: 11px; }
+.task-import-error { margin: -6px 20px 16px; padding: 10px 12px; border-radius: 9px; background: #fff0ef; color: var(--red); white-space: pre-line; }
+.task-import-preview { margin: 0 20px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+.task-import-preview table { width: 100%; min-width: 760px; border-collapse: collapse; }
+.task-import-preview th { padding: 9px 11px; background: #f7f8fa; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 10px; text-align: left; text-transform: uppercase; letter-spacing: .05em; }
+.task-import-preview td { max-width: 250px; padding: 10px 11px; border-bottom: 1px solid #edf0f3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-import-preview tr:last-child td { border-bottom: 0; }
+.task-import-preview > p { margin: 0; padding: 9px 11px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
+.task-import-help { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 10px 14px; margin: 16px 20px; padding: 12px 14px; border-radius: 10px; background: #f7f8fa; }
+.task-import-help > span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.task-import > footer { display: flex; justify-content: flex-end; gap: 8px; padding: 15px 20px; border-top: 1px solid var(--border); }
 
 /* ---------- in-app notifications ---------- */
 .notification-center { position: relative; flex: none; }
@@ -2688,5 +2712,13 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
   .task-board { min-width: 900px; }
   .task-form-grid { grid-template-columns: 1fr; }
   .task-drawer { padding: 18px 16px; }
+  .task-import-backdrop { padding: 10px; }
+  .task-import { max-height: calc(100vh - 20px); border-radius: 14px; }
+  .task-import-file { align-items: flex-start; flex-wrap: wrap; margin: 14px; }
+  .task-import-file > div { width: calc(100% - 40px); }
+  .task-import-file .btn { margin-left: 34px; }
+  .task-import-preview { margin: 0 14px; }
+  .task-import-error { margin: 0 14px 14px; }
+  .task-import-help { grid-template-columns: 1fr; margin: 14px; }
   .notification-menu { position: fixed; top: 66px; right: 8px; left: 8px; width: auto; }
 }
