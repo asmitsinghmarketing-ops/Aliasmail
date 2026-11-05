@@ -4,6 +4,7 @@ import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
 import { ask } from './Dialog.jsx';
+import NotificationCenter from './NotificationCenter.jsx';
 
 const COLUMNS = [
   { id: 'backlog', label: 'Backlog', color: '#868e96' },
@@ -185,6 +186,10 @@ export default function Tasks({ user, onClose }) {
         <span className="tasks-divider" />
         <strong>Tasks</strong>
         <label className="tasks-search"><Icon name="search" size={19} /><input aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+        <NotificationCenter onNavigate={(notification) => {
+          const task = data.tasks.find((item) => item.id === notification.entity?.id);
+          if (task) { setScope(`project:${task.projectId}`); setEditor(task); }
+        }} />
         <div className="tasks-view-toggle" aria-label="View">
           <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')} title="Board view"><Icon name="dashboard" size={18} /></button>
           <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')} title="List view"><Icon name="bulletList" size={18} /></button>

@@ -64,6 +64,25 @@ svg { flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .link { border: 0; background: none; color: var(--brand); font-weight: 600; }
 
+/* Styled visual counterpart for interactive controls whose accessible name is aria-label. */
+.aria-tooltip {
+  position: fixed; z-index: 10000; visibility: hidden; pointer-events: none;
+  max-width: min(280px, calc(100vw - 16px)); padding: 7px 10px;
+  border: 1px solid rgb(255 255 255 / 12%); border-radius: 7px;
+  background: #202936; color: #fff; box-shadow: 0 7px 22px rgb(16 24 40 / 24%);
+  font-size: 12px; font-weight: 600; line-height: 1.35; text-align: center;
+  white-space: normal; overflow-wrap: anywhere; opacity: 0;
+}
+.aria-tooltip.ready { visibility: visible; opacity: 1; animation: tooltip-in 120ms ease-out; }
+.aria-tooltip::after {
+  content: ''; position: absolute; left: var(--tooltip-arrow, 50%); margin-left: -5px;
+  border: 5px solid transparent;
+}
+.aria-tooltip[data-placement='top']::after { top: 100%; border-top-color: #202936; }
+.aria-tooltip[data-placement='bottom']::after { bottom: 100%; border-bottom-color: #202936; }
+@keyframes tooltip-in { from { opacity: 0; transform: translateY(2px); } }
+@media (prefers-reduced-motion: reduce) { .aria-tooltip.ready { animation: none; } }
+
 .alert { padding: 10px 12px; border-radius: 8px; background: #fff0ef; color: var(--red); margin: 8px 0; }
 .alert.ok { background: #ebfbee; color: var(--green); }
 .alert.m { margin: 12px 16px; }
@@ -2613,6 +2632,42 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .task-form-actions { display: flex; align-items: center; gap: 6px; padding-top: 4px; }
 .task-delete { color: var(--red); }
 
+/* ---------- in-app notifications ---------- */
+.notification-center { position: relative; flex: none; }
+.notification-bell.on { color: var(--brand); background: color-mix(in srgb, var(--brand) 9%, white); }
+.notification-badge {
+  position: absolute; top: 1px; right: -2px; min-width: 17px; height: 17px; display: grid; place-items: center;
+  padding: 0 4px; border: 2px solid var(--surface); border-radius: 99px; background: #d92d20; color: #fff; font-size: 9px; font-weight: 800;
+}
+.notification-menu {
+  position: absolute; top: calc(100% + 10px); right: 0; z-index: 110; width: min(390px, calc(100vw - 24px));
+  overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: #fff; box-shadow: 0 18px 50px rgb(15 23 42 / 20%);
+  animation: rise-in .15s ease-out;
+}
+.notification-menu > header { min-height: 64px; display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.notification-menu > header > div { display: flex; align-items: baseline; gap: 8px; }
+.notification-menu h2 { font-size: 18px; }
+.notification-menu > header span { color: var(--muted); font-size: 11px; }
+.notification-menu > header .link { margin-left: auto; padding: 6px 0; }
+.notification-list { max-height: min(520px, calc(100vh - 130px)); overflow-y: auto; }
+.notification-item {
+  position: relative; width: 100%; display: grid; grid-template-columns: 38px minmax(0, 1fr) 8px; gap: 10px; align-items: start;
+  padding: 13px 14px; border: 0; border-bottom: 1px solid #edf0f3; background: #fff; text-align: left;
+}
+.notification-item:hover { background: #f7f9fc; }
+.notification-item.unread { background: color-mix(in srgb, var(--brand) 5%, white); }
+.notification-kind { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, white); }
+.notification-kind.task-completed { color: var(--green); background: #ebfbee; }
+.notification-copy { min-width: 0; display: grid; gap: 3px; line-height: 1.35; }
+.notification-copy > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notification-copy > span { color: var(--muted); font-size: 12px; }
+.notification-copy time { color: var(--brand); font-size: 10px; font-weight: 650; }
+.notification-item > i { width: 7px; height: 7px; align-self: center; border-radius: 50%; background: var(--brand); }
+.notification-empty { min-height: 220px; display: grid; place-items: center; align-content: center; gap: 8px; padding: 24px; color: var(--muted); text-align: center; }
+.notification-empty svg { color: #98a2b3; }
+.notification-empty span { max-width: 250px; font-size: 12px; line-height: 1.45; }
+.notification-error { padding: 8px 14px; background: #fff0ef; color: var(--red); font-size: 12px; }
+
 @media (max-width: 800px) {
   .tasks-topbar { flex-wrap: wrap; padding: 8px 12px; gap: 8px; }
   .tasks-brand .wordmark, .tasks-divider, .tasks-topbar > strong { display: none; }
@@ -2633,4 +2688,5 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
   .task-board { min-width: 900px; }
   .task-form-grid { grid-template-columns: 1fr; }
   .task-drawer { padding: 18px 16px; }
+  .notification-menu { position: fixed; top: 66px; right: 8px; left: 8px; width: auto; }
 }

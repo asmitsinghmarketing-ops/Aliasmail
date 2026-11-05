@@ -91,6 +91,7 @@ function startEvents() {
   sse.addEventListener('mail', () => emit({ type: 'mail' }));
   sse.addEventListener('note', (event) => emit({ type: 'note', note: JSON.parse(event.data) }));
   sse.addEventListener('note-read', (event) => emit({ type: 'note-read', ...JSON.parse(event.data) }));
+  sse.addEventListener('notification', (event) => emit({ type: 'notification', notification: JSON.parse(event.data) }));
 }
 
 function stopEvents() {

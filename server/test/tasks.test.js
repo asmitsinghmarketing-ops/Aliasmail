@@ -64,12 +64,20 @@ test('team projects and tasks validate ownership, assignment and status changes'
   const task = await madeTask.json();
   assert.deepEqual([task.status, task.assignee, task.priority, task.description], ['todo', 'mary@example.com', 'high', 'Review\nthen publish']);
 
+  const assignedNotifications = await (await mary('/notifications')).json();
+  assert.deepEqual([assignedNotifications.unread, assignedNotifications.items.length, assignedNotifications.items[0].type, assignedNotifications.items[0].entity.id], [1, 1, 'task-assigned', task.id]);
+  assert.equal((await (await admin('/notifications')).json()).unread, 0);
+  assert.equal((await mary('/notifications/read', { method: 'POST', body: JSON.stringify({ ids: [assignedNotifications.items[0].id] }) })).status, 200);
+  assert.equal((await (await mary('/notifications')).json()).unread, 0);
+
   assert.equal((await john('/tasks/items', { method: 'POST', body: JSON.stringify({ projectId: project.id, title: 'Bad assignment', assignee: 'outside@example.net' }) })).status, 400);
   assert.equal((await john(`/tasks/items/${task.id}`, { method: 'PATCH', body: JSON.stringify({ dueDate: '2026-02-30' }) })).status, 400);
 
   const completed = await mary(`/tasks/items/${task.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'done' }) });
   assert.equal(completed.status, 200);
   assert.ok((await completed.json()).completedAt);
+  const completedNotifications = await (await john('/notifications')).json();
+  assert.deepEqual([completedNotifications.unread, completedNotifications.items[0].type, completedNotifications.items[0].entity.id], [1, 'task-completed', task.id]);
   const snapshot = await (await mary('/tasks')).json();
   assert.deepEqual([snapshot.projects.length, snapshot.tasks.length, snapshot.tasks[0].status], [1, 1, 'done']);
 

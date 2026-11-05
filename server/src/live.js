@@ -5,7 +5,7 @@ import { WebSocketServer } from 'ws';
 import config from './config.js';
 import { currentSession, endSessions } from './sessions.js';
 import { findAlias, typeOf } from './aliases.js';
-import { mailEvents, noteEvents } from './mail-events.js';
+import { mailEvents, noteEvents, notificationEvents } from './mail-events.js';
 import { personOf, teammates } from './team.js';
 import { createNote, groups, markGroupRead, markNotesRead } from './instant-notes.js';
 import { describeError } from './errors.js';
@@ -99,6 +99,8 @@ export function attachLive(server) {
     // A group made, renamed, joined or left: its members' lists change.
     const onGroup = (to, payload) => to.includes(who) && send(ws, { type: 'group', ...payload });
     noteEvents.on('group', onGroup);
+    const onNotification = (to, notification) => to === who && send(ws, { type: 'notification', notification });
+    notificationEvents.on('notification', onNotification);
 
     // Heartbeat: a socket that stops answering pings is closed (the browser reconnects).
     let alive = true;
@@ -151,6 +153,7 @@ export function attachLive(server) {
       noteEvents.off('note', onNote);
       noteEvents.off('note-read', onNoteRead);
       noteEvents.off('group', onGroup);
+      notificationEvents.off('notification', onNotification);
       leave(ws, who);
     });
   });

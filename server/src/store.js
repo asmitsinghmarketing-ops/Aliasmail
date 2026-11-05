@@ -22,6 +22,7 @@ const empty = () => ({
   sending: { gateway: false, gatewayReplies: false }, // outside mail through GoDaddy's Node gateway (Admin → Speed)
   audit: [], // security activity log
   instantNotes: [], // private notes between teammates (routes/notes.js)
+  notifications: [], // persistent in-app notifications for assignments and other team activity
   tasks: { projects: [], items: [], activity: [] }, // shared team projects and tasks (routes/tasks.js)
   assistant: { chats: [], usage: {}, limits: { monthlyUsd: 50, perPersonUsd: 20 } }, // the Assistant (assistant.js)
   sync: { lastSyncAt: null, lastError: null },
@@ -30,6 +31,7 @@ const empty = () => ({
 let data = withMessagesAlias(empty());
 let timer = null;
 let writing = Promise.resolve();
+let version = 0;
 const written = {}; // key -> JSON last saved, so a database write only touches changed keys
 
 // `db().messages` is shorthand for the INBOX cache. Not enumerable, so it isn't saved twice.
@@ -55,8 +57,10 @@ export async function load() {
 }
 
 export const db = () => data;
+export const storeRevision = () => version;
 
 export function save() {
+  version++;
   clearTimeout(timer);
   timer = setTimeout(flush, 200);
 }

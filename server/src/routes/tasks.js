@@ -5,6 +5,7 @@ import { requireAuth } from '../auth.js';
 import { db, save } from '../store.js';
 import { HttpError } from '../errors.js';
 import { personOf, teammates } from '../team.js';
+import { createNotification } from '../notifications.js';
 
 const router = Router();
 router.use(requireAuth());
@@ -57,6 +58,23 @@ function assignee(value) {
   const address = String(value).trim().toLowerCase();
   if (!teammates().some((person) => person.address === address)) throw new HttpError(400, 'Assignee is not an active teammate');
   return address;
+}
+
+function nameOf(address) {
+  const person = teammates().find((member) => member.address === address);
+  return person?.name || address;
+}
+
+function notifyAssignment(item, actor) {
+  if (!item.assignee || item.assignee === actor) return;
+  createNotification({
+    to: item.assignee,
+    type: 'task-assigned',
+    title: 'Task assigned to you',
+    body: `${nameOf(actor)} assigned “${item.title}” to you.`,
+    entity: { kind: 'task', id: item.id, projectId: item.projectId },
+    actor,
+  });
 }
 
 function activity(actor, action, item, detail = '') {
@@ -147,6 +165,7 @@ router.post('/items', (req, res) => {
   };
   store().items.push(created);
   activity(created.createdBy, 'task-created', created, created.title);
+  notifyAssignment(created, created.createdBy);
   save();
   res.status(201).json(created);
 });
@@ -154,6 +173,8 @@ router.post('/items', (req, res) => {
 router.patch('/items/:id', (req, res) => {
   const found = task(req.params.id);
   const beforeStatus = found.status;
+  const beforeAssignee = found.assignee;
+  const actor = personOf(req.user);
   if (req.body?.projectId !== undefined) found.projectId = project(clean(req.body.projectId, 80, 'Project', true)).id;
   if (req.body?.title !== undefined) found.title = clean(req.body.title, 200, 'Task title', true);
   if (req.body?.description !== undefined) found.description = longText(req.body.description, 10000);
@@ -170,7 +191,18 @@ router.patch('/items/:id', (req, res) => {
   found.updatedAt = new Date().toISOString();
   if (found.status === 'done' && beforeStatus !== 'done') found.completedAt = found.updatedAt;
   if (found.status !== 'done') found.completedAt = null;
-  activity(personOf(req.user), beforeStatus !== found.status ? 'task-status' : 'task-updated', found, found.title);
+  activity(actor, beforeStatus !== found.status ? 'task-status' : 'task-updated', found, found.title);
+  if (found.assignee !== beforeAssignee) notifyAssignment(found, actor);
+  if (found.status === 'done' && beforeStatus !== 'done' && found.createdBy !== actor) {
+    createNotification({
+      to: found.createdBy,
+      type: 'task-completed',
+      title: 'Task completed',
+      body: `${nameOf(actor)} completed “${found.title}”.`,
+      entity: { kind: 'task', id: found.id, projectId: found.projectId },
+      actor,
+    });
+  }
   save();
   res.json(found);
 });

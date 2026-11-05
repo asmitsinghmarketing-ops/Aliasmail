@@ -6,6 +6,7 @@ import Admin from './components/Admin.jsx';
 import { DialogHost } from './components/Dialog.jsx';
 import UpdateNotice from './components/UpdateNotice.jsx';
 import Tasks from './components/Tasks.jsx';
+import AriaTooltip from './components/AriaTooltip.jsx';
 
 const OWNER_COLOR = '#e8590c';
 
@@ -15,6 +16,7 @@ export default function App() {
       <Screen />
       <DialogHost />
       <UpdateNotice />
+      <AriaTooltip />
     </>
   );
 }

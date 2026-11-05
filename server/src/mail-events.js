@@ -8,6 +8,10 @@ mailEvents.setMaxListeners(0);
 export const noteEvents = new EventEmitter();
 noteEvents.setMaxListeners(0);
 
+// In-app notifications: emitted as (recipient, notification) for open windows.
+export const notificationEvents = new EventEmitter();
+notificationEvents.setMaxListeners(0);
+
 let pending = null;
 /** Tell open mailboxes to refresh. Bursts (a bulk action, a sync batch) become one signal. */
 export function announceChange() {

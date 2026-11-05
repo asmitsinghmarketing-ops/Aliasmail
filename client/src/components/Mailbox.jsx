@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, cachedMailboxList, preloadMessage } from '../api.js';
+import { api, cachedMailboxList, prefetchMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import Compose from './Compose.jsx';
 import { escapeHtml, htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
@@ -21,6 +21,7 @@ import { subscribe } from '../live.js';
 import { meetingText } from '../meet.js';
 import Pager from './Pager.jsx';
 import Settings from './Settings.jsx';
+import NotificationCenter from './NotificationCenter.jsx';
 
 // Gmail's folders, in Gmail's order. `count` is the key in /mail/folders shown beside it;
 // `color` tints the folder's icon tile in the sidebar.
@@ -72,6 +73,10 @@ const PRELOAD_TOP = 8;
 const MAIL_FOLDERS = ['inbox', 'starred', 'snoozed', 'important', 'all'];
 // Views of received mail narrowed by inbox category (Primary, Promotions, …).
 const CATEGORIZED = ['inbox'];
+const listPath = (folder, page = 1, search = '', category = 'primary') => {
+  const params = new URLSearchParams({ folder, page, q: search, ...(CATEGORIZED.includes(folder) && !search && { category }) });
+  return `/mail/messages?${params}`;
+};
 // A sender's organisation, from their address (none for personal mail providers).
 const PERSONAL_DOMAINS = /^(gmail|googlemail|yahoo|outlook|hotmail|live|icloud|me|aol|proton|protonmail|rediffmail|zoho)\./i;
 function orgOf(person) {
@@ -464,8 +469,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const load = useCallback(async () => {
     const request = ++loadRequest.current;
     try {
-      const params = new URLSearchParams({ folder, page, q: search, ...(CATEGORIZED.includes(folder) && !search && { category }) });
-      const path = `/mail/messages?${params}`;
+      const path = listPath(folder, page, search, category);
       const cached = cachedMailboxList(path);
       const keepScrolled = (data) => (prev) => {
         if (!phone || page !== 1 || prev.items.length <= data.items.length || prev.view !== path) return { ...data, view: path };
@@ -496,7 +500,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   latestLoad.current = load;
 
   useEffect(() => {
-    setLoading(true);
+    setLoading(!cachedMailboxList(listPath(folder, page, search, category)));
     setSelected(new Set());
     setCursor(0);
     load();
@@ -521,6 +525,34 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       window.removeEventListener('online', wake);
     };
   }, [load]);
+
+  // Fill the lightweight list cache while the browser is idle. These requests deliberately
+  // skip message bodies on the server, so every folder becomes quick without creating a burst
+  // of expensive mailbox downloads. Data Saver users only load the folder they open.
+  useEffect(() => {
+    if (navigator.connection?.saveData) return undefined;
+    const paths = [
+      ...CATEGORY_TABS.map((tab) => listPath('inbox', 1, '', tab.id)),
+      ...FOLDERS.filter((item) => !item.onlyWhenUsed && item.id !== 'inbox').map((item) => listPath(item.id)),
+      ...labels.slice(0, 30).map((label) => listPath(`label:${label.id}`)),
+    ];
+    let stopped = false;
+    const warmLists = async () => {
+      for (const path of paths) {
+        if (stopped) return;
+        await prefetchMailboxList(path);
+      }
+    };
+    let idle;
+    let timer;
+    if ('requestIdleCallback' in window) idle = window.requestIdleCallback(warmLists, { timeout: 2500 });
+    else timer = window.setTimeout(warmLists, 750);
+    return () => {
+      stopped = true;
+      if (idle !== undefined) window.cancelIdleCallback(idle);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [labels, me]);
 
   // The live connection (live.js): mail changes and instant notes, the moment they happen.
   useEffect(() => {
@@ -737,8 +769,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     const view = list.view;
     setLoadingMore(true);
     try {
-      const params = new URLSearchParams({ folder, page: next, q: search, ...(CATEGORIZED.includes(folder) && !search && { category }) });
-      const data = await api(`/mail/messages?${params}`);
+      const data = await api(listPath(folder, next, search, category));
       setList((prev) => {
         if (prev.view !== view) return prev;
         const have = new Set(prev.items.map((i) => i.id));
@@ -765,6 +796,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   }
 
   function goTo(nextFolder) {
+    prefetchMailboxList(listPath(nextFolder, 1, '', nextFolder === 'inbox' ? category : 'primary'));
     setFolder(nextFolder);
     setPage(1);
     if (window.matchMedia('(max-width: 800px)').matches) setCollapsed(true);
@@ -1453,6 +1485,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           )}
         </form>
         <div className="account">
+          <NotificationCenter onNavigate={() => onOpenTasks()} />
           {onOpenAdmin && (
             <button className="btn btn-outline admin-switch" title="Manage aliases and the whole mailbox" onClick={onOpenAdmin}>
               <Icon name="shield" size={18} /> <span className="hide-sm">Admin console</span>
@@ -1562,7 +1595,14 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               const shown = FOLDERS.filter((f) => !f.hidden && (!f.onlyWhenUsed || shownCounts[f.count] > 0 || folder === f.id));
               return shown.flatMap((f, i) => [
                 ...(f.section && f.section !== shown[i - 1]?.section ? [<div key={`section-${f.section}`} className="nav-section">{f.section}</div>] : []),
-                <button key={f.id} className={`nav-item ${folder === f.id ? 'active' : ''}`} onClick={() => goTo(f.id)} title={f.label}>
+                <button
+                  key={f.id}
+                  className={`nav-item ${folder === f.id ? 'active' : ''}`}
+                  onPointerEnter={() => prefetchMailboxList(listPath(f.id, 1, '', f.id === 'inbox' ? category : 'primary'))}
+                  onFocus={() => prefetchMailboxList(listPath(f.id, 1, '', f.id === 'inbox' ? category : 'primary'))}
+                  onClick={() => goTo(f.id)}
+                  title={f.label}
+                >
                   <span className="nav-icon" style={{ '--c': f.color }}>
                     <Icon name={f.icon} size={18} />
                   </span>
@@ -1574,7 +1614,10 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                       <button
                         key={`category-${t.id}`}
                         className={`nav-item nav-sub mobile-only ${folder === 'inbox' && !search && category === t.id ? 'active' : ''}`}
+                        onPointerEnter={() => prefetchMailboxList(listPath('inbox', 1, '', t.id))}
+                        onFocus={() => prefetchMailboxList(listPath('inbox', 1, '', t.id))}
                         onClick={() => {
+                          prefetchMailboxList(listPath('inbox', 1, '', t.id));
                           setCategory(t.id);
                           goTo('inbox');
                         }}
@@ -1673,7 +1716,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           </div>
           <nav>
             {labels.map((l) => (
-              <div key={l.id} className={`nav-item label-item ${folder === `label:${l.id}` ? 'active' : ''}`} onClick={() => goTo(`label:${l.id}`)} title={l.name}>
+              <div
+                key={l.id}
+                className={`nav-item label-item ${folder === `label:${l.id}` ? 'active' : ''}`}
+                onPointerEnter={() => prefetchMailboxList(listPath(`label:${l.id}`))}
+                onClick={() => goTo(`label:${l.id}`)}
+                title={l.name}
+              >
                 <span style={{ color: l.color, display: 'grid' }}>
                   <Icon name="label" />
                 </span>
@@ -1920,7 +1969,10 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                       key={t.id}
                       className={`tab ${category === t.id ? 'on' : ''}`}
                       style={{ '--tab': t.color }}
+                      onPointerEnter={() => prefetchMailboxList(listPath('inbox', 1, '', t.id))}
+                      onFocus={() => prefetchMailboxList(listPath('inbox', 1, '', t.id))}
                       onClick={() => {
+                        prefetchMailboxList(listPath('inbox', 1, '', t.id));
                         setCategory(t.id);
                         setPage(1);
                       }}

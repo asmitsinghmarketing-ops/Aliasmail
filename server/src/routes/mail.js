@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import config from '../config.js';
-import { db, save } from '../store.js';
+import { db, save, storeRevision } from '../store.js';
 import { EMAIL_RE, PALETTE, accountOf, aliasesOf, canOpenMailbox, findAlias, isOwner, isVisibleTo, messagesFor, normalize, setAvatar, updateAccount } from '../aliases.js';
 import { avatarUrl, saveAvatar } from '../avatars.js';
 import { signOutAccount } from '../sessions.js';
@@ -19,7 +19,7 @@ import { attachmentLink, deleteFromServer, fetchParsed, noteSend, sendPart, warm
 import { deliver, queueInOutbox, runScheduled } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
-import { announceChange, mailEvents, noteEvents } from '../mail-events.js';
+import { announceChange, mailEvents, noteEvents, notificationEvents } from '../mail-events.js';
 import { personOf, teammates } from '../team.js';
 import { liveSync, noteActivity } from '../live-sync.js';
 import { chatEnabled, driveEnabled, meetEnabled } from '../google-auth.js';
@@ -29,6 +29,29 @@ import { driveTokenFor, readDriveRequest, shareWithRecipients } from '../google-
 import { findLoginCode, mightHaveCode, serviceName } from '../login-codes.js';
 
 const router = Router();
+
+// Folder responses are derived from the in-memory store. Reuse them until save() records a
+// change, rather than filtering and sorting the whole mailbox on every poll and tab visit.
+let listCacheRevision = -1;
+const listCache = new Map();
+function cachedList(key) {
+  const revision = storeRevision();
+  if (revision !== listCacheRevision) {
+    listCacheRevision = revision;
+    listCache.clear();
+  }
+  const found = listCache.get(key);
+  if (found) {
+    listCache.delete(key);
+    listCache.set(key, found);
+  }
+  return found;
+}
+function rememberList(key, value) {
+  listCache.set(key, value);
+  if (listCache.size > 100) listCache.delete(listCache.keys().next().value);
+  return value;
+}
 
 router.use(requireAuth(), (req, res, next) => {
   noteActivity();
@@ -74,6 +97,8 @@ router.get('/events', (req, res) => {
   const noteRead = (to, payload) => { if (to.includes(who) && !res.writableEnded) res.write(`event: note-read\ndata: ${JSON.stringify(payload)}\n\n${pad}`); };
   noteEvents.on('note', note);
   noteEvents.on('note-read', noteRead);
+  const notification = (to, payload) => { if (to === who && !res.writableEnded) res.write(`event: notification\ndata: ${JSON.stringify(payload)}\n\n${pad}`); };
+  notificationEvents.on('notification', notification);
   liveSync.nudge();
   const heartbeat = setInterval(() => res.write(': keepalive\n\n'), 15_000);
   // Periodic reconnect rechecks revoked/expired sessions.
@@ -82,6 +107,7 @@ router.get('/events', (req, res) => {
     mailEvents.off('changed', changed);
     noteEvents.off('note', note);
     noteEvents.off('note-read', noteRead);
+    notificationEvents.off('notification', notification);
     clearInterval(heartbeat);
     clearTimeout(lifetime);
   };
@@ -291,11 +317,14 @@ const myLabels = (me) => db().labels.filter((l) => l.alias === me);
 router.get('/folders', (req, res) => {
   const me = req.me;
   wakeSnoozed(me);
+  const cacheKey = `folders|${me}`;
+  const cached = cachedList(cacheKey);
+  if (cached) return res.json(cached);
   const msgs = messagesFor(me);
   const count = (test) => msgs.filter((m) => test(stateOf(m, me), m)).length;
   const unread = (folder) => count((s) => FOLDERS[folder](s) && !s.read);
 
-  res.json({
+  res.json(rememberList(cacheKey, {
     inbox: unread('inbox'),
     todo: unread('todo'),
     waiting: count(FOLDERS.waiting),
@@ -312,7 +341,7 @@ router.get('/folders', (req, res) => {
     trash: count(FOLDERS.trash),
     categories: Object.fromEntries(CATEGORIES.map((c) => [c, count((s, m) => FOLDERS.inbox(s) && !s.read && (m.category || 'primary') === c)])),
     labels: Object.fromEntries(myLabels(me).map((l) => [l.id, count((s) => live(s) && !s.read && (s.labels || []).includes(l.id))])),
-  });
+  }));
 });
 
 router.post('/refresh', async (req, res) => {
@@ -331,6 +360,9 @@ router.get('/messages', (req, res) => {
   const me = req.me;
   const { folder = 'inbox', category, q, page } = req.query;
   wakeSnoozed(me);
+  const cacheKey = `messages|${me}|${folder}|${category || ''}|${q || ''}|${page || 1}`;
+  const cached = cachedList(cacheKey);
+  if (cached) return res.json(cached);
 
   let items;
   if (folder === 'sent') items = sentItems(me);
@@ -350,10 +382,11 @@ router.get('/messages', (req, res) => {
 
   const sorted = items.filter((i) => matchesQuery(i, q)).sort(byDateDesc);
   if (folder === 'scheduled') sorted.reverse(); // soonest first
-  const result = paginate(sorted, page);
+  const result = rememberList(cacheKey, paginate(sorted, page));
   res.json(result);
 
   // Get the first screenful ready in the background, so opening any of it is instant.
+  if (req.get('X-AliasMail-Prefetch') === 'list') return;
   const top = result.items.slice(0, 20);
   prefetch(top.filter((i) => i.kind === 'inbox').map((i) => i.id), 'inbox');
   prefetch(top.map((i) => SENT_ID.exec(String(i.id))?.[1]).filter(Boolean), 'sent');

@@ -4,11 +4,15 @@
 export const LOGOUT_EVENT = 'aliasmail:logout';
 export const MAILBOX_REVOKED_EVENT = 'aliasmail:mailbox-revoked';
 const mailboxLists = new Map();
+const mailboxPrefetches = new Map();
 let accountEpoch = 0;
+let mailboxListEpoch = 0;
 export const cachedMailboxList = (path) => mailboxLists.get(path) || null;
 export function clearMailCaches() {
   accountEpoch++;
+  mailboxListEpoch++;
   mailboxLists.clear();
+  mailboxPrefetches.clear();
   messageCache.clear();
 }
 window.addEventListener(LOGOUT_EVENT, () => setActiveMailbox(null));
@@ -28,8 +32,8 @@ const RETRY_DELAYS = [600, 2000];
 const RETRY_STATUS = new Set([502, 503, 504]);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function request(path, { method = 'GET', body, signInFlow = false } = {}) {
-  const headers = { 'X-Requested-With': 'AliasMail' };
+async function request(path, { method = 'GET', body, signInFlow = false, headers: extraHeaders = {} } = {}) {
+  const headers = { 'X-Requested-With': 'AliasMail', ...extraHeaders };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (activeMailbox && path.startsWith('/mail/')) headers['X-Mailbox'] = activeMailbox;
   const send = () =>
@@ -63,6 +67,7 @@ async function request(path, { method = 'GET', body, signInFlow = false } = {}) 
 /** `signInFlow: true` for sign-in requests, whose 401s are shown on the form instead. */
 export async function api(path, options) {
   const epoch = accountEpoch;
+  const listEpoch = mailboxListEpoch;
   const res = await request(path, options);
   const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
   if (options?.signInFlow && res.ok) clearMailCaches();
@@ -76,14 +81,29 @@ export async function api(path, options) {
     }
     throw error;
   }
-  if (epoch === accountEpoch && (!options?.method || options.method === 'GET') && path.startsWith('/mail/messages?')) {
+  if (epoch === accountEpoch && listEpoch === mailboxListEpoch && (!options?.method || options.method === 'GET') && path.startsWith('/mail/messages?')) {
     mailboxLists.delete(path);
     mailboxLists.set(path, data);
-    if (mailboxLists.size > 30) mailboxLists.delete(mailboxLists.keys().next().value);
-  } else if (options?.method && options.method !== 'GET') {
+    if (mailboxLists.size > 60) mailboxLists.delete(mailboxLists.keys().next().value);
+  } else if (options?.method && options.method !== 'GET' && path.startsWith('/mail/')) {
+    mailboxListEpoch++;
     mailboxLists.clear();
+    mailboxPrefetches.clear();
   }
   return data;
+}
+
+/** Fetch a folder list before it is opened, without warming any message bodies. */
+export function prefetchMailboxList(path) {
+  if (mailboxLists.has(path)) return Promise.resolve(mailboxLists.get(path));
+  if (mailboxPrefetches.has(path)) return mailboxPrefetches.get(path);
+  const pending = api(path, { headers: { 'X-AliasMail-Prefetch': 'list' } })
+    .catch(() => null)
+    .finally(() => {
+      if (mailboxPrefetches.get(path) === pending) mailboxPrefetches.delete(path);
+    });
+  mailboxPrefetches.set(path, pending);
+  return pending;
 }
 
 export const signOut = () => {
