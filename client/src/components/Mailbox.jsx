@@ -391,7 +391,7 @@ function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh
   );
 }
 
-export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin }) {
+export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin, onOpenTasks }) {
   const [folder, setFolder] = useState('inbox');
   const [team, setTeam] = useState([]); // who can own a conversation
   // Instant notes: the panel, its unread badge, and the latest note pushed over the live connection.
@@ -1381,6 +1381,9 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           );
         })}
         <span className="rail-fill" />
+        <button type="button" className="rail-btn" title="Tasks" aria-label="Tasks" onClick={onOpenTasks}>
+          <Icon name="checkCircle" size={22} />
+        </button>
         {!shared && (
           <button type="button" className={`rail-btn ${assistantOpen ? 'on' : ''}`} title="Assistant" aria-label="Assistant" onClick={() => setAssistantOpen(!assistantOpen)}>
             <Icon name="sparkle" size={22} />
@@ -1724,6 +1727,10 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 Assistant
               </button>
             )}
+            <button type="button" onClick={onOpenTasks}>
+              <span className="bottom-nav-icon"><Icon name="checkCircle" /></span>
+              Tasks
+            </button>
             <button type="button" className={notesOpen ? 'on' : ''} onClick={() => (notesOpen ? setNotesOpen(false) : openNotes())}>
               <span className="bottom-nav-icon">
                 <Icon name="chat" />

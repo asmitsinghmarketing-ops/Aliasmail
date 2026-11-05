@@ -22,6 +22,7 @@ const empty = () => ({
   sending: { gateway: false, gatewayReplies: false }, // outside mail through GoDaddy's Node gateway (Admin → Speed)
   audit: [], // security activity log
   instantNotes: [], // private notes between teammates (routes/notes.js)
+  tasks: { projects: [], items: [], activity: [] }, // shared team projects and tasks (routes/tasks.js)
   assistant: { chats: [], usage: {}, limits: { monthlyUsd: 50, perPersonUsd: 20 } }, // the Assistant (assistant.js)
   sync: { lastSyncAt: null, lastError: null },
 });

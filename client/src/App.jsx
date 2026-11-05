@@ -5,6 +5,7 @@ import Mailbox from './components/Mailbox.jsx';
 import Admin from './components/Admin.jsx';
 import { DialogHost } from './components/Dialog.jsx';
 import UpdateNotice from './components/UpdateNotice.jsx';
+import Tasks from './components/Tasks.jsx';
 
 const OWNER_COLOR = '#e8590c';
 
@@ -22,6 +23,7 @@ function Screen() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
   const [adminView, setAdminView] = useState('mail'); // admin only: 'mail' | 'console'
+  const [workspace, setWorkspace] = useState('mail'); // 'mail' | 'tasks'
   const [shared, setShared] = useState(null); // address of an open group mailbox, or null
 
   const switchMailbox = (address) => {
@@ -35,6 +37,7 @@ function Screen() {
     const onLogout = () => {
       setUser(null);
       setShared(null);
+      setWorkspace('mail');
     };
     const onRevoked = () => {
       switchMailbox(null);
@@ -57,6 +60,7 @@ function Screen() {
     switchMailbox(null);
     await signOut();
     setUser(null);
+    setWorkspace('mail');
   };
 
   if (checking) return <div className="splash">Loading…</div>;
@@ -67,6 +71,7 @@ function Screen() {
           switchMailbox(null);
           setUser(user);
           setAdminView('mail');
+          setWorkspace('mail');
         }}
       />
     );
@@ -93,6 +98,7 @@ function Screen() {
 
   const sharedBox = shared ? user.mailboxes?.find((m) => m.address === shared) : null;
   const view = sharedBox ? { ...own, email: sharedBox.address, displayName: sharedBox.displayName, color: sharedBox.color, avatarUrl: sharedBox.avatarUrl } : own;
+  if (workspace === 'tasks') return <Tasks user={user} onClose={() => setWorkspace('mail')} />;
   return (
     <Mailbox
       key={sharedBox ? `shared:${sharedBox.address}` : 'own'}
@@ -105,6 +111,7 @@ function Screen() {
       onLogout={logout}
       onUserChange={onUserChange}
       onOpenAdmin={user.role === 'admin' ? () => setAdminView('console') : undefined}
+      onOpenTasks={() => setWorkspace('tasks')}
     />
   );
 }
