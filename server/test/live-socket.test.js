@@ -116,6 +116,19 @@ test('presence, typing and notes travel over the socket; strangers and other sit
   assert.equal((await accepted.json()).status, 'accepted');
   assert.equal((await waitFor(john.got, (m) => m.type === 'call-response' && m.id === call.id)).status, 'accepted');
 
+  const cancellableResponse = await fetch(`${BASE}/api/calls`, {
+    method: 'POST',
+    headers: { Cookie: johnCookie, 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' },
+    body: JSON.stringify({ to: 'mary@example.com', link: 'https://meet.google.com/xyz-abcd-efg' }),
+  });
+  const cancellable = await cancellableResponse.json();
+  await waitFor(mary.got, (m) => m.type === 'incoming-call' && m.call.id === cancellable.id);
+  const cancelled = await fetch(`${BASE}/api/calls/${cancellable.id}/cancel`, {
+    method: 'POST', headers: { Cookie: johnCookie, 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' }, body: '{}',
+  });
+  assert.equal(cancelled.status, 200);
+  assert.equal((await waitFor(mary.got, (m) => m.type === 'call-ended' && m.id === cancellable.id)).status, 'cancelled');
+
   const badCall = await fetch(`${BASE}/api/calls`, {
     method: 'POST',
     headers: { Cookie: johnCookie, 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' },

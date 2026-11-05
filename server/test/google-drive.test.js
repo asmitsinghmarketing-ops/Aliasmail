@@ -19,7 +19,7 @@ let server;
 let fake;
 let dir;
 const nonces = new Map();
-const fakeState = { grantDrive: true, revoked: false, shares: [], revokes: [], events: [], setups: [] };
+const fakeState = { grantDrive: true, revoked: false, shares: [], revokes: [], events: [], deletedEvents: [], setups: [] };
 
 test.before(async () => {
   fake = http.createServer((req, res) => {
@@ -52,6 +52,11 @@ test.before(async () => {
         fakeState.shares.push({ file: share[1], ...permission, auth: req.headers.authorization, notify: url.searchParams.get('sendNotificationEmail') });
         if (share[1].startsWith('locked')) return send(403, { error: { message: 'The user does not have sufficient permissions for this file.' } });
         return send(200, { id: 'perm' });
+      }
+      const deletedEvent = url.pathname.match(/^\/calendar\/calendars\/primary\/events\/([^/]+)$/);
+      if (deletedEvent && req.method === 'DELETE') {
+        fakeState.deletedEvents.push({ id: deletedEvent[1], auth: req.headers.authorization, query: Object.fromEntries(url.searchParams) });
+        return send(204, {});
       }
       if (url.pathname === '/calendar/calendars/primary/events') {
         const event = JSON.parse(body);
@@ -217,6 +222,8 @@ test('Google Meet: connected from Settings, then meetings are created in the per
   assert.deepEqual([quick.auth, quick.query.conferenceDataVersion, quick.query.sendUpdates], ['Bearer access-1', '1', 'none']);
   assert.equal(quick.conferenceData.createRequest.conferenceSolutionKey.type, 'hangoutsMeet');
   assert.equal(Date.parse(quick.end.dateTime) - Date.parse(quick.start.dateTime), 30 * 60e3);
+  assert.equal((await john.call('DELETE', `/api/mail/meet/${now.data.id}`)).status, 200);
+  assert.deepEqual(fakeState.deletedEvents.at(-1), { id: 'evt1', auth: 'Bearer access-1', query: { sendUpdates: 'all' } });
 
   const start = new Date(Date.now() + 86400e3).toISOString();
   const later = await john.call('POST', '/api/mail/meet', { title: 'Kick-off', start, minutes: 45, guests: ['Priya@Example.org', 'ana@example.org'] });

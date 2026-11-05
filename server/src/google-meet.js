@@ -68,3 +68,20 @@ export async function createMeeting(role, email, meeting, fetcher = (...args) =>
     calendarLink: data.htmlLink || '',
   };
 }
+
+/** Remove a meeting event owned by this connected Google account. Missing = already cancelled. */
+export async function deleteMeeting(role, email, eventId, fetcher = (...args) => fetch(...args)) {
+  const id = String(eventId || '');
+  if (!/^[A-Za-z0-9_-]{1,300}$/.test(id)) throw new HttpError(400, 'Invalid meeting event');
+  const { accessToken } = await googleTokenFor('meet', role, email);
+  const url = `${config.google.calendarApiUrl}/calendars/primary/events/${encodeURIComponent(id)}?sendUpdates=all`;
+  const res = await fetcher(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(15_000),
+  }).catch(() => null);
+  if (res?.ok || res?.status === 404 || res?.status === 410) return true;
+  const data = res ? await res.json().catch(() => ({})) : {};
+  const reason = data.error?.message || (res ? `Google answered ${res.status}` : 'Google Calendar didn’t answer');
+  throw new HttpError(502, `Couldn’t cancel the meeting: ${reason}`);
+}

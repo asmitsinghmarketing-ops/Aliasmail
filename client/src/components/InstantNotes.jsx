@@ -66,6 +66,7 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   const [busy, setBusy] = useState(false);
   const [calling, setCalling] = useState(false);
   const [callNotice, setCallNotice] = useState('');
+  const [outgoingCall, setOutgoingCall] = useState(null);
   const [error, setError] = useState('');
   const [online, setOnline] = useState(onlineNow); // addresses online; null when unknown
   const [typing, setTyping] = useState({}); // "<conversation key>|<address>" -> when "typing" arrived
@@ -74,7 +75,10 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   const picker = useRef(null);
   const lastTyping = useRef(0);
   const current = useRef(null);
+  const outgoing = useRef(null);
+  const callWindowRef = useRef(null);
   current.current = thread;
+  outgoing.current = outgoingCall;
 
   const loadThreads = () =>
     api('/notes/threads')
@@ -114,8 +118,32 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
       }
     } else if (message.type === 'group') {
       loadThreads();
+    } else if (message.type === 'call-response' && message.id === outgoing.current?.id) {
+      if (message.status === 'declined') {
+        callWindowRef.current?.close();
+        setCallNotice(`${outgoing.current.name} declined the call. The meeting was cancelled.`);
+      } else if (message.status === 'missed') {
+        callWindowRef.current?.close();
+        setCallNotice(`${outgoing.current.name} didn't answer. The meeting was cancelled.`);
+      } else if (message.status === 'accepted') {
+        setCallNotice(`${outgoing.current.name} answered the call.`);
+      }
+      setOutgoingCall(null);
     }
   }), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!outgoingCall) return undefined;
+    const timer = setTimeout(async () => {
+      const active = outgoing.current;
+      if (!active) return;
+      await api(`/calls/${active.id}/cancel`, { method: 'POST' }).catch(() => {});
+      callWindowRef.current?.close();
+      setOutgoingCall(null);
+      setCallNotice(`${active.name} didn’t answer. The meeting was cancelled.`);
+    }, Math.max(0, Date.parse(outgoingCall.expiresAt) - Date.now()));
+    return () => clearTimeout(timer);
+  }, [outgoingCall]);
 
   // "typing…" fades by itself when no more arrive.
   const typers = (t) => {
@@ -234,9 +262,10 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   }
 
   async function startCall() {
-    if (!thread || isGroup(thread) || calling) return;
+    if (!thread || isGroup(thread) || calling || outgoingCall) return;
     setCalling(true); setError(''); setCallNotice('');
     const callWindow = window.open('', '_blank');
+    callWindowRef.current = callWindow;
     if (callWindow) {
       callWindow.document.title = 'Starting call…';
       callWindow.document.body.textContent = 'Creating your secure Google Meet call…';
@@ -244,7 +273,8 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
     try {
       const meeting = await createMeeting({ title: `Call with ${nameOf(thread)}` });
       if (!meeting) { callWindow?.close(); return; }
-      const call = await api('/calls', { method: 'POST', body: { to: thread.address, link: meeting.link } });
+      const call = await api('/calls', { method: 'POST', body: { to: thread.address, link: meeting.link, meetingId: meeting.id } });
+      setOutgoingCall({ ...call, name: nameOf(thread) });
       setCallNotice(`Calling ${nameOf(thread)}…`);
       if (callWindow) {
         callWindow.opener = null;
@@ -252,6 +282,21 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
       } else window.open(call.link, '_blank', 'noopener,noreferrer');
     } catch (err) {
       callWindow?.close();
+      setError(err.message);
+    } finally {
+      setCalling(false);
+    }
+  }
+
+  async function cancelCall() {
+    if (!outgoingCall || calling) return;
+    setCalling(true); setError('');
+    try {
+      await api(`/calls/${outgoingCall.id}/cancel`, { method: 'POST' });
+      callWindowRef.current?.close();
+      setCallNotice('Call cancelled. The meeting was removed.');
+      setOutgoingCall(null);
+    } catch (err) {
       setError(err.message);
     } finally {
       setCalling(false);
@@ -299,7 +344,7 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
               </button>
             )}
             {!isGroup(thread) && (
-              <button type="button" className="icon-btn notes-call" aria-label={`Call ${nameOf(thread)}`} title={`Call ${nameOf(thread)}`} disabled={calling} onClick={startCall}>
+              <button type="button" className="icon-btn notes-call" aria-label={`Call ${nameOf(thread)}`} title={`Call ${nameOf(thread)}`} disabled={calling || Boolean(outgoingCall)} onClick={startCall}>
                 <Icon name="videocam" />
               </button>
             )}
@@ -472,7 +517,7 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
         </>
       )}
       {error && <div className="alert notes-error">{error}</div>}
-      {callNotice && <div className="notes-call-notice"><Icon name="videocam" size={17} /> {callNotice}</div>}
+      {callNotice && <div className="notes-call-notice"><Icon name="videocam" size={17} /><span>{callNotice}</span>{outgoingCall && <button type="button" className="btn btn-outline" disabled={calling} onClick={cancelCall}>Cancel call</button>}</div>}
     </aside>
   );
 }

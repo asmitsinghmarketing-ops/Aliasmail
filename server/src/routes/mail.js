@@ -24,7 +24,7 @@ import { personOf, teammates } from '../team.js';
 import { liveSync, noteActivity } from '../live-sync.js';
 import { chatEnabled, driveEnabled, meetEnabled } from '../google-auth.js';
 import { createSpace, listSpaces, readSpace } from '../google-chat.js';
-import { createMeeting, readMeeting } from '../google-meet.js';
+import { createMeeting, deleteMeeting, readMeeting } from '../google-meet.js';
 import { driveTokenFor, readDriveRequest, shareWithRecipients } from '../google-drive.js';
 import { findLoginCode, mightHaveCode, serviceName } from '../login-codes.js';
 
@@ -875,6 +875,13 @@ router.post('/meet', async (req, res) => {
   const created = await createMeeting(req.user.role, req.user.email, meeting);
   audit(req, 'google-meet-created', req.user.email, `${meeting.guests.length} guest(s)`);
   res.status(201).json(created);
+});
+
+router.delete('/meet/:id', async (req, res) => {
+  if (!meetEnabled()) throw new HttpError(404, 'Google Meet is not set up');
+  await deleteMeeting(req.user.role, req.user.email, req.params.id);
+  audit(req, 'google-meet-cancelled', req.user.email, req.params.id);
+  res.json({ ok: true });
 });
 
 /* ---------------------------------- Google Chat (on trial) ---------------------------------- */

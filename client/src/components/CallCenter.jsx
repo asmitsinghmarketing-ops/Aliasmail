@@ -129,13 +129,15 @@ export default function CallCenter() {
 
   if (!call) return null;
   const answer = async (choice) => {
+    const active = call;
     setBusy(true); setError('');
+    setCall(null); // stop ringing the instant Accept or Decline is pressed
     try {
-      const answered = await api(`/calls/${call.id}/respond`, { method: 'POST', body: { answer: choice } });
-      setCall(null);
+      const answered = await api(`/calls/${active.id}/respond`, { method: 'POST', body: { answer: choice } });
       if (choice === 'accept') window.open(answered.link, '_blank', 'noopener,noreferrer');
     } catch (err) {
       setError(err.message);
+      setCall(active);
       setBusy(false);
     }
   };
