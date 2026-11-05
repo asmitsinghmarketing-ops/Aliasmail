@@ -2645,12 +2645,17 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .task-import-file > div { min-width: 0; flex: 1; display: grid; gap: 2px; }
 .task-import-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .task-import-file span { color: var(--muted); font-size: 11px; }
+.task-import-start { display: grid; grid-template-columns: 52px minmax(0, 1fr) max-content max-content; align-items: center; gap: 12px; margin: 18px 20px; padding: 18px; border: 1px dashed color-mix(in srgb, var(--brand) 40%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--brand) 3%, white); }
+.task-import-start-icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 13px; background: color-mix(in srgb, var(--brand) 11%, white); color: var(--brand); }
+.task-import-start h3 { margin: 0 0 3px; }
+.task-import-start p { margin: 0; color: var(--muted); font-size: 12px; }
 .task-import-error { margin: -6px 20px 16px; padding: 10px 12px; border-radius: 9px; background: #fff0ef; color: var(--red); white-space: pre-line; }
 .task-import-preview { margin: 0 20px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
 .task-import-preview table { width: 100%; min-width: 760px; border-collapse: collapse; }
 .task-import-preview th { padding: 9px 11px; background: #f7f8fa; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 10px; text-align: left; text-transform: uppercase; letter-spacing: .05em; }
 .task-import-preview td { max-width: 250px; padding: 10px 11px; border-bottom: 1px solid #edf0f3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-import-preview tr:last-child td { border-bottom: 0; }
+.task-import-preview.sample { border-style: dashed; }
 .task-import-preview > p { margin: 0; padding: 9px 11px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
 .task-import-help { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 10px 14px; margin: 16px 20px; padding: 12px 14px; border-radius: 10px; background: #f7f8fa; }
 .task-import-help > span { color: var(--muted); font-size: 12px; line-height: 1.45; }
@@ -2717,6 +2722,9 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
   .task-import-file { align-items: flex-start; flex-wrap: wrap; margin: 14px; }
   .task-import-file > div { width: calc(100% - 40px); }
   .task-import-file .btn { margin-left: 34px; }
+  .task-import-start { grid-template-columns: 44px minmax(0, 1fr); margin: 14px; padding: 14px; }
+  .task-import-start-icon { width: 42px; height: 42px; }
+  .task-import-start .btn { grid-column: 1 / -1; width: 100%; }
   .task-import-preview { margin: 0 14px; }
   .task-import-error { margin: 0 14px 14px; }
   .task-import-help { grid-template-columns: 1fr; margin: 14px; }
