@@ -3,6 +3,7 @@
 // sent by email.
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
+import { joinCall, openCallWindow } from '../callWindow.js';
 import { formatDate, formatSize } from '../format.js';
 import { notify, onlineNow, request, subscribe } from '../live.js';
 import Avatar from './Avatar.jsx';
@@ -264,22 +265,15 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   async function startCall() {
     if (!thread || isGroup(thread) || calling || outgoingCall) return;
     setCalling(true); setError(''); setCallNotice('');
-    const callWindow = window.open('', '_blank');
+    const callWindow = openCallWindow();
     callWindowRef.current = callWindow;
-    if (callWindow) {
-      callWindow.document.title = 'Starting call…';
-      callWindow.document.body.textContent = 'Creating your secure Google Meet call…';
-    }
     try {
       const meeting = await createMeeting({ title: `Call with ${nameOf(thread)}` });
       if (!meeting) { callWindow?.close(); return; }
       const call = await api('/calls', { method: 'POST', body: { to: thread.address, link: meeting.link, meetingId: meeting.id } });
       setOutgoingCall({ ...call, name: nameOf(thread) });
       setCallNotice(`Calling ${nameOf(thread)}…`);
-      if (callWindow) {
-        callWindow.opener = null;
-        callWindow.location.replace(call.link);
-      } else window.open(call.link, '_blank', 'noopener,noreferrer');
+      joinCall(callWindow, call.link);
     } catch (err) {
       callWindow?.close();
       setError(err.message);

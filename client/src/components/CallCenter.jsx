@@ -2,6 +2,7 @@
 // when Nextspace is closed. Google Meet carries the actual audio and video.
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
+import { joinCall, openCallWindow } from '../callWindow.js';
 import { subscribe } from '../live.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
@@ -130,12 +131,14 @@ export default function CallCenter() {
   if (!call) return null;
   const answer = async (choice) => {
     const active = call;
+    const callWindow = choice === 'accept' ? openCallWindow() : null;
     setBusy(true); setError('');
     setCall(null); // stop ringing the instant Accept or Decline is pressed
     try {
       const answered = await api(`/calls/${active.id}/respond`, { method: 'POST', body: { answer: choice } });
-      if (choice === 'accept') window.open(answered.link, '_blank', 'noopener,noreferrer');
+      if (choice === 'accept') joinCall(callWindow, answered.link);
     } catch (err) {
+      callWindow?.close();
       setError(err.message);
       setCall(active);
       setBusy(false);
