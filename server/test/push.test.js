@@ -35,10 +35,10 @@ test('new mail reaches the right person, once per batch, and not for their own o
 
   push.notifyNewMail([mail(1)]);
   await flush();
-  assert.deepEqual(sent.map((s) => [s.endpoint, s.title, s.body, s.url]), [['https://push.example/1', 'Prince Singh', 'Subject 1', '/?message=1']]);
+  assert.deepEqual(sent.map((s) => [s.endpoint, s.title, s.body, s.url]), [['https://push.example/1', 'Email from Prince Singh', 'Subject 1', '/?message=1']]);
 
   sent.length = 0;
-  push.notifyNewMail([mail(2), mail(3, { from: { name: 'Isa Bell', address: 'isa@t.test' } }), mail(4, { category: 'promotions' }), mail(5, { from: { name: 'John', address: 'john@example.com' } })]);
+  push.notifyNewMail([mail(2), mail(3, { from: { name: 'Isa Bell', address: 'isa@t.test' } }), mail(4, { category: 'promotions' }), mail(6, { category: 'social' }), mail(7, { category: 'updates' }), mail(5, { from: { name: 'John', address: 'john@example.com' } })]);
   await flush();
   assert.deepEqual(sent.map((s) => [s.title, s.body]), [['2 new emails', 'Prince Singh, Isa Bell']]);
 

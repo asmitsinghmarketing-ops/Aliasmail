@@ -135,16 +135,21 @@ const short = (text, n) => {
 };
 const senderName = (m) => m.from?.name || m.from?.address || 'Someone';
 
-/** New mail: one notification per person and batch ("Prince Singh: Re: Proposal" or "3 new emails"). */
+/**
+ * New mail: one notification per person and batch ("Email from Prince Singh" or "3 new emails").
+ * Browsers flag sites whose notifications look like spam or impersonation, and anyone can put any
+ * name on an email. So the title says it's an email rather than showing a stranger's chosen name
+ * alone, and only Primary mail notifies: not newsletters, promotions or automated messages.
+ */
 export function notifyNewMail(records) {
   const fresh = records.filter((r) => !r.arrivedAt || Date.now() - Date.parse(r.arrivedAt) < FRESH_MS);
   if (!fresh.length || fresh.length > 50) return; // nothing new, or a mailbox import: no flood
   const people = [...new Set(state().subscriptions.filter((s) => s.mail !== false).map((s) => s.person))];
   for (const person of people) {
-    const theirs = fresh.filter((m) => isVisibleTo(m, person) && m.from?.address !== person && m.category !== 'promotions');
+    const theirs = fresh.filter((m) => isVisibleTo(m, person) && m.from?.address !== person && (m.category || 'primary') === 'primary');
     if (!theirs.length) continue;
     const payload = theirs.length === 1
-      ? { title: senderName(theirs[0]), body: short(theirs[0].subject || '(no subject)', 120), url: `/?message=${theirs[0].uid}`, tag: `mail-${theirs[0].uid}` }
+      ? { title: `Email from ${senderName(theirs[0])}`, body: short(theirs[0].subject || '(no subject)', 120), url: `/?message=${theirs[0].uid}`, tag: `mail-${theirs[0].uid}` }
       : { title: `${theirs.length} new emails`, body: short(theirs.slice(0, 3).map(senderName).join(', '), 120), url: '/', tag: 'mail-batch' };
     void notify(person, 'mail', { kind: 'mail', ...payload });
   }

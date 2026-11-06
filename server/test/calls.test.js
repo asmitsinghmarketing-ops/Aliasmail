@@ -9,7 +9,7 @@ import WebSocket from 'ws';
 
 // Calls inside Nextspace: who can join, what each window can do, how a call ends, and that remote
 // desktops stay private to their owner. The audio and video itself is the browsers' job.
-const PORT = 8700 + Math.floor(Math.random() * 300);
+const PORT = 9200 + Math.floor(Math.random() * 300);
 const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN = { email: 'owner@example.com', password: 'admin-password-123' };
 const HEADERS = { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' };
