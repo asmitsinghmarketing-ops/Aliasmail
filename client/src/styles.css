@@ -2932,3 +2932,37 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
   .skeleton::after { display: none; }
   .opening-pill svg, .loading-more svg { animation: none; }
 }
+
+/* ---------- comfortable with one thumb ---------- */
+@media (max-width: 800px) {
+  /* Fingers need about 44px. Lists of icons keep their spacing; the hit area grows instead. */
+  .btn { min-height: 44px; }
+  .toolbar .icon-btn, .message-head .icon-btn, .sender-meta .icon-btn, .mobile-drawer-close { width: 44px; height: 44px; }
+  .toolbar.selecting > .icon-btn { height: 44px; }
+  .row > .icon-btn:not(.importance)::after { content: ''; position: absolute; inset: -8px; }
+  .settings-tab { min-height: 44px; }
+  .format-bar button { min-width: 40px; min-height: 40px; }
+  .signature-mode button { min-height: 40px; }
+  .icon-btn.cm-expand { width: 44px; height: 44px; }
+  .recipient-remove { position: relative; }
+  .recipient-remove::after { content: ''; position: absolute; inset: -8px; }
+
+  .app:not(.admin-app) .topbar .notification-bell { width: 44px; height: 44px; color: #fff; }
+  .app:not(.admin-app) .topbar .notification-bell:hover, .app:not(.admin-app) .topbar .notification-bell.on { background: rgb(255 255 255 / 14%); color: #fff; }
+  .app:not(.admin-app) .topbar .avatar-btn { padding: 6px; margin: -6px 0; }
+
+  /* Anything smaller makes iPhones zoom in on the page when the field is tapped. */
+  input:not([type='checkbox']):not([type='radio']):not([type='file']), select, textarea, [contenteditable='true'] { font-size: 16px; }
+
+  /* Swiping a mail row (rowSwipe.js): the label travels in beside the row. */
+  .rows { overflow-x: clip; }
+  .row[data-swipe-id] { touch-action: pan-y; }
+  .row.swiped:not(.leaving) { position: relative; z-index: 1; overflow: visible; animation: none; }
+  .row.swipe-left::after, .row.swipe-right::after {
+    content: 'Archive'; position: absolute; top: -1px; bottom: -1px; width: 100vw; display: flex; align-items: center; padding: 0 24px;
+    background: #6b9e78; color: #fff; font-size: 15px; font-weight: 600; transition: background-color 0.12s ease-out;
+  }
+  .row.swipe-right::after { right: 100%; justify-content: flex-end; }
+  .row.swipe-left::after { left: 100%; justify-content: flex-start; }
+  .row.swipe-ready::after { background: var(--green); }
+}

@@ -1,5 +1,5 @@
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, cachedMailboxList, prefetchMailboxList, preloadMessage } from '../api.js';
+import { api, cachedMailboxList, fetchRemembered, prefetchMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import { escapeHtml, htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
 import { withDriveLinks } from '../drivePicker.js';
@@ -15,6 +15,7 @@ import MessageView from './MessageView.jsx';
 import InstantNotes from './InstantNotes.jsx';
 import NotifyPrompt from './NotifyPrompt.jsx';
 import { subscribe } from '../live.js';
+import { useRowSwipe } from '../rowSwipe.js';
 import { meetingText } from '../meet.js';
 import Pager from './Pager.jsx';
 import NotificationCenter from './NotificationCenter.jsx';
@@ -270,6 +271,8 @@ function ConversationPanel({ msg, me, team, avatars, onTeam, onMeet }) {
     </aside>
   );
 }
+
+let pendingLayerBack;
 
 /** True on phone-sized screens (the Gmail-app layout), updated as the window changes. */
 function usePhone() {
@@ -609,6 +612,17 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         openNotes(notesFrom);
       }
     };
+    const shortcut = new URLSearchParams(window.location.search);
+    if (shortcut.has('compose') || shortcut.has('folder')) {
+      // Opened this early the signature hasn't arrived yet, and the draft needs it.
+      if (shortcut.has('compose')) {
+        fetchRemembered('/mail/settings').catch(() => null).then((s) => {
+          const block = signatureBlock({ html: s?.signatureHtml, text: s?.signature });
+          setDraft(block ? { html: block } : { text: '' });
+        });
+      }
+      window.history.replaceState(null, '', window.location.pathname);
+    }
     if (/[?&](message|notes)=/.test(window.location.search)) {
       openFrom(window.location.href);
       window.history.replaceState(null, '', window.location.pathname);
@@ -669,7 +683,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         setNotesUnread(unread);
       })
       .catch(() => {});
-    api('/mail/settings')
+    fetchRemembered('/mail/settings')
       .then((s) => setSignature({ text: s.signature, html: s.signatureHtml }))
       .catch(() => {});
   }, []);
@@ -809,6 +823,43 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     setOpen(null);
     setOpenMsg(null);
   }
+
+  // On a phone, the back button closes what is open (a message, Settings, the menu, Notes, the
+  // Assistant) instead of leaving the app. Compose has its own step on top of this one.
+  const backLayer = phone && Boolean(open || modal === 'settings' || notesOpen || assistantOpen || !collapsed);
+  const closeLayer = useRef(null);
+  closeLayer.current = () => {
+    setCollapsed(true);
+    setModal((current) => (current === 'settings' ? null : current));
+    setNotesOpen(false);
+    setAssistantOpen(false);
+    closeViewer();
+  };
+  useEffect(() => {
+    if (!backLayer) return undefined;
+    clearTimeout(pendingLayerBack);
+    if (!history.state?.nextspaceLayer) history.pushState({ ...history.state, nextspaceLayer: true }, '');
+    let popped = false;
+    const onPop = () => {
+      if (history.state?.nextspaceLayer) return; // Only Compose closed: this layer is still open.
+      popped = true;
+      closeLayer.current();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (!popped) {
+        pendingLayerBack = setTimeout(() => {
+          if (history.state?.nextspaceLayer && !history.state?.aliasmailCompose) history.back();
+        }, 0);
+      }
+    };
+  }, [backLayer]);
+
+  const rowSwipe = useRowSwipe({
+    enabled: phone && folder === 'inbox' && !search && selected.size === 0,
+    onSwipe: (id) => act([id], 'archive'),
+  });
 
   async function refresh() {
     setSyncing(true);
@@ -997,8 +1048,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   // The signature below a "-- " line, as formatted in Settings (or its plain text, set before
   // the editor existed).
-  const signatureBlock = () => {
-    const body = signature.html ? sanitizeHtml(signature.html) : signature.text ? htmlFromText(signature.text) : '';
+  const signatureBlock = ({ html, text } = signature) => {
+    const body = html ? sanitizeHtml(html) : text ? htmlFromText(text) : '';
     return body ? `<br><br><div>-- </div>${body}` : '';
   };
   // Replies and forwards: the signature, then the original in full (HTML), below the cursor.
@@ -2024,7 +2075,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               )}
 
               {sendingRows}
-              <div className="rows">
+              <div className="rows" {...rowSwipe}>
                 {loading && <MailListSkeleton />}
                 {!loading && list.items.length === 0 && !sendingRows && (
                   <div className="empty">
@@ -2050,6 +2101,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                     <div
                       className={`row ${item.read ? '' : 'unread'} ${selected.has(item.id) ? 'selected' : ''} ${i === cursor ? 'focused' : ''} ${leaving.has(item.id) ? 'leaving' : ''}`}
                       style={{ '--i': Math.min(i, 15) }}
+                      data-swipe-id={item.kind === 'inbox' ? item.id : undefined}
                       onClick={() => openAt(i)}
                       onMouseEnter={() => onRowEnter(item)}
                       onPointerDown={() => preload(item)}
