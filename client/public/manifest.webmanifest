@@ -8,6 +8,11 @@
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",
+  "categories": ["productivity", "business", "email"],
+  "shortcuts": [
+    { "name": "Inbox", "short_name": "Inbox", "url": "/?folder=inbox", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Compose", "short_name": "Compose", "url": "/?compose=1", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ],
   "background_color": "#ffffff",
   "theme_color": "#ffffff",
   "icons": [

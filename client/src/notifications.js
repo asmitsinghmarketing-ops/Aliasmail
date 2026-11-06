@@ -9,7 +9,10 @@ export const installed = () => window.matchMedia?.('(display-mode: standalone)')
 /** Start the service worker (notifications are shown by it). Safe to call more than once. */
 export function registerWorker() {
   if (!('serviceWorker' in navigator)) return Promise.resolve(null);
-  return navigator.serviceWorker.register('/sw.js').catch(() => null);
+  return navigator.serviceWorker.register('/sw.js').then((registration) => {
+    registration.update().catch(() => {});
+    return registration;
+  }).catch(() => null);
 }
 
 async function currentSubscription() {

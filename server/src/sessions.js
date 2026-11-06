@@ -42,7 +42,7 @@ export async function setDeviceLocation(session, lat, lon) {
 }
 
 /** Start a session for a fully verified sign-in and set its cookie. */
-export function startSession(req, res, { role, email, method }) {
+export function startSession(req, res, { role, email, method, organizationId = config.organizationId || null }) {
   prune();
   const now = new Date();
   const device = describeDevice(req);
@@ -51,6 +51,7 @@ export function startSession(req, res, { role, email, method }) {
     account: accountKey(role, email),
     role,
     email,
+    organizationId,
     method, // 'password' | 'authenticator' | 'backup-code' | 'trusted-device'
     createdAt: now.toISOString(),
     lastSeenAt: now.toISOString(),
@@ -80,6 +81,12 @@ export function currentSession(req) {
   }
   const session = db().sessions.find((s) => s.id === payload.sid);
   if (!session) return null;
+  // Sessions created before tenant context was introduced remain tied to the configured
+  // legacy organization; multi-tenant mode never accepts an unscoped session.
+  if (!session.organizationId && config.organizationId) {
+    session.organizationId = config.organizationId;
+    save();
+  }
 
   const now = Date.now();
   if (Date.parse(session.expiresAt) < now || now - Date.parse(session.lastSeenAt) > config.sessionIdleHours * 3600e3) {

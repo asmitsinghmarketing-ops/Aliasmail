@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { findAlias, typeOf } from './aliases.js';
 import { HttpError } from './errors.js';
 import { currentSession, endSessions } from './sessions.js';
+import config from './config.js';
 
 export function safeEqual(a, b) {
   const x = Buffer.from(String(a));
@@ -20,7 +21,12 @@ export function requireAuth(role) {
       throw new HttpError(401, 'This alias has been disabled');
     }
     if (role && session.role !== role) throw new HttpError(403, 'Not allowed');
-    req.user = { role: session.role, email: session.email };
+    if (config.multiTenant && session.organizationId !== config.organizationId) {
+      endSessions((s) => s.id === session.id);
+      throw new HttpError(401, 'Your organization session is no longer valid');
+    }
+    req.user = { role: session.role, email: session.email, organizationId: session.organizationId || null };
+    req.organizationId = session.organizationId || null;
     req.session = session;
     next();
   };

@@ -73,6 +73,11 @@ if (process.env.NODE_ENV === 'production') {
   }
 }
 const dataFile = path.resolve(root, env('DATA_FILE', 'data/db.json'));
+const organizationId = env('ORGANIZATION_ID');
+const multiTenant = bool('MULTI_TENANT', false);
+if (multiTenant && !organizationId) {
+  throw new Error('MULTI_TENANT=true requires ORGANIZATION_ID for this application instance');
+}
 
 const config = {
   port: Number(env('PORT', '4000')),
@@ -168,6 +173,8 @@ const config = {
   // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.
   ipLocation: env('IP_LOCATION', 'on').toLowerCase() !== 'off',
   dataFile,
+  organizationId,
+  multiTenant,
   // mysql://user:pass@host:3306/db or postgres://user:pass@host:5432/db. Unset: use dataFile.
   databaseUrl,
   databaseSsl: bool('DATABASE_SSL', false),

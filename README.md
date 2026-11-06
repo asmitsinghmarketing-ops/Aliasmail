@@ -41,6 +41,26 @@ Deleting:
 
 Production: `npm run build && npm start` serves the built app and the API together on `PORT`.
 
+### Multi-organization foundation (MySQL)
+
+The current runtime remains backward-compatible with the original single-mailbox deployment.
+For a future shared deployment, first import
+`server/migrations/001-multitenant-foundation.mysql.sql` into the MySQL database, then run:
+
+```bash
+npm run migrate:tenants --prefix server
+```
+
+The migration copies the existing aliases and password hashes into one organization without
+changing or deleting the existing `app_*` tables. Set `TENANT_NAME` and `TENANT_SLUG` before
+running it when the defaults are not suitable. It is intentionally a separate foundation step:
+the application must not be switched to multi-tenant routing until every read and write path
+enforces the organization boundary.
+
+`MULTI_TENANT=true` and `ORGANIZATION_ID=<migrated UUID>` now add organization context to new
+authenticated sessions and requests. Keep this disabled for now: the existing mailbox and
+application state paths are still global and must be migrated before enabling shared tenants.
+
 ### Mail server settings
 
 | Provider | IMAP | SMTP |

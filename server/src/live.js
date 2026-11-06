@@ -32,7 +32,8 @@ function userOf(req) {
       return null;
     }
   }
-  return { role: session.role, email: session.email };
+  if (config.multiTenant && session.organizationId !== config.organizationId) return null;
+  return { role: session.role, email: session.email, organizationId: session.organizationId || null };
 }
 
 // Only Nextspace's own pages may open a socket (a browser sends cookies to any site's socket).
