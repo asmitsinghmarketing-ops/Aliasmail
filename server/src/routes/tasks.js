@@ -14,13 +14,14 @@ const STATUSES = new Set(['backlog', 'todo', 'doing', 'done']);
 const PRIORITIES = new Set(['low', 'medium', 'high']);
 const COLORS = new Set(['#0b5cd5', '#7048e8', '#d6336c', '#e8590c', '#2b8a3e', '#0c8599', '#495057']);
 
-function store() {
+export function taskStore() {
   const tasks = (db().tasks ||= {});
   tasks.projects ||= [];
   tasks.items ||= [];
   tasks.activity ||= [];
   return tasks;
 }
+const store = taskStore;
 
 const clean = (value, max, field, required = false) => {
   const result = String(value ?? '').trim().replace(/\s+/g, ' ');
@@ -109,6 +110,14 @@ function recordCreated(created) {
   notifyAssignment(created, created.createdBy);
 }
 
+/** Create a task through the same validation, activity and notification path as the Tasks UI. */
+export function createTask(input, actor) {
+  const created = makeTask(input, actor);
+  recordCreated(created);
+  save();
+  return created;
+}
+
 router.get('/', (req, res) => {
   const data = store();
   res.json({
@@ -171,9 +180,7 @@ router.delete('/projects/:id', (req, res) => {
 });
 
 router.post('/items', (req, res) => {
-  const created = makeTask(req.body, personOf(req.user));
-  recordCreated(created);
-  save();
+  const created = createTask(req.body, personOf(req.user));
   res.status(201).json(created);
 });
 

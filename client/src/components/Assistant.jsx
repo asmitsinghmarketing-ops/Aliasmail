@@ -133,8 +133,9 @@ function Card({ card, onAct }) {
     email: { icon: 'mail', label: d.replyToId ? 'Reply' : 'Email' },
     meeting: { icon: 'videocam', label: 'Google Meet' },
     note: { icon: 'chat', label: 'Instant note' },
+    automation: { icon: 'scheduleSend', label: 'Automation' },
   }[card.kind];
-  const doneLabel = card.kind === 'meeting' ? 'Created' : 'Sent';
+  const doneLabel = card.kind === 'meeting' ? 'Created' : card.kind === 'automation' ? 'Started' : 'Sent';
 
   return (
     <div className={`ai-card ${settled ? `ai-card-${card.status}` : ''}`}>
@@ -172,13 +173,23 @@ function Card({ card, onAct }) {
         </>
       )}
 
+      {card.kind === 'automation' && (
+        <>
+          {d.description && <div className="ai-card-body">{d.description}</div>}
+          <dl className="ai-card-fields">
+            <dt>Steps</dt><dd>{d.steps.map((step) => step.label).join(' → ')}</dd>
+            {Object.keys(d.input || {}).length > 0 && <><dt>Input</dt><dd>{Object.entries(d.input).map(([key, value]) => `${key}: ${value}`).join(', ')}</dd></>}
+          </dl>
+        </>
+      )}
+
       {settled && card.detail && <p className="ai-card-detail">{/^https?:\/\//.test(card.detail) ? <a href={card.detail} target="_blank" rel="noreferrer">{card.detail}</a> : card.detail}</p>}
       {error && <div className="alert">{error}</div>}
       {!settled && (
         <div className="ai-card-actions">
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => act('go')}>
-            <Icon name={card.kind === 'meeting' ? 'videocam' : 'send'} size={18} />
-            {busy ? 'Working…' : card.kind === 'meeting' ? 'Create meeting' : 'Send'}
+            <Icon name={card.kind === 'meeting' ? 'videocam' : card.kind === 'automation' ? 'scheduleSend' : 'send'} size={18} />
+            {busy ? 'Working…' : card.kind === 'meeting' ? 'Create meeting' : card.kind === 'automation' ? 'Run automation' : 'Send'}
           </button>
           {card.kind === 'email' && (
             <button type="button" className="btn btn-outline" disabled={busy} onClick={() => act('edit')}>
@@ -390,7 +401,8 @@ export default function Assistant({ status, onClose, actions }) {
     if (what === 'go') {
       if (card.kind === 'email') detail = (await actions.sendEmail(card)) || '';
       else if (card.kind === 'meeting') detail = (await actions.createMeeting(card)) || '';
-      else detail = (await actions.sendNote(card)) || '';
+      else if (card.kind === 'note') detail = (await actions.sendNote(card)) || '';
+      else detail = (await actions.runAutomation(card)) || '';
       status = 'done';
     } else if (what === 'edit') {
       actions.editEmail(card);

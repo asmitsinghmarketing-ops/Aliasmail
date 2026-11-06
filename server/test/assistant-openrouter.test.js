@@ -129,7 +129,7 @@ test('with only an OpenRouter key and model, the Assistant uses OpenRouter: tool
   assert.equal(first.headers.authorization, 'Bearer or-test-key');
   assert.equal(first.body.model, 'test/free-model:free');
   assert.equal(first.body.messages[0].role, 'system');
-  assert.deepEqual(first.body.tools.map((t) => t.function.name), ['search_mail', 'read_email', 'list_team', 'draft_email', 'send_note']);
+  assert.deepEqual(first.body.tools.map((t) => t.function.name), ['search_mail', 'read_email', 'list_team', 'draft_email', 'send_note', 'list_automations', 'run_automation']);
 
   // The tool call (arguments joined from pieces) goes back, then its result as a "tool" message.
   const second = requests[1].body.messages;

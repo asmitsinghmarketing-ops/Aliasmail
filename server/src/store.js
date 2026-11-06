@@ -24,6 +24,7 @@ const empty = () => ({
   instantNotes: [], // private notes between teammates (routes/notes.js)
   notifications: [], // persistent in-app notifications for assignments and other team activity
   tasks: { projects: [], items: [], activity: [] }, // shared team projects and tasks (routes/tasks.js)
+  automations: { items: [], runs: [] }, // user-built, AI-planned allowlisted workflows
   assistant: { chats: [], usage: {}, limits: { monthlyUsd: 50, perPersonUsd: 20 } }, // the Assistant (assistant.js)
   sync: { lastSyncAt: null, lastError: null },
 });

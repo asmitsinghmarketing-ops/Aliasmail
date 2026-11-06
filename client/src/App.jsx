@@ -8,6 +8,7 @@ import UpdateNotice from './components/UpdateNotice.jsx';
 import Tasks from './components/Tasks.jsx';
 import AriaTooltip from './components/AriaTooltip.jsx';
 import CallCenter from './components/CallCenter.jsx';
+import Automations from './components/Automations.jsx';
 
 const OWNER_COLOR = '#e8590c';
 
@@ -26,7 +27,7 @@ function Screen() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
   const [adminView, setAdminView] = useState('mail'); // admin only: 'mail' | 'console'
-  const [workspace, setWorkspace] = useState(() => new URLSearchParams(window.location.search).has('task') ? 'tasks' : 'mail'); // 'mail' | 'tasks'
+  const [workspace, setWorkspace] = useState(() => new URLSearchParams(window.location.search).has('task') ? 'tasks' : 'mail'); // mail | tasks | automations
   const [taskToOpen, setTaskToOpen] = useState(() => new URLSearchParams(window.location.search).get('task'));
   const [shared, setShared] = useState(null); // address of an open group mailbox, or null
 
@@ -113,6 +114,7 @@ function Screen() {
   const sharedBox = shared ? user.mailboxes?.find((m) => m.address === shared) : null;
   const view = sharedBox ? { ...own, email: sharedBox.address, displayName: sharedBox.displayName, color: sharedBox.color, avatarUrl: sharedBox.avatarUrl } : own;
   if (workspace === 'tasks') return <><Tasks user={user} startTask={taskToOpen} onClose={() => { setTaskToOpen(null); setWorkspace('mail'); }} /><CallCenter /></>;
+  if (workspace === 'automations') return <><Automations onClose={() => setWorkspace('mail')} /><CallCenter /></>;
   return (
     <><Mailbox
         key={sharedBox ? `shared:${sharedBox.address}` : 'own'}
@@ -126,6 +128,7 @@ function Screen() {
         onUserChange={onUserChange}
         onOpenAdmin={user.role === 'admin' ? () => setAdminView('console') : undefined}
         onOpenTasks={() => setWorkspace('tasks')}
+        onOpenAutomations={() => setWorkspace('automations')}
       /><CallCenter /></>
   );
 }

@@ -125,7 +125,7 @@ test('a turn searches mail, prepares an email card and answers; usage and limits
 
   // What went to Claude: tools, caching, the fallback opt-in, the person's time, then the results.
   const first = requests[0];
-  assert.deepEqual(first.body.tools.map((t) => t.name), ['search_mail', 'read_email', 'list_team', 'draft_email', 'send_note']);
+  assert.deepEqual(first.body.tools.map((t) => t.name), ['search_mail', 'read_email', 'list_team', 'draft_email', 'send_note', 'list_automations', 'run_automation']);
   assert.deepEqual(first.body.cache_control, { type: 'ephemeral' });
   assert.equal(first.body.fallbacks, 'default');
   assert.match(first.headers['anthropic-beta'], /server-side-fallback-2026-07-01/);

@@ -118,7 +118,7 @@ test('with only a Gemini key, the Assistant uses Gemini: tools, cards and stream
   assert.match(first.url, /\/v1beta\/models\/gemini-test-model:streamGenerateContent\?alt=sse$/);
   assert.equal(first.headers['x-goog-api-key'], 'gemini-test-key');
   const names = first.body.tools[0].functionDeclarations.map((f) => f.name);
-  assert.deepEqual(names, ['search_mail', 'read_email', 'list_team', 'draft_email', 'send_note']);
+  assert.deepEqual(names, ['search_mail', 'read_email', 'list_team', 'draft_email', 'send_note', 'list_automations', 'run_automation']);
   assert.equal(first.body.tools[0].functionDeclarations.find((f) => f.name === 'list_team').parameters, undefined);
   assert.match(first.body.systemInstruction.parts[0].text, /Nextspace Assistant/);
   assert.deepEqual(first.body.generationConfig.thinkingConfig, { thinkingLevel: 'low' });

@@ -396,7 +396,7 @@ function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh
   );
 }
 
-export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin, onOpenTasks }) {
+export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin, onOpenTasks, onOpenAutomations }) {
   const [folder, setFolder] = useState('inbox');
   const [team, setTeam] = useState([]); // who can own a conversation
   // Instant notes: the panel, its unread badge, and the latest note pushed over the live connection.
@@ -1046,6 +1046,10 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       await api('/notes', { method: 'POST', body: { to: card.data.to, text: card.data.text, files: [] } });
       return '';
     },
+    runAutomation: async (card) => {
+      const run = await api(`/automations/${card.data.id}/run`, { method: 'POST', body: { input: card.data.input || {} } });
+      return `Run started · ${run.id}`;
+    },
   };
 
   const reply = (msg) => setDraft({ ...replyHeaders(msg), to: (msg.replyTo || msg.from).address, html: quotedHtml(msg) });
@@ -1416,6 +1420,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         <button type="button" className="rail-btn" title="Tasks" aria-label="Tasks" onClick={onOpenTasks}>
           <Icon name="checkCircle" size={22} />
         </button>
+        {!shared && <button type="button" className="rail-btn" title="Automations" aria-label="Automations" onClick={onOpenAutomations}><Icon name="scheduleSend" size={22} /></button>}
         {!shared && (
           <button type="button" className={`rail-btn ${assistantOpen ? 'on' : ''}`} title="Assistant" aria-label="Assistant" onClick={() => setAssistantOpen(!assistantOpen)}>
             <Icon name="sparkle" size={22} />
@@ -1780,6 +1785,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               <span className="bottom-nav-icon"><Icon name="checkCircle" /></span>
               Tasks
             </button>
+            {!shared && <button type="button" onClick={onOpenAutomations}><span className="bottom-nav-icon"><Icon name="scheduleSend" /></span>Automate</button>}
             <button type="button" className={notesOpen ? 'on' : ''} onClick={() => (notesOpen ? setNotesOpen(false) : openNotes())}>
               <span className="bottom-nav-icon">
                 <Icon name="chat" />
