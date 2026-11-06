@@ -1,5 +1,6 @@
 // Nextspace notifications and offline app shell. Private API responses are never cached.
-const SHELL_CACHE = 'nextspace-shell-v2';
+const SHELL_CACHE = 'nextspace-shell-v3';
+const ASSET_LIMIT = 80;
 const SHELL_ASSETS = [
   '/',
   '/manifest.webmanifest',
@@ -18,27 +19,48 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// Built files have a hash in their name, so each release adds new ones: keep the newest only.
+async function keepAsset(request, response) {
+  const cache = await caches.open(SHELL_CACHE);
+  await cache.put(request, response);
+  const assets = (await cache.keys()).filter((key) => new URL(key.url).pathname.startsWith('/assets/'));
+  await Promise.all(assets.slice(0, -ASSET_LIMIT).map((key) => cache.delete(key)));
+}
+
+async function keepShellFile(key, response) {
+  const cache = await caches.open(SHELL_CACHE);
+  await cache.put(key, response);
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
 
+  // Pages: the network first. Only the app's own page may become the offline copy, never another
+  // page such as /privacy.html, and never an error.
   if (request.mode === 'navigate') {
     event.respondWith(fetch(request).then((response) => {
-      const copy = response.clone();
-      caches.open(SHELL_CACHE).then((cache) => cache.put('/', copy));
+      if (response.ok && url.pathname === '/') event.waitUntil(keepShellFile('/', response.clone()));
       return response;
     }).catch(() => caches.match('/')));
     return;
   }
 
-  event.respondWith(caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-    if (response.ok && /\.(?:js|css|woff2?|png|svg)$/i.test(url.pathname)) {
-      const copy = response.clone();
-      caches.open(SHELL_CACHE).then((cache) => cache.put(request, copy));
-    }
+  // Built files never change, so a cached copy is always right.
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(caches.match(request).then((cached) => cached || fetch(request).then((response) => {
+      if (response.ok) event.waitUntil(keepAsset(request, response.clone()));
+      return response;
+    })));
+    return;
+  }
+
+  // Everything else keeps its name when it changes (the manifest, icons): the network first.
+  event.respondWith(fetch(request).then((response) => {
+    if (response.ok && SHELL_ASSETS.includes(url.pathname)) event.waitUntil(keepShellFile(url.pathname, response.clone()));
     return response;
-  })));
+  }).catch(() => caches.match(request)));
 });
 
 self.addEventListener('push', (event) => {
