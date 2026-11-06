@@ -2,6 +2,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { api, LOGOUT_EVENT, MAILBOX_REVOKED_EVENT, setActiveMailbox, signOut } from './api.js';
 import Login from './components/Login.jsx';
 import { hideBoot, lazyPage, ShellSkeleton, whenIdle } from './components/Loading.jsx';
+import { isInstallPage } from './install.js';
 import { DialogHost } from './components/Dialog.jsx';
 import UpdateNotice from './components/UpdateNotice.jsx';
 import AriaTooltip from './components/AriaTooltip.jsx';
@@ -11,14 +12,16 @@ const Admin = lazyPage(() => import('./components/Admin.jsx'));
 const Tasks = lazyPage(() => import('./components/Tasks.jsx'));
 const CallCenter = lazyPage(() => import('./components/CallCenter.jsx'));
 const Automations = lazyPage(() => import('./components/Automations.jsx'));
+const InstallPage = lazyPage(() => import('./components/InstallPage.jsx'));
 
 // Start on the mailbox's code straight away, while the sign-in check runs, so one doesn't wait for
 // the other. The sign-in page doesn't depend on it and shows as soon as the check answers.
-Mailbox.preload();
+if (!isInstallPage()) Mailbox.preload();
 
 const OWNER_COLOR = '#e8590c';
 
 export default function App() {
+  if (isInstallPage()) return <Suspense fallback={null}><InstallPage /></Suspense>;
   return (
     <>
       <Screen />
