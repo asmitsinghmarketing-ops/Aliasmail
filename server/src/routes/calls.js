@@ -70,7 +70,7 @@ router.post('/', async (req, res) => {
   callEvents.emit('call', to, publicCall(call));
   void notify(to, 'calls', {
     kind: 'call', title: `Incoming call from ${call.fromName}`, body: 'Open Nextspace to answer the call.',
-    url: `/?call=${encodeURIComponent(call.id)}`, tag: `call-${call.id}`,
+    url: `/?call=${encodeURIComponent(call.id)}`, tag: `call-${call.id}`, callId: call.id,
   });
   res.status(201).json(publicCall(call));
 });
@@ -92,6 +92,8 @@ router.post('/:id/respond', async (req, res) => {
   clearTimeout(call.timer);
   call.status = req.body?.answer === 'accept' ? 'accepted' : 'declined';
   callEvents.emit('response', call.from, { id: call.id, status: call.status, by: me });
+  // Stop this call ringing in every other open window/device belonging to the recipient.
+  callEvents.emit('ended', call.to, { id: call.id, status: call.status });
   if (call.status === 'declined') await cancelMeeting(call);
   res.json(publicCall(call));
 });

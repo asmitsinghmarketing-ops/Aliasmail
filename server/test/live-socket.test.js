@@ -115,6 +115,7 @@ test('presence, typing and notes travel over the socket; strangers and other sit
   });
   assert.equal((await accepted.json()).status, 'accepted');
   assert.equal((await waitFor(john.got, (m) => m.type === 'call-response' && m.id === call.id)).status, 'accepted');
+  assert.equal((await waitFor(mary.got, (m) => m.type === 'call-ended' && m.id === call.id)).status, 'accepted');
 
   const cancellableResponse = await fetch(`${BASE}/api/calls`, {
     method: 'POST',

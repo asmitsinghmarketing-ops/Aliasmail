@@ -21,9 +21,13 @@ self.addEventListener('push', (event) => {
       renotify: Boolean(data.tag),
       icon: '/icon-192.png',
       badge: '/icon-192.png',
-      data: { url: data.url || '/' },
+      data: { url: data.url || '/', callId: data.callId || null },
       requireInteraction: data.kind === 'call',
       silent: false,
+      actions: data.kind === 'call' ? [
+        { action: 'accept-call', title: 'Accept' },
+        { action: 'decline-call', title: 'Decline' },
+      ] : [],
     });
   })());
 });
@@ -31,7 +35,26 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  const callId = event.notification.data?.callId;
   event.waitUntil((async () => {
+    if (callId && ['accept-call', 'decline-call'].includes(event.action)) {
+      try {
+        const answer = event.action === 'accept-call' ? 'accept' : 'decline';
+        const response = await fetch(`/api/calls/${encodeURIComponent(callId)}/respond`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' },
+          body: JSON.stringify({ answer }),
+        });
+        if (!response.ok) throw new Error('Call has ended');
+        const call = await response.json();
+        if (answer === 'accept') await self.clients.openWindow(call.link);
+        return;
+      } catch {
+        // The session may have expired or the call may have ended. Open AliasMail so the person
+        // gets the current state instead of silently losing their click.
+      }
+    }
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const open = windows.find((w) => new URL(w.url).origin === self.location.origin);
     if (open) {

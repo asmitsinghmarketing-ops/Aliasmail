@@ -69,8 +69,19 @@ function desktopRing(call) {
     silent: false,
     icon: '/icon-192.png',
     badge: '/icon-192.png',
-    data: { url: `/?call=${encodeURIComponent(call.id)}` },
+    data: { url: `/?call=${encodeURIComponent(call.id)}`, callId: call.id },
+    actions: [
+      { action: 'accept-call', title: 'Accept' },
+      { action: 'decline-call', title: 'Decline' },
+    ],
   })).catch(() => {});
+}
+
+function closeDesktopRing(id) {
+  navigator.serviceWorker?.ready
+    .then((worker) => worker.getNotifications({ tag: `call-${id}` }))
+    .then((notifications) => notifications.forEach((notification) => notification.close()))
+    .catch(() => {});
 }
 
 export default function CallCenter() {
@@ -134,6 +145,7 @@ export default function CallCenter() {
     const callWindow = choice === 'accept' ? openCallWindow() : null;
     setBusy(true); setError('');
     setCall(null); // stop ringing the instant Accept or Decline is pressed
+    closeDesktopRing(active.id);
     try {
       const answered = await api(`/calls/${active.id}/respond`, { method: 'POST', body: { answer: choice } });
       if (choice === 'accept') joinCall(callWindow, answered.link);
