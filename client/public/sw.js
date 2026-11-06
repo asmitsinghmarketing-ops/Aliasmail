@@ -95,20 +95,22 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = new URL(event.notification.data?.url || '/', self.location.origin).href;
   const callId = event.notification.data?.callId;
+  let answerUrl = null;
   event.waitUntil((async () => {
     if (callId && ['accept-call', 'decline-call'].includes(event.action)) {
       try {
-        const answer = event.action === 'accept-call' ? 'accept' : 'decline';
-        const response = await fetch(`/api/calls/${encodeURIComponent(callId)}/respond`, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' },
-          body: JSON.stringify({ answer }),
-        });
-        if (!response.ok) throw new Error('Call has ended');
-        const call = await response.json();
-        if (answer === 'accept') await self.clients.openWindow(call.link);
-        return;
+        // Declining needs no window. Accepting opens Nextspace, which joins the call from there.
+        if (event.action === 'decline-call') {
+          const response = await fetch(`/api/calls/${encodeURIComponent(callId)}/respond`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' },
+            body: JSON.stringify({ answer: 'decline' }),
+          });
+          if (response.ok) return;
+          throw new Error('Call has ended');
+        }
+        answerUrl = `${url}&answer=1`;
       } catch {
         // The session may have expired or the call may have ended. Open AliasMail so the person
         // gets the current state instead of silently losing their click.
@@ -118,9 +120,9 @@ self.addEventListener('notificationclick', (event) => {
     const open = windows.find((w) => new URL(w.url).origin === self.location.origin);
     if (open) {
       await open.focus();
-      open.postMessage({ type: 'open', url });
+      open.postMessage({ type: 'open', url: answerUrl || url });
       return;
     }
-    await self.clients.openWindow(url);
+    await self.clients.openWindow(answerUrl || url);
   })());
 });

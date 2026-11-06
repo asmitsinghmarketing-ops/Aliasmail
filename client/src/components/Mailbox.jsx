@@ -1542,7 +1542,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           )}
         </form>
         <div className="account">
-          <NotificationCenter onNavigate={() => onOpenTasks()} />
+          <NotificationCenter onNavigate={(notification) => { if (notification.type?.startsWith('task-')) onOpenTasks(); }} />
           {onOpenAdmin && (
             <button className="btn btn-outline admin-switch" title="Manage aliases and the whole mailbox" onClick={onOpenAdmin}>
               <Icon name="shield" size={18} /> <span className="hide-sm">Admin console</span>

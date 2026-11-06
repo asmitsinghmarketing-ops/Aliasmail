@@ -6,6 +6,7 @@ import AvatarCropper from './AvatarCropper.jsx';
 import RichEditor, { htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
 import Icon from './Icon.jsx';
 import { TextSkeleton } from './Loading.jsx';
+import RemoteDesktops from './RemoteDesktops.jsx';
 import SecurityPanel from './SecurityPanel.jsx';
 import GoogleApps from './GoogleApps.jsx';
 import NotificationSettings from './NotificationSettings.jsx';
@@ -101,6 +102,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
     fetchRemembered('/auth/mfa').catch(() => {});
     fetchRemembered('/auth/sessions').catch(() => {});
     fetchRemembered('push-status', notificationStatus).catch(() => {});
+    fetchRemembered('/remote-desktops').catch(() => {});
   }, [known]);
 
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
@@ -305,6 +307,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
           ['profile', 'Profile', 'people'],
           ['security', 'Security', 'shield'],
           ['notifications', 'Notifications', 'bell'],
+          ['remote', 'Remote desktop', 'computer'],
           ...(googleOn ? [['google', 'Google apps', 'apps']] : []),
         ].map(([id, label, icon]) => (
           <button type="button" role="tab" aria-selected={tab === id} key={id} className={`settings-tab ${tab === id ? 'on' : ''}`} onClick={() => setTab(id)}>
@@ -313,7 +316,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
         ))}
       </div>
       <div className="view-enter settings-body" key={tab}>
-        {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : tab === 'notifications' ? <NotificationSettings /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <TextSkeleton lines={4} />}
+        {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : tab === 'notifications' ? <NotificationSettings /> : tab === 'remote' ? <RemoteDesktops /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <TextSkeleton lines={4} />}
       </div>
       {privateHelp && <PrivateTabHelp onClose={() => setPrivateHelp(false)} />}
       {cropping && <AvatarCropper file={cropping} onCancel={() => setCropping(null)} onDone={saveAvatar} />}

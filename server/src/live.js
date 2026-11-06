@@ -103,10 +103,14 @@ export function attachLive(server) {
     const onNotification = (to, notification) => to === who && send(ws, { type: 'notification', notification });
     notificationEvents.on('notification', onNotification);
     const onCall = (to, call) => to === who && send(ws, { type: 'incoming-call', call });
-    const onCallResponse = (to, response) => to === who && send(ws, { type: 'call-response', ...response });
+    const onCallRoom = (to, call) => to === who && send(ws, { type: 'call-room', call });
+    const onCallSignal = (to, signal) => to === who && send(ws, { type: 'call-signal', ...signal });
+    const onCallDesktop = (to, shared) => to === who && send(ws, { type: 'call-desktop', shared });
     const onCallEnded = (to, response) => to === who && send(ws, { type: 'call-ended', ...response });
     callEvents.on('call', onCall);
-    callEvents.on('response', onCallResponse);
+    callEvents.on('room', onCallRoom);
+    callEvents.on('signal', onCallSignal);
+    callEvents.on('desktop', onCallDesktop);
     callEvents.on('ended', onCallEnded);
 
     // Heartbeat: a socket that stops answering pings is closed (the browser reconnects).
@@ -162,7 +166,9 @@ export function attachLive(server) {
       noteEvents.off('group', onGroup);
       notificationEvents.off('notification', onNotification);
       callEvents.off('call', onCall);
-      callEvents.off('response', onCallResponse);
+      callEvents.off('room', onCallRoom);
+      callEvents.off('signal', onCallSignal);
+      callEvents.off('desktop', onCallDesktop);
       callEvents.off('ended', onCallEnded);
       leave(ws, who);
     });

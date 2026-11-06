@@ -3,13 +3,12 @@
 // sent by email.
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
-import { joinCall, openCallWindow } from '../callWindow.js';
+import { startCall } from '../calls.js';
 import { formatDate, formatSize } from '../format.js';
 import { notify, onlineNow, request, subscribe } from '../live.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 import { PeopleSkeleton } from './Loading.jsx';
-import { createMeeting } from '../meet.js';
 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -66,9 +65,6 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   const [text, setText] = useState('');
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [calling, setCalling] = useState(false);
-  const [callNotice, setCallNotice] = useState('');
-  const [outgoingCall, setOutgoingCall] = useState(null);
   const [error, setError] = useState('');
   const [online, setOnline] = useState(onlineNow); // addresses online; null when unknown
   const [typing, setTyping] = useState({}); // "<conversation key>|<address>" -> when "typing" arrived
@@ -77,10 +73,7 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   const picker = useRef(null);
   const lastTyping = useRef(0);
   const current = useRef(null);
-  const outgoing = useRef(null);
-  const callWindowRef = useRef(null);
   current.current = thread;
-  outgoing.current = outgoingCall;
 
   const loadThreads = () =>
     api('/notes/threads')
@@ -120,32 +113,8 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
       }
     } else if (message.type === 'group') {
       loadThreads();
-    } else if (message.type === 'call-response' && message.id === outgoing.current?.id) {
-      if (message.status === 'declined') {
-        callWindowRef.current?.close();
-        setCallNotice(`${outgoing.current.name} declined the call. The meeting was cancelled.`);
-      } else if (message.status === 'missed') {
-        callWindowRef.current?.close();
-        setCallNotice(`${outgoing.current.name} didn't answer. The meeting was cancelled.`);
-      } else if (message.status === 'accepted') {
-        setCallNotice(`${outgoing.current.name} answered the call.`);
-      }
-      setOutgoingCall(null);
     }
   }), []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!outgoingCall) return undefined;
-    const timer = setTimeout(async () => {
-      const active = outgoing.current;
-      if (!active) return;
-      await api(`/calls/${active.id}/cancel`, { method: 'POST' }).catch(() => {});
-      callWindowRef.current?.close();
-      setOutgoingCall(null);
-      setCallNotice(`${active.name} didn’t answer. The meeting was cancelled.`);
-    }, Math.max(0, Date.parse(outgoingCall.expiresAt) - Date.now()));
-    return () => clearTimeout(timer);
-  }, [outgoingCall]);
 
   // "typing…" fades by itself when no more arrive.
   const typers = (t) => {
@@ -263,39 +232,12 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
     }
   }
 
-  async function startCall() {
-    if (!thread || isGroup(thread) || calling || outgoingCall) return;
-    setCalling(true); setError(''); setCallNotice('');
-    const callWindow = openCallWindow();
-    callWindowRef.current = callWindow;
-    try {
-      const meeting = await createMeeting({ title: `Call with ${nameOf(thread)}` });
-      if (!meeting) { callWindow?.close(); return; }
-      const call = await api('/calls', { method: 'POST', body: { to: thread.address, link: meeting.link, meetingId: meeting.id } });
-      setOutgoingCall({ ...call, name: nameOf(thread) });
-      setCallNotice(`Calling ${nameOf(thread)}…`);
-      joinCall(callWindow, call.link);
-    } catch (err) {
-      callWindow?.close();
-      setError(err.message);
-    } finally {
-      setCalling(false);
-    }
-  }
-
-  async function cancelCall() {
-    if (!outgoingCall || calling) return;
-    setCalling(true); setError('');
-    try {
-      await api(`/calls/${outgoingCall.id}/cancel`, { method: 'POST' });
-      callWindowRef.current?.close();
-      setCallNotice('Call cancelled. The meeting was removed.');
-      setOutgoingCall(null);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setCalling(false);
-    }
+  // A group rings everyone else in it, up to what a call can hold.
+  function callThread(video) {
+    if (!thread) return;
+    const to = isGroup(thread) ? thread.members.map((m) => m.address).filter((a) => a !== me).slice(0, 5) : [thread.address];
+    setError('');
+    startCall({ to, video }).catch((err) => setError(err.message));
   }
 
   const memberOf = (address) => (isGroup(thread) ? thread.members.find((m) => m.address === address) : null) || { address };
@@ -338,11 +280,12 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
                 <Icon name="info" />
               </button>
             )}
-            {!isGroup(thread) && (
-              <button type="button" className="icon-btn notes-call" aria-label={`Call ${nameOf(thread)}`} title={`Call ${nameOf(thread)}`} disabled={calling || Boolean(outgoingCall)} onClick={startCall}>
-                <Icon name="videocam" />
-              </button>
-            )}
+            <button type="button" className="icon-btn notes-call" aria-label={`Voice call ${nameOf(thread)}`} title="Voice call" onClick={() => callThread(false)}>
+              <Icon name="call" />
+            </button>
+            <button type="button" className="icon-btn notes-call" aria-label={`Video call ${nameOf(thread)}`} title="Video call" onClick={() => callThread(true)}>
+              <Icon name="videocam" />
+            </button>
           </>
         ) : view === 'new-group' || view === 'group-info' ? (
           <>
@@ -512,7 +455,6 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
         </>
       )}
       {error && <div className="alert notes-error">{error}</div>}
-      {callNotice && <div className="notes-call-notice"><Icon name="videocam" size={17} /><span>{callNotice}</span>{outgoingCall && <button type="button" className="btn btn-outline" disabled={calling} onClick={cancelCall}>Cancel call</button>}</div>}
     </aside>
   );
 }

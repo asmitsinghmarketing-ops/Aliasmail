@@ -19,7 +19,7 @@ import { attachmentLink, deleteFromServer, fetchParsed, noteSend, sendPart, warm
 import { deliver, queueInOutbox, runScheduled } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
-import { announceChange, mailEvents, noteEvents, notificationEvents } from '../mail-events.js';
+import { callEvents, announceChange, mailEvents, noteEvents, notificationEvents } from '../mail-events.js';
 import { personOf, teammates } from '../team.js';
 import { liveSync, noteActivity } from '../live-sync.js';
 import { chatEnabled, driveEnabled, meetEnabled } from '../google-auth.js';
@@ -99,6 +99,10 @@ router.get('/events', (req, res) => {
   noteEvents.on('note-read', noteRead);
   const notification = (to, payload) => { if (to === who && !res.writableEnded) res.write(`event: notification\ndata: ${JSON.stringify(payload)}\n\n${pad}`); };
   notificationEvents.on('notification', notification);
+  // Calls too, for windows that can't open the live socket.
+  const callEvent = (name) => (to, payload) => { if (to === who && !res.writableEnded) res.write(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n${pad}`); };
+  const callListeners = { call: callEvent('incoming-call'), ended: callEvent('call-ended'), room: callEvent('call-room'), signal: callEvent('call-signal'), desktop: callEvent('call-desktop') };
+  for (const [name, listener] of Object.entries(callListeners)) callEvents.on(name, listener);
   liveSync.nudge();
   const heartbeat = setInterval(() => res.write(': keepalive\n\n'), 15_000);
   // Periodic reconnect rechecks revoked/expired sessions.
@@ -108,6 +112,7 @@ router.get('/events', (req, res) => {
     noteEvents.off('note', note);
     noteEvents.off('note-read', noteRead);
     notificationEvents.off('notification', notification);
+    for (const [name, listener] of Object.entries(callListeners)) callEvents.off(name, listener);
     clearInterval(heartbeat);
     clearTimeout(lifetime);
   };

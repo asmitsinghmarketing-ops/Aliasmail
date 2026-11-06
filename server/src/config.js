@@ -73,6 +73,7 @@ if (process.env.NODE_ENV === 'production') {
   }
 }
 const dataFile = path.resolve(root, env('DATA_FILE', 'data/db.json'));
+const list = (value) => value.split(',').map((item) => item.trim()).filter(Boolean);
 const organizationId = env('ORGANIZATION_ID');
 const multiTenant = bool('MULTI_TENANT', false);
 if (multiTenant && !organizationId) {
@@ -168,6 +169,16 @@ const config = {
     openrouterKey: env('OPENROUTER_API_KEY'),
     openrouterModel: env('OPENROUTER_MODEL'),
     openrouterUrl: env('OPENROUTER_URL', 'https://openrouter.ai/api/v1').replace(/\/$/, ''),
+  },
+  // Team calls. STUN lets browsers find each other; TURN relays for networks that block direct
+  // connections (many offices). See "Calls" in README.md.
+  calls: {
+    stunUrls: list(env('CALL_STUN_URLS', 'stun:stun.l.google.com:19302')),
+    turnUrls: list(env('CALL_TURN_URLS')),
+    turnSecret: env('CALL_TURN_SECRET'),
+    turnUsername: env('CALL_TURN_USERNAME'),
+    turnCredential: env('CALL_TURN_CREDENTIAL'),
+    turnTtlSeconds: Math.max(600, Number(env('CALL_TURN_TTL_SECONDS', '14400')) || 14400),
   },
   appUrl: env('APP_URL').replace(/\/$/, ''),
   // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.

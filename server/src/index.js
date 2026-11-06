@@ -19,6 +19,7 @@ import tasksRoutes from './routes/tasks.js';
 import notificationRoutes from './routes/notifications.js';
 import automationRoutes from './routes/automations.js';
 import callRoutes from './routes/calls.js';
+import remoteDesktopRoutes from './routes/remote-desktops.js';
 import { startPush } from './push.js';
 import { attachLive } from './live.js';
 import adminRoutes from './routes/admin.js';
@@ -82,8 +83,9 @@ app.use((req, res, next) => {
     // recognises AliasMail. Email bodies are stricter: their frame sends no referrer at all.
     'Referrer-Policy': 'strict-origin',
     'Cross-Origin-Opener-Policy': 'same-origin',
-    // Location only for this site, and only when the user asks to share it (Security settings).
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self), payment=()',
+    // Camera, microphone and screen for calls, and location when asked (Security settings): only
+    // for this site, never for anything embedded in it, such as an email.
+    'Permissions-Policy': 'camera=(self), microphone=(self), display-capture=(self), speaker-selection=(self), geolocation=(self), payment=()',
   });
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   if (req.path.startsWith('/api/')) {
@@ -147,6 +149,7 @@ app.use('/api/tasks', tasksRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/automations', automationRoutes);
 app.use('/api/calls', callRoutes);
+app.use('/api/remote-desktops', remoteDesktopRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

@@ -91,6 +91,11 @@ function startEvents() {
   sse.addEventListener('mail', () => emit({ type: 'mail' }));
   sse.addEventListener('note', (event) => emit({ type: 'note', note: JSON.parse(event.data) }));
   sse.addEventListener('note-read', (event) => emit({ type: 'note-read', ...JSON.parse(event.data) }));
+  sse.addEventListener('incoming-call', (event) => emit({ type: 'incoming-call', call: JSON.parse(event.data) }));
+  sse.addEventListener('call-ended', (event) => emit({ type: 'call-ended', ...JSON.parse(event.data) }));
+  sse.addEventListener('call-room', (event) => emit({ type: 'call-room', call: JSON.parse(event.data) }));
+  sse.addEventListener('call-signal', (event) => emit({ type: 'call-signal', ...JSON.parse(event.data) }));
+  sse.addEventListener('call-desktop', (event) => emit({ type: 'call-desktop', shared: JSON.parse(event.data) }));
   sse.addEventListener('notification', (event) => emit({ type: 'notification', notification: JSON.parse(event.data) }));
 }
 

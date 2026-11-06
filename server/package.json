@@ -11,7 +11,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "migrate:tenants": "node scripts/migrate-tenants.js",
-    "test": "node --test test/mail-performance.test.js test/storage-config.test.js test/read-sync.test.js test/roles.test.js test/device-location.test.js test/live-sync.test.js test/google-signin.test.js test/google-drive.test.js test/login-codes.test.js test/forward.test.js test/attachment-download.test.js test/live-socket.test.js test/assistant.test.js test/assistant-gemini.test.js test/assistant-openrouter.test.js test/assistant-settings.test.js test/push.test.js test/note-groups.test.js test/tasks.test.js test/automations.test.js"
+    "test": "node --test test/mail-performance.test.js test/storage-config.test.js test/read-sync.test.js test/roles.test.js test/device-location.test.js test/live-sync.test.js test/google-signin.test.js test/google-drive.test.js test/login-codes.test.js test/forward.test.js test/attachment-download.test.js test/live-socket.test.js test/calls.test.js test/assistant.test.js test/assistant-gemini.test.js test/assistant-openrouter.test.js test/assistant-settings.test.js test/push.test.js test/note-groups.test.js test/tasks.test.js test/automations.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
