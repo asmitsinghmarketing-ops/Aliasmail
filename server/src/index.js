@@ -19,7 +19,6 @@ import tasksRoutes from './routes/tasks.js';
 import notificationRoutes from './routes/notifications.js';
 import automationRoutes from './routes/automations.js';
 import callRoutes from './routes/calls.js';
-import remoteDesktopRoutes from './routes/remote-desktops.js';
 import { startPush } from './push.js';
 import { attachLive } from './live.js';
 import adminRoutes from './routes/admin.js';
@@ -149,7 +148,6 @@ app.use('/api/tasks', tasksRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/automations', automationRoutes);
 app.use('/api/calls', callRoutes);
-app.use('/api/remote-desktops', remoteDesktopRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

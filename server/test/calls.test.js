@@ -7,8 +7,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 
-// Calls inside Nextspace: who can join, what each window can do, how a call ends, and that remote
-// desktops stay private to their owner. The audio and video itself is the browsers' job.
+// Calls inside Nextspace: who can join, what each window can do, and how a call ends. The audio and
+// video itself is the browsers' job.
 const PORT = 9200 + Math.floor(Math.random() * 300);
 const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN = { email: 'owner@example.com', password: 'admin-password-123' };
@@ -183,41 +183,4 @@ test('a group call carries on when one person leaves or declines, and has a size
   await call('mary', `/calls/${id}/leave`, { peerId: mary.peerId });
 
   assert.equal((await call('john', '/calls', { to: PEOPLE.filter((name) => name !== 'john').map((name) => `${name}@example.com`) })).status, 400);
-});
-
-test('remote desktops are checked, private to their owner, and share no sign-in details', async () => {
-  const bad = [
-    { host: '' },
-    { host: 'pc.example.com\r\ndrivestoredirect:s:*' },
-    { host: 'bad host' },
-    { host: 'pc.example.com', port: 70000 },
-    { host: 'pc.example.com', username: 'me\nredirectclipboard:i:1' },
-    { host: 'pc.example.com', gateway: 'not a host' },
-  ];
-  for (const body of bad) assert.equal((await call('john', '/remote-desktops', body)).status, 400, JSON.stringify(body));
-
-  const res = await call('john', '/remote-desktops', { name: 'Office PC', host: 'Office-PC.example.com', username: 'john', domain: 'corp', gateway: 'rd.example.com' });
-  assert.equal(res.status, 201);
-  const saved = await res.json();
-  assert.deepEqual([saved.host, saved.port, saved.owner], ['office-pc.example.com', 3389, undefined]);
-  assert.equal((await json('john', '/remote-desktops')).length, 1);
-  assert.deepEqual(await json('mary', '/remote-desktops'), []);
-
-  const asMary = (method) => fetch(`${BASE}/api/remote-desktops/${saved.id}`, { method, headers: { ...HEADERS, Cookie: cookies.mary }, body: method === 'PUT' ? JSON.stringify({ host: 'evil.example.com' }) : undefined });
-  assert.equal((await asMary('PUT')).status, 404);
-  assert.equal((await asMary('DELETE')).status, 404);
-
-  // Shared in a call: where to connect, but not John's user name or domain.
-  const mary = await listen('mary');
-  const started = await start('john', 'mary@example.com');
-  const joined = await json('mary', `/calls/${started.call.id}/join`, {});
-  assert.equal((await call('mary', `/calls/${started.call.id}/remote-desktop`, { peerId: joined.peerId, connectionId: saved.id })).status, 404);
-  assert.equal((await call('john', `/calls/${started.call.id}/remote-desktop`, { peerId: started.peerId, connectionId: saved.id })).status, 204);
-  const shared = await waitFor(mary.got, (m) => m.type === 'call-desktop');
-  assert.deepEqual([shared.shared.host, shared.shared.name, shared.shared.fromName], ['office-pc.example.com', 'Office PC', 'john']);
-  assert.ok(!JSON.stringify(shared).includes('corp') && !('username' in shared.shared));
-  await call('john', `/calls/${started.call.id}/leave`, { peerId: started.peerId });
-
-  const removed = await fetch(`${BASE}/api/remote-desktops/${saved.id}`, { method: 'DELETE', headers: { ...HEADERS, Cookie: cookies.john } });
-  assert.equal(removed.status, 204);
 });

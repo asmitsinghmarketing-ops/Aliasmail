@@ -101,7 +101,7 @@ router.get('/events', (req, res) => {
   notificationEvents.on('notification', notification);
   // Calls too, for windows that can't open the live socket.
   const callEvent = (name) => (to, payload) => { if (to === who && !res.writableEnded) res.write(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n${pad}`); };
-  const callListeners = { call: callEvent('incoming-call'), ended: callEvent('call-ended'), room: callEvent('call-room'), signal: callEvent('call-signal'), desktop: callEvent('call-desktop') };
+  const callListeners = { call: callEvent('incoming-call'), ended: callEvent('call-ended'), room: callEvent('call-room'), signal: callEvent('call-signal') };
   for (const [name, listener] of Object.entries(callListeners)) callEvents.on(name, listener);
   liveSync.nudge();
   const heartbeat = setInterval(() => res.write(': keepalive\n\n'), 15_000);

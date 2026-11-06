@@ -2,11 +2,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import {
-  canShareScreen, chooseDevice, clearNotice, dismissSharedDesktop, hangUp, inviteToCall, shareRemoteDesktop,
+  canShareScreen, chooseDevice, clearNotice, hangUp, inviteToCall,
   toggleCamera, toggleHand, toggleMute, toggleScreen,
 } from '../calls.js';
 import { onlineNow } from '../live.js';
-import { openRemoteDesktop } from '../rdpFile.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 
@@ -181,36 +180,11 @@ function DevicesPanel({ state }) {
   );
 }
 
-function DesktopPanel({ alone }) {
-  const [list, setList] = useState(null);
-  const [message, setMessage] = useState('');
-  useEffect(() => { api('/remote-desktops').then(setList).catch((err) => setMessage(err.message)); }, []);
-  const share = (item) => shareRemoteDesktop(item.id).then(() => setMessage(`Shared “${item.name}”. They still need their own sign-in.`)).catch((err) => setMessage(err.message));
-  return (
-    <>
-      <h3>Remote desktop</h3>
-      <p className="call-panel-note">Opens in this computer’s Remote Desktop app. Add computers in Settings → Remote desktop.</p>
-      {message && <p className="call-panel-note strong">{message}</p>}
-      {list?.length === 0 && <p className="call-panel-note">No computers saved yet.</p>}
-      <ul className="call-people">
-        {list?.map((item) => (
-          <li key={item.id}>
-            <Icon name="computer" size={20} />
-            <span>{item.name}<small>{item.host}</small></span>
-            <button type="button" className="btn btn-outline" onClick={() => openRemoteDesktop(item)}>Open</button>
-            {!alone && <button type="button" className="btn btn-outline" onClick={() => share(item)}>Share</button>}
-          </li>
-        ))}
-      </ul>
-    </>
-  );
-}
-
 /* ---------------------------------- the room ---------------------------------- */
 
 export default function CallRoom({ state }) {
   const [minimized, setMinimized] = useState(false);
-  const [panel, setPanel] = useState(null); // 'people' | 'devices' | 'desktop'
+  const [panel, setPanel] = useState(null); // 'people' | 'devices'
   const duration = useDuration(state.startedAt);
   const { call, me, peers } = state;
 
@@ -279,14 +253,6 @@ export default function CallRoom({ state }) {
           <button type="button" aria-label="Dismiss" onClick={clearNotice}><Icon name="close" size={18} /></button>
         </div>
       )}
-      {state.sharedDesktops.map((shared) => (
-        <div className="call-notice desktop" role="alert" key={shared.host}>
-          <Icon name="computer" size={20} />
-          <span><strong>{shared.fromName}</strong> shared the remote desktop “{shared.name}” at <strong>{shared.host}{shared.port !== 3389 ? `:${shared.port}` : ''}</strong>. Only open it if you were expecting this. It opens without access to your files or clipboard.</span>
-          <button type="button" className="btn btn-outline" onClick={() => { openRemoteDesktop(shared, { shared: true }); dismissSharedDesktop(shared.host); }}>Open</button>
-          <button type="button" aria-label="Dismiss" onClick={() => dismissSharedDesktop(shared.host)}><Icon name="close" size={18} /></button>
-        </div>
-      ))}
 
       <div className="call-room-body">
         {presenter ? (
@@ -311,7 +277,6 @@ export default function CallRoom({ state }) {
             <button type="button" className="call-panel-close" aria-label="Close" onClick={() => setPanel(null)}><Icon name="close" /></button>
             {panel === 'people' && <PeoplePanel state={state} />}
             {panel === 'devices' && <DevicesPanel state={state} />}
-            {panel === 'desktop' && <DesktopPanel alone={!peers.length} />}
           </aside>
         )}
       </div>
@@ -322,7 +287,6 @@ export default function CallRoom({ state }) {
         {canShareScreen() && <ControlButton icon="screenShare" label={state.sharing ? 'Stop sharing' : 'Share screen'} on={state.sharing} onClick={toggleScreen} />}
         <ControlButton icon="hand" label={state.hand ? 'Lower hand' : 'Raise hand'} on={state.hand} onClick={toggleHand} />
         <ControlButton icon="personAdd" label="People" on={panel === 'people'} badge={peers.filter((peer) => peer.hand).length} onClick={() => setPanel(panel === 'people' ? null : 'people')} />
-        <ControlButton icon="computer" label="Remote desktop" on={panel === 'desktop'} onClick={() => setPanel(panel === 'desktop' ? null : 'desktop')} />
         <ControlButton icon="settings" label="Devices" on={panel === 'devices'} onClick={() => setPanel(panel === 'devices' ? null : 'devices')} />
         <ControlButton icon="callEnd" label="Leave" danger onClick={hangUp} />
       </footer>

@@ -255,11 +255,3 @@ which only rings people and passes on connection details. Calls need HTTPS.
 Direct connections are blocked on many office and mobile networks. For calls to work everywhere, run
 a TURN server (such as coturn) on a host that allows it, and set `CALL_TURN_URLS` and
 `CALL_TURN_SECRET` (see `server/.env.example`). Without one, some calls will ring and then not connect.
-
-## Remote desktop
-
-Settings → Remote desktop saves computers to connect to, and people in a call can share one. Browsers
-can't speak RDP, so Nextspace downloads a `.rdp` file that opens in the device's own Remote Desktop
-app, which asks for the password; Nextspace never sees it. A connection someone else shared opens
-without access to this computer's files or clipboard. The computer must be reachable from the device,
-directly, over a VPN or through an RD Gateway.

@@ -2984,8 +2984,6 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 }
 .call-notice > span { flex: 1; min-width: 0; }
 .call-notice > button:not(.btn) { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: none; color: inherit; }
-.call-notice.desktop { background: #1c2f52; color: #dbe7ff; }
-.call-notice .btn { flex: none; color: #12161f; }
 
 .call-room-body { position: relative; flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 16px; }
 .call-grid { flex: 1; min-width: 0; display: grid; gap: 10px; }
@@ -3028,7 +3026,6 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .call-panel h3:not(:first-of-type) { margin-top: 20px; }
 .call-panel-close { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 10px; background: none; color: #a4adbd; }
 .call-panel-note { margin: 0 0 10px; color: #a4adbd; line-height: 1.45; }
-.call-panel-note.strong { color: #dbe7ff; }
 .call-panel-error { margin: 0 0 10px; color: #ffb4ab; }
 .call-people { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .call-people li { display: flex; align-items: center; gap: 10px; min-height: 44px; }
@@ -3078,18 +3075,6 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .incoming-call-alt { min-height: 40px; border: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 600; }
 .incoming-call-alt:hover { color: var(--text); }
 
-/* Settings → Remote desktop */
-.remote-desktops { display: grid; gap: 14px; }
-.remote-desktops > p { margin: 0; line-height: 1.5; }
-.remote-desktop-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.remote-desktop-list li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; }
-.remote-desktop-name { flex: 1; min-width: 0; display: grid; gap: 1px; overflow-wrap: anywhere; }
-.remote-desktops > .btn { justify-self: start; }
-.remote-desktop-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.remote-desktop-form label { display: grid; gap: 5px; font-size: 13px; font-weight: 500; }
-.remote-desktop-form input { width: 100%; height: 40px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-.remote-desktop-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
-
 @media (max-width: 800px) {
   .call-room-body { padding: 0 8px; }
   .call-grid.count-2, .call-grid.count-3, .call-grid.count-4 { grid-template: repeat(2, 1fr) / 1fr; }
@@ -3106,9 +3091,6 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
   .call-control { flex: none; min-width: 66px; }
   .call-mini { bottom: calc(150px + env(safe-area-inset-bottom)); width: 200px; }
   .call-mini-picture { height: 112px; }
-  .remote-desktop-form { grid-template-columns: 1fr; }
-  .remote-desktop-list li { flex-wrap: wrap; }
-  .remote-desktop-name { flex-basis: calc(100% - 40px); }
 }
 
 @media (min-width: 801px) {
@@ -3116,3 +3098,18 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
   .call-mini { right: auto; left: 88px; }
 }
 .call-mini .call-tile-hand { right: auto; left: 8px; top: 8px; }
+
+/* ---------- /install ---------- */
+.install-page { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px 16px; overflow: auto; }
+.install-card { width: min(420px, 100%); display: grid; gap: 14px; padding: 28px 24px; border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); animation: rise-in 0.25s var(--ease-out); }
+.install-brand { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 700; }
+.install-card h1 { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; font-size: 24px; font-weight: 700; }
+.install-card h1 svg { color: var(--green); }
+.install-lead { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
+.install-button { min-height: 52px; font-size: 16px; }
+.install-card a.btn { text-decoration: none; }
+.install-steps { display: grid; gap: 10px; margin: 4px 0; padding-left: 22px; font-size: 15px; line-height: 1.5; }
+.install-note { margin: 0; color: var(--muted); font-size: 13px; }
+.install-skip { justify-self: center; padding: 10px; color: var(--brand); font-size: 14px; font-weight: 600; text-decoration: none; }
+.install-alt .btn { background: none; border-color: var(--border); color: var(--text); }
+.install-foot { margin: 0; color: var(--muted); font-size: 13px; text-align: center; }

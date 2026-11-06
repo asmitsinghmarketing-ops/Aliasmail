@@ -95,7 +95,6 @@ function startEvents() {
   sse.addEventListener('call-ended', (event) => emit({ type: 'call-ended', ...JSON.parse(event.data) }));
   sse.addEventListener('call-room', (event) => emit({ type: 'call-room', call: JSON.parse(event.data) }));
   sse.addEventListener('call-signal', (event) => emit({ type: 'call-signal', ...JSON.parse(event.data) }));
-  sse.addEventListener('call-desktop', (event) => emit({ type: 'call-desktop', shared: JSON.parse(event.data) }));
   sse.addEventListener('notification', (event) => emit({ type: 'notification', notification: JSON.parse(event.data) }));
 }
 

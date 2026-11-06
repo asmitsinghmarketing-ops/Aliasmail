@@ -25,7 +25,6 @@ const empty = () => ({
   notifications: [], // persistent in-app notifications for assignments and other team activity
   tasks: { projects: [], items: [], activity: [] }, // shared team projects and tasks (routes/tasks.js)
   automations: { items: [], runs: [] }, // user-built, AI-planned allowlisted workflows
-  remoteDesktops: [], // saved RDP connections, per person, without passwords (routes/remote-desktops.js)
   assistant: { chats: [], usage: {}, limits: { monthlyUsd: 50, perPersonUsd: 20 } }, // the Assistant (assistant.js)
   sync: { lastSyncAt: null, lastError: null },
 });
@@ -54,6 +53,12 @@ export async function load() {
     }
     withMessagesAlias(data);
     for (const [k, v] of Object.entries(data)) written[k] = JSON.stringify(v);
+    // Remote desktop was removed. Empty what it saved (computer and user names): writes only touch
+    // keys that changed, so deleting the key would leave the old values in the database.
+    if (data.remoteDesktops?.length) {
+      data.remoteDesktops = [];
+      save();
+    }
   }
   return data;
 }

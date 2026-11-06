@@ -28,7 +28,6 @@ const IDLE = {
   localAudio: null,
   notice: '',
   endReason: '',
-  sharedDesktops: [],
   startedAt: null,
 };
 
@@ -285,8 +284,6 @@ function onLive(message) {
   else if (message.type === 'call-signal' && message.id === state.call?.id && message.to === state.me) {
     const connection = connect(message.from);
     connection.work = connection.work.then(() => handleSignal(connection, message.data)).catch(() => {});
-  } else if (message.type === 'call-desktop' && message.shared.id === state.call?.id) {
-    set({ sharedDesktops: [...state.sharedDesktops.filter((item) => item.host !== message.shared.host), message.shared] });
   } else if (message.type === 'open' && state.call) {
     // Back online after a dropped connection: catch up on anything missed meanwhile.
     api(path()).then(applyCall).catch(() => {});
@@ -296,7 +293,7 @@ function onLive(message) {
 function enter({ call, peerId, iceServers: servers }, notice) {
   iceServers = servers;
   clearTimeout(endedTimer);
-  set({ phase: 'in-call', call, me: peerId, notice, muted: false, hand: false, sharedDesktops: [], startedAt: null });
+  set({ phase: 'in-call', call, me: peerId, notice, muted: false, hand: false, startedAt: null });
   publishLocal();
   stopLive = subscribeLive(onLive);
   checkIn = setInterval(sendState, CHECK_IN_MS);
@@ -400,10 +397,6 @@ export function toggleHand() {
 export const clearNotice = () => set({ notice: '' });
 
 export const inviteToCall = (to) => api(path('/invite'), { method: 'POST', body: { peerId: state.me, to } }).then(applyCall);
-
-export const shareRemoteDesktop = (connectionId) => api(path('/remote-desktop'), { method: 'POST', body: { peerId: state.me, connectionId } });
-
-export const dismissSharedDesktop = (host) => set({ sharedDesktops: state.sharedDesktops.filter((item) => item.host !== host) });
 
 /** Change microphone or camera during a call. */
 export async function chooseDevice(kind, deviceId) {

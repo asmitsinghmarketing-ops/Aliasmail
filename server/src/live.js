@@ -105,12 +105,10 @@ export function attachLive(server) {
     const onCall = (to, call) => to === who && send(ws, { type: 'incoming-call', call });
     const onCallRoom = (to, call) => to === who && send(ws, { type: 'call-room', call });
     const onCallSignal = (to, signal) => to === who && send(ws, { type: 'call-signal', ...signal });
-    const onCallDesktop = (to, shared) => to === who && send(ws, { type: 'call-desktop', shared });
     const onCallEnded = (to, response) => to === who && send(ws, { type: 'call-ended', ...response });
     callEvents.on('call', onCall);
     callEvents.on('room', onCallRoom);
     callEvents.on('signal', onCallSignal);
-    callEvents.on('desktop', onCallDesktop);
     callEvents.on('ended', onCallEnded);
 
     // Heartbeat: a socket that stops answering pings is closed (the browser reconnects).
@@ -168,7 +166,6 @@ export function attachLive(server) {
       callEvents.off('call', onCall);
       callEvents.off('room', onCallRoom);
       callEvents.off('signal', onCallSignal);
-      callEvents.off('desktop', onCallDesktop);
       callEvents.off('ended', onCallEnded);
       leave(ws, who);
     });

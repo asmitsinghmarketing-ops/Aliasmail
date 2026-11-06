@@ -10,7 +10,6 @@ import { personOf, teammates } from '../team.js';
 import { callEvents } from '../mail-events.js';
 import { createNotification } from '../notifications.js';
 import { notify } from '../push.js';
-import { connectionFor } from './remote-desktops.js';
 
 const router = Router();
 router.use(requireAuth());
@@ -252,18 +251,6 @@ router.post('/:id/signal', (req, res) => {
   const data = req.body?.data;
   if (!data || typeof data !== 'object' || JSON.stringify(data).length > MAX_SIGNAL_BYTES) throw new HttpError(400, 'Invalid call data');
   callEvents.emit('signal', to.address, { id: call.id, from: peerId, to: String(req.body.to), data });
-  res.status(204).end();
-});
-
-/** Offer one of my saved remote desktops to the others in the call. Sign-in details stay behind. */
-router.post('/:id/remote-desktop', (req, res) => {
-  const { call, me } = peerFor(req);
-  const connection = connectionFor(me, String(req.body?.connectionId || ''));
-  if (!connection) throw new HttpError(404, 'Remote desktop not found');
-  const shared = { id: call.id, from: me, fromName: nameOf(me), name: connection.name, host: connection.host, port: connection.port, gateway: connection.gateway };
-  for (const address of new Set([...call.peers.values()].map((peer) => peer.address))) {
-    if (address !== me) callEvents.emit('desktop', address, shared);
-  }
   res.status(204).end();
 });
 
