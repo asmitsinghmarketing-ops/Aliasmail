@@ -1,6 +1,6 @@
 // Settings → Google apps: connect Drive and Meet together in one Google screen, or one at a time.
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, fetchRemembered, lastSeen } from '../api.js';
 import { formatDate } from '../format.js';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
@@ -146,10 +146,10 @@ function NewSpace() {
 }
 
 export default function GoogleApps() {
-  const [status, setStatus] = useState(null);
+  const [status, setStatus] = useState(() => lastSeen('/auth/mfa'));
   const [error, setError] = useState('');
   const load = useCallback(() => {
-    api('/auth/mfa')
+    fetchRemembered('/auth/mfa')
       .then(setStatus)
       .catch((err) => setError(err.message));
   }, []);

@@ -5,6 +5,7 @@ export const LOGOUT_EVENT = 'aliasmail:logout';
 export const MAILBOX_REVOKED_EVENT = 'aliasmail:mailbox-revoked';
 const mailboxLists = new Map();
 const mailboxPrefetches = new Map();
+const remembered = new Map();
 let accountEpoch = 0;
 let mailboxListEpoch = 0;
 export const cachedMailboxList = (path) => mailboxLists.get(path) || null;
@@ -14,6 +15,7 @@ export function clearMailCaches() {
   mailboxLists.clear();
   mailboxPrefetches.clear();
   messageCache.clear();
+  remembered.clear();
 }
 window.addEventListener(LOGOUT_EVENT, () => setActiveMailbox(null));
 
@@ -85,11 +87,26 @@ export async function api(path, options) {
     mailboxLists.delete(path);
     mailboxLists.set(path, data);
     if (mailboxLists.size > 60) mailboxLists.delete(mailboxLists.keys().next().value);
+  } else if (options?.method && options.method !== 'GET' && path.startsWith('/auth/')) {
+    // Security settings may just have changed: never show the old state, even for a moment.
+    remembered.delete('/auth/mfa');
+    remembered.delete('/auth/sessions');
   } else if (options?.method && options.method !== 'GET' && path.startsWith('/mail/')) {
     mailboxListEpoch++;
     mailboxLists.clear();
     mailboxPrefetches.clear();
   }
+  return data;
+}
+
+// The last answer for a screen, so it can show at once and refresh behind the scenes (Settings).
+// Kept in memory only, and forgotten on sign-out or when switching mailbox (clearMailCaches).
+export const lastSeen = (key) => remembered.get(key) ?? null;
+export const remember = (key, value) => remembered.set(key, value);
+export async function fetchRemembered(key, fetcher = () => api(key)) {
+  const epoch = accountEpoch;
+  const data = await fetcher();
+  if (epoch === accountEpoch) remembered.set(key, data);
   return data;
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { api } from '../api.js';
+import { api, fetchRemembered, lastSeen, remember } from '../api.js';
+import { status as notificationStatus } from '../notifications.js';
 import Avatar, { checkImageFile } from './Avatar.jsx';
 import AvatarCropper from './AvatarCropper.jsx';
 import RichEditor, { htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
@@ -74,7 +75,9 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
       .then((info) => setGoogleOn(Boolean(info.drive || info.meet || info.chat)))
       .catch(() => {});
   }, []);
-  const [form, setForm] = useState(null);
+  const [known] = useState(() => lastSeen('/mail/settings'));
+  const [form, setForm] = useState(known);
+  const [editorVersion, setEditorVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [cropping, setCropping] = useState(null); // the picked photo, being positioned
@@ -83,10 +86,22 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
   const [signatureMode, setSignatureMode] = useState('visual');
 
   useEffect(() => {
-    api('/mail/settings')
-      .then(setForm)
-      .catch((err) => setError(err.message));
-  }, []);
+    // What we already know is on screen; only take the fresh copy if nothing has been edited and it
+    // differs. The signature editor keeps its own text, so it starts over from the new copy.
+    fetchRemembered('/mail/settings')
+      .then((fresh) => {
+        if (!known) return setForm(fresh);
+        if (JSON.stringify(fresh) === JSON.stringify(known)) return undefined;
+        setForm((current) => (current === known ? fresh : current));
+        setEditorVersion((v) => v + 1);
+        return undefined;
+      })
+      .catch((err) => { if (!known) setError(err.message); });
+    // Get the other tabs ready too, so that switching to them is instant.
+    fetchRemembered('/auth/mfa').catch(() => {});
+    fetchRemembered('/auth/sessions').catch(() => {});
+    fetchRemembered('push-status', notificationStatus).catch(() => {});
+  }, [known]);
 
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
 
@@ -109,6 +124,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
     setError('');
     try {
       const saved = await api('/mail/settings/avatar', { method: 'POST', body: { image } });
+      remember('/mail/settings', saved);
       setForm((f) => ({ ...f, avatarUrl: saved.avatarUrl }));
       onAvatarChange(saved.avatarUrl);
     } catch (err) {
@@ -121,7 +137,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
   async function removeAvatar() {
     setUploading(true);
     try {
-      await api('/mail/settings/avatar', { method: 'DELETE' });
+      remember('/mail/settings', await api('/mail/settings/avatar', { method: 'DELETE' }));
       setForm((f) => ({ ...f, avatarUrl: null }));
       onAvatarChange(null);
     } catch (err) {
@@ -137,7 +153,9 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
     setError('');
     try {
       const { displayName, signature, signatureHtml } = form;
-      onSaved(await api('/mail/settings', { method: 'PATCH', body: { displayName, signature, signatureHtml: signatureHtml ? sanitizeHtml(signatureHtml) : '' } }));
+      const saved = await api('/mail/settings', { method: 'PATCH', body: { displayName, signature, signatureHtml: signatureHtml ? sanitizeHtml(signatureHtml) : '' } });
+      remember('/mail/settings', saved);
+      onSaved(saved);
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -204,7 +222,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
               {signatureMode === 'visual' ? (
                 <div className="signature-editor">
                   <RichEditor
-                    key="signature-visual"
+                    key={`signature-visual-${editorVersion}`}
                     initialHtml={form.signatureHtml || htmlFromText(form.signature)}
                     onChange={({ html, text }) => setForm((f) => ({ ...f, signature: text, signatureHtml: text || html.includes('<img') ? html : '' }))}
                     placeholder={'Best regards,\nJohn'}

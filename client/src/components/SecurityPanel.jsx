@@ -1,6 +1,6 @@
 // Settings → Security: 2-step verification, signed-in devices and password.
 import { useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, fetchRemembered, lastSeen } from '../api.js';
 import { formatDate, timeAgo } from '../format.js';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
@@ -52,8 +52,8 @@ function ConfirmIdentity({ needsCode, submitLabel, danger, onSubmit, onCancel })
 }
 
 export default function SecurityPanel({ account, owner }) {
-  const [status, setStatus] = useState(null);
-  const [sessions, setSessions] = useState([]);
+  const [status, setStatus] = useState(() => lastSeen('/auth/mfa'));
+  const [sessions, setSessions] = useState(() => lastSeen('/auth/sessions') || []);
   const [mode, setMode] = useState(null); // 'setup' | 'codes' | 'disable' | 'regenerate'
   const [codes, setCodes] = useState(null);
   const [passwords, setPasswords] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
@@ -86,7 +86,7 @@ export default function SecurityPanel({ account, owner }) {
   }
 
   const load = () =>
-    Promise.all([api('/auth/mfa'), api('/auth/sessions')])
+    Promise.all([fetchRemembered('/auth/mfa'), fetchRemembered('/auth/sessions')])
       .then(([s, list]) => {
         setStatus(s);
         setSessions(list);

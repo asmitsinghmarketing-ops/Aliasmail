@@ -1,16 +1,17 @@
 // Settings → Notifications: new mail and instant notes on this device, even when Nextspace is
 // closed. Per device: each phone or computer is turned on separately.
 import { useEffect, useState } from 'react';
+import { fetchRemembered, lastSeen } from '../api.js';
 import { disable, enable, installed, isIos, setKinds, status, supported, test } from '../notifications.js';
 import Icon from './Icon.jsx';
 import { TextSkeleton } from './Loading.jsx';
 
 export default function NotificationSettings() {
-  const [state, setState] = useState(null);
+  const [state, setState] = useState(() => lastSeen('push-status'));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null); // { tone, text }
 
-  const load = () => status().then(setState).catch((err) => setMessage({ tone: 'error', text: err.message }));
+  const load = () => fetchRemembered('push-status', status).then(setState).catch((err) => setMessage({ tone: 'error', text: err.message }));
   useEffect(() => { load(); }, []);
 
   const run = async (fn, done) => {
