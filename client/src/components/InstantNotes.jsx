@@ -8,6 +8,7 @@ import { formatDate, formatSize } from '../format.js';
 import { notify, onlineNow, request, subscribe } from '../live.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
+import { PeopleSkeleton } from './Loading.jsx';
 import { createMeeting } from '../meet.js';
 
 const MAX_FILES = 5;
@@ -375,7 +376,7 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
               </span>
             </button>
           )}
-          {!threads && <div className="muted notes-empty">Loading…</div>}
+          {!threads && <PeopleSkeleton />}
           {threads?.length === 0 && <div className="muted notes-empty">Nobody else on your team yet. The admin adds people in the Admin console.</div>}
           {threads?.map((t) => (
             <button key={keyOf(t)} type="button" className={`notes-thread ${t.unread ? 'unread' : ''}`} onClick={() => open(t)}>

@@ -4,6 +4,7 @@ import Avatar, { checkImageFile } from './Avatar.jsx';
 import AvatarCropper from './AvatarCropper.jsx';
 import RichEditor, { htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
 import Icon from './Icon.jsx';
+import { TextSkeleton } from './Loading.jsx';
 import SecurityPanel from './SecurityPanel.jsx';
 import GoogleApps from './GoogleApps.jsx';
 import NotificationSettings from './NotificationSettings.jsx';
@@ -146,7 +147,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
   function profileTab() {
     return (
       <form className="settings-form" onSubmit={save}>
-        {!form && !error && <div className="muted">Loading…</div>}
+        {!form && !error && <TextSkeleton lines={6} />}
         {form && (
           <>
             <div
@@ -294,7 +295,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
         ))}
       </div>
       <div className="view-enter settings-body" key={tab}>
-        {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : tab === 'notifications' ? <NotificationSettings /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <div className="muted">Loading…</div>}
+        {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : tab === 'notifications' ? <NotificationSettings /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <TextSkeleton lines={4} />}
       </div>
       {privateHelp && <PrivateTabHelp onClose={() => setPrivateHelp(false)} />}
       {cropping && <AvatarCropper file={cropping} onCancel={() => setCropping(null)} onDone={saveAvatar} />}

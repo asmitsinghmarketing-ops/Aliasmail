@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { disable, enable, installed, isIos, setKinds, status, supported, test } from '../notifications.js';
 import Icon from './Icon.jsx';
+import { TextSkeleton } from './Loading.jsx';
 
 export default function NotificationSettings() {
   const [state, setState] = useState(null);
@@ -58,7 +59,7 @@ export default function NotificationSettings() {
       <p className="muted">Get notifications for mail, tasks, notes and incoming calls, even when Nextspace is closed. Turn it on separately on each phone or computer.</p>
 
       {!state ? (
-        <p className="muted">Checking…</p>
+        <TextSkeleton />
       ) : (
         <>
           <div className="notify-row">

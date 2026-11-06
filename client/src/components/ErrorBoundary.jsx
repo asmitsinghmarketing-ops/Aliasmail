@@ -1,6 +1,22 @@
 // If something on the page breaks, say so (with a way back) instead of leaving a blank screen,
 // and send the details to the server's log so the cause can be found.
 import React from 'react';
+import { hideBoot } from './Loading.jsx';
+
+// After a new version goes live, a page left open asks for code files that no longer exist. Loading
+// the page again fixes that, so do it once without troubling anyone.
+const RELOAD_KEY = 'nextspace-reloaded-for-update';
+function reloadForNewVersion(error) {
+  if (!/dynamically imported module|importing a module script failed|error loading dynamically/i.test(String(error?.message))) return false;
+  try {
+    if (Date.now() - Number(sessionStorage.getItem(RELOAD_KEY) || 0) < 60_000) return false;
+    sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
+  } catch {
+    return false;
+  }
+  window.location.reload();
+  return true;
+}
 
 const firstLines = (text, n) => String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).slice(0, n).join('\n');
 
@@ -12,6 +28,8 @@ export default class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, info) {
+    hideBoot();
+    if (reloadForNewVersion(error)) return;
     console.error('Nextspace page error:', error, info?.componentStack);
     const where = firstLines(info?.componentStack, 4);
     this.setState({ where });

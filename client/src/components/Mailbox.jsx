@@ -1,7 +1,6 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, cachedMailboxList, prefetchMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
-import Compose from './Compose.jsx';
 import { escapeHtml, htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
 import { withDriveLinks } from '../drivePicker.js';
 import { uploadAttachments, uploadProgress } from '../attachmentUpload.js';
@@ -13,15 +12,19 @@ import Icon from './Icon.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
 import { LabelMenu, Popover, TimeMenu, shortTime, snoozeOptions } from './Menus.jsx';
 import MessageView from './MessageView.jsx';
-import MeetDialog from './MeetDialog.jsx';
 import InstantNotes from './InstantNotes.jsx';
 import NotifyPrompt from './NotifyPrompt.jsx';
-import Assistant from './Assistant.jsx';
 import { subscribe } from '../live.js';
 import { meetingText } from '../meet.js';
 import Pager from './Pager.jsx';
-import Settings from './Settings.jsx';
 import NotificationCenter from './NotificationCenter.jsx';
+import { lazyPage, MailListSkeleton, OpeningPill, TextSkeleton, whenIdle } from './Loading.jsx';
+
+// Opened on demand, and fetched as soon as the mailbox is idle so that opening them is instant.
+const Compose = lazyPage(() => import('./Compose.jsx'));
+const Settings = lazyPage(() => import('./Settings.jsx'));
+const Assistant = lazyPage(() => import('./Assistant.jsx'));
+const MeetDialog = lazyPage(() => import('./MeetDialog.jsx'));
 
 // Gmail's folders, in Gmail's order. `count` is the key in /mail/folders shown beside it;
 // `color` tints the folder's icon tile in the sidebar.
@@ -477,19 +480,15 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         return { ...data, view: path, items: [...data.items, ...prev.items.slice(data.items.length).filter((i) => !fresh.has(i.id))], scrolledPages: prev.scrolledPages };
       };
       if (cached) { setList(keepScrolled(cached)); setLoading(false); }
-      const [data, folderCounts] = await Promise.all([
-        api(path).then((data) => {
-          if (request === loadRequest.current) {
-            setList(keepScrolled(data));
-            setLoading(false);
-          }
-          return data;
-        }),
-        api('/mail/folders'),
-      ]);
+      const data = await api(path).then((data) => {
+        if (request === loadRequest.current) {
+          setList(keepScrolled(data));
+          setLoading(false);
+        }
+        return data;
+      });
       if (request !== loadRequest.current) return;
       setList(keepScrolled(data));
-      setCounts(folderCounts);
       setError('');
     } catch (err) {
       if (request === loadRequest.current) setError(err.message);
@@ -499,6 +498,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   }, [folder, category, page, search, phone]);
   latestLoad.current = load;
 
+  useEffect(() => whenIdle(() => {
+    Compose.preload();
+    Settings.preload();
+    Assistant.preload();
+    MeetDialog.preload();
+  }), []);
+
   useEffect(() => {
     setLoading(!cachedMailboxList(listPath(folder, page, search, category)));
     setSelected(new Set());
@@ -506,9 +512,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     load();
     if (firstMailboxLoad.current) {
       firstMailboxLoad.current = false;
-      // Startup sync runs in the API process. Refresh the cached list when it finishes so a
-      // newly deployed app doesn't leave the first mailbox view empty until the 30s poll.
-      api('/mail/refresh', { method: 'POST' }).then(() => latestLoad.current?.()).catch(() => {});
+      // Sync runs in the API process. Do not start a mailbox connection on every tab/window;
+      // the live sync loop will populate a newly deployed mailbox shortly.
     }
     // Poll only while the page is on screen; catch up at once when it comes back (a phone
     // waking up, a tab brought to the front, the network returning).
@@ -526,33 +531,29 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     };
   }, [load]);
 
-  // Fill the lightweight list cache while the browser is idle. These requests deliberately
-  // skip message bodies on the server, so every folder becomes quick without creating a burst
-  // of expensive mailbox downloads. Data Saver users only load the folder they open.
+  // Counts are independent from the visible list. Fetch them once for the sidebar and refresh
+  // at a slower cadence instead of making every list poll wait on a second server query.
+  useEffect(() => {
+    let active = true;
+    const refreshCounts = () => api('/mail/folders').then((data) => active && setCounts(data)).catch(() => {});
+    refreshCounts();
+    const timer = window.setInterval(refreshCounts, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [me]);
+
+  // Load only the current list at startup. Warming every folder creates a request burst and
+  // competes with the first useful paint, especially for shared mailboxes.
   useEffect(() => {
     if (navigator.connection?.saveData) return undefined;
-    const paths = [
-      ...CATEGORY_TABS.map((tab) => listPath('inbox', 1, '', tab.id)),
-      ...FOLDERS.filter((item) => !item.onlyWhenUsed && item.id !== 'inbox').map((item) => listPath(item.id)),
-      ...labels.slice(0, 30).map((label) => listPath(`label:${label.id}`)),
-    ];
-    let stopped = false;
-    const warmLists = async () => {
-      for (const path of paths) {
-        if (stopped) return;
-        await prefetchMailboxList(path);
-      }
-    };
-    let idle;
-    let timer;
-    if ('requestIdleCallback' in window) idle = window.requestIdleCallback(warmLists, { timeout: 2500 });
-    else timer = window.setTimeout(warmLists, 750);
-    return () => {
-      stopped = true;
-      if (idle !== undefined) window.cancelIdleCallback(idle);
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [labels, me]);
+    const nextFolder = folder === 'inbox' ? 'sent' : 'inbox';
+    const id = window.setTimeout(() => {
+      prefetchMailboxList(listPath(nextFolder, 1, '', nextFolder === 'inbox' ? category : 'primary'));
+    }, 1200);
+    return () => window.clearTimeout(id);
+  }, [folder, category, me]);
 
   // The live connection (live.js): mail changes and instant notes, the moment they happen.
   useEffect(() => {
@@ -1802,6 +1803,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
         <main className="content">
           {modal === 'settings' && !shared ? (
+            <Suspense fallback={<div className="settings-loading"><TextSkeleton lines={6} /></div>}>
             <Settings
               initialTab={settingsTab}
               color={user.color}
@@ -1817,6 +1819,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 flash('Settings saved.');
               }}
             />
+            </Suspense>
           ) : open ? (
             <MessageView
               key={`${open.kind}:${open.id}`}
@@ -2022,7 +2025,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
               {sendingRows}
               <div className="rows">
-                {loading && <div className="loading-lines list"><span /><span /><span /><span /></div>}
+                {loading && <MailListSkeleton />}
                 {!loading && list.items.length === 0 && !sendingRows && (
                   <div className="empty">
                     <Icon name={search ? 'search' : 'inbox'} size={40} className="empty-icon" />
@@ -2119,7 +2122,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                   ))}
                 {!loading && hasMore && (
                   <div ref={moreSentinel} className="list-more-loading" aria-live="polite">
-                    {loadingMore ? 'Loading more…' : ''}
+                    {loadingMore && <span className="loading-more"><Icon name="refresh" size={16} /> Loading more</span>}
                   </div>
                 )}
               </div>
@@ -2129,6 +2132,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       </div>
 
       {draft && (
+        <Suspense fallback={<OpeningPill />}>
         <Compose
           key={JSON.stringify({ ...draft, files: draft.files?.length })}
           from={user.displayName ? `${user.displayName} <${me}>` : me}
@@ -2142,14 +2146,17 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           driveOn={driveOn}
           meetOn={meetOn}
         />
+        </Suspense>
       )}
 
       {assistantOpen && !shared && (
+        <Suspense fallback={<OpeningPill />}>
         <Assistant
           status={assistantStatus}
           onClose={() => setAssistantOpen(false)}
           actions={assistantActions}
         />
+        </Suspense>
       )}
 
       {notesOpen && (
@@ -2163,6 +2170,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       )}
 
       {modal === 'meet' && (
+        <Suspense fallback={<OpeningPill />}>
         <MeetDialog
           onClose={() => setModal(null)}
           onEmail={(meeting) => {
@@ -2170,6 +2178,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             setDraft({ to: meeting.guests.join(', '), subject: meeting.title, html: htmlFromText(meetingText(meeting)) + signatureBlock() });
           }}
         />
+        </Suspense>
       )}
 
       {modal === 'shortcuts' && (

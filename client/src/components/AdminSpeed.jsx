@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { formatDate, timeAgo } from '../format.js';
 import Icon from './Icon.jsx';
+import { PanelSkeleton } from './Loading.jsx';
 
 const HOPS = {
   uploadWait: { label: 'Attachment upload (wait)', color: '#adb5bd' },
@@ -218,7 +219,7 @@ export default function AdminSpeed() {
   }, [load]);
 
   if (error) return <div className="alert">{error}</div>;
-  if (!data) return <div className="empty">Loading…</div>;
+  if (!data) return <PanelSkeleton />;
 
   const sends = data.sends || [];
   const receives = data.receives || [];

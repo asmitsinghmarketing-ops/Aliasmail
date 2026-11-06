@@ -1,14 +1,20 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { api, LOGOUT_EVENT, MAILBOX_REVOKED_EVENT, setActiveMailbox, signOut } from './api.js';
 import Login from './components/Login.jsx';
-import Mailbox from './components/Mailbox.jsx';
-import Admin from './components/Admin.jsx';
+import { hideBoot, lazyPage, ShellSkeleton, whenIdle } from './components/Loading.jsx';
 import { DialogHost } from './components/Dialog.jsx';
 import UpdateNotice from './components/UpdateNotice.jsx';
-import Tasks from './components/Tasks.jsx';
 import AriaTooltip from './components/AriaTooltip.jsx';
-import CallCenter from './components/CallCenter.jsx';
-import Automations from './components/Automations.jsx';
+
+const Mailbox = lazyPage(() => import('./components/Mailbox.jsx'));
+const Admin = lazyPage(() => import('./components/Admin.jsx'));
+const Tasks = lazyPage(() => import('./components/Tasks.jsx'));
+const CallCenter = lazyPage(() => import('./components/CallCenter.jsx'));
+const Automations = lazyPage(() => import('./components/Automations.jsx'));
+
+// Start on the mailbox's code straight away, while the sign-in check runs, so one doesn't wait for
+// the other. The sign-in page doesn't depend on it and shows as soon as the check answers.
+Mailbox.preload();
 
 const OWNER_COLOR = '#e8590c';
 
@@ -71,6 +77,23 @@ function Screen() {
     return () => navigator.serviceWorker?.removeEventListener('message', onOpen);
   }, []);
 
+  // The logo screen stays up until the sign-in check has answered.
+  useEffect(() => {
+    if (!checking) hideBoot();
+  }, [checking]);
+
+  // Once signed in, fetch the other screens in the background so switching to them is instant.
+  const signedIn = Boolean(user);
+  const isAdmin = user?.role === 'admin';
+  useEffect(() => {
+    if (!signedIn) return undefined;
+    return whenIdle(() => {
+      Tasks.preload();
+      Automations.preload();
+      if (isAdmin) Admin.preload();
+    });
+  }, [signedIn, isAdmin]);
+
   const logout = async () => {
     switchMailbox(null);
     await signOut();
@@ -78,7 +101,7 @@ function Screen() {
     setWorkspace('mail');
   };
 
-  if (checking) return <div className="splash">Loading…</div>;
+  if (checking) return null;
   if (!user) {
     return (
       <Login
@@ -100,35 +123,41 @@ function Screen() {
     user.role === 'admin' ? (u) => setUser({ ...user, displayName: u.displayName, avatarUrl: u.avatarUrl }) : (u) => setUser({ ...user, ...u });
 
   // The admin is the owner of the main mailbox address: a full mailbox, plus the console.
-  if (user.role === 'admin' && (adminView === 'console' || !user.mailbox)) {
-    return (
-      <><Admin
-          user={user}
-          onLogout={logout}
-          onRolesChanged={refreshAccount}
-          onOpenMail={user.mailbox ? () => setAdminView('mail') : null}
-        /><CallCenter /></>
-    );
-  }
-
   const sharedBox = shared ? user.mailboxes?.find((m) => m.address === shared) : null;
   const view = sharedBox ? { ...own, email: sharedBox.address, displayName: sharedBox.displayName, color: sharedBox.color, avatarUrl: sharedBox.avatarUrl } : own;
-  if (workspace === 'tasks') return <><Tasks user={user} startTask={taskToOpen} onClose={() => { setTaskToOpen(null); setWorkspace('mail'); }} /><CallCenter /></>;
-  if (workspace === 'automations') return <><Automations onClose={() => setWorkspace('mail')} /><CallCenter /></>;
+  const inConsole = user.role === 'admin' && (adminView === 'console' || !user.mailbox);
   return (
-    <><Mailbox
-        key={sharedBox ? `shared:${sharedBox.address}` : 'own'}
-        user={view}
-        account={own}
-        mailboxes={user.mailboxes || []}
-        shared={sharedBox}
-        onSwitchMailbox={switchMailbox}
-        onRefreshMailboxes={refreshAccount}
-        onLogout={logout}
-        onUserChange={onUserChange}
-        onOpenAdmin={user.role === 'admin' ? () => setAdminView('console') : undefined}
-        onOpenTasks={() => setWorkspace('tasks')}
-        onOpenAutomations={() => setWorkspace('automations')}
-      /><CallCenter /></>
+    <>
+    <Suspense fallback={<ShellSkeleton plain={inConsole || workspace !== 'mail'} />}>
+      {inConsole ? (
+        <Admin
+            user={user}
+            onLogout={logout}
+            onRolesChanged={refreshAccount}
+            onOpenMail={user.mailbox ? () => setAdminView('mail') : null}
+          />
+      ) : workspace === 'tasks' ? (
+        <Tasks user={user} startTask={taskToOpen} onClose={() => { setTaskToOpen(null); setWorkspace('mail'); }} />
+      ) : workspace === 'automations' ? (
+        <Automations onClose={() => setWorkspace('mail')} />
+      ) : (
+        <Mailbox
+            key={sharedBox ? `shared:${sharedBox.address}` : 'own'}
+            user={view}
+            account={own}
+            mailboxes={user.mailboxes || []}
+            shared={sharedBox}
+            onSwitchMailbox={switchMailbox}
+            onRefreshMailboxes={refreshAccount}
+            onLogout={logout}
+            onUserChange={onUserChange}
+            onOpenAdmin={user.role === 'admin' ? () => setAdminView('console') : undefined}
+            onOpenTasks={() => setWorkspace('tasks')}
+            onOpenAutomations={() => setWorkspace('automations')}
+          />
+      )}
+    </Suspense>
+    <Suspense fallback={null}><CallCenter /></Suspense>
+    </>
   );
 }

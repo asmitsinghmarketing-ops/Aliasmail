@@ -34,7 +34,7 @@ h1, h2 { margin: 0; }
 .small { font-size: 12px; }
 .nowrap { white-space: nowrap; }
 .push-right { margin-left: auto; }
-.splash, .empty { padding: 48px 16px; text-align: center; color: var(--muted); }
+.empty { padding: 48px 16px; text-align: center; color: var(--muted); }
 
 /* ---------- buttons ---------- */
 .btn {
@@ -424,16 +424,6 @@ label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; }
   display: flex; align-items: center; gap: 12px; justify-content: center; padding: 10px 16px;
   background: #fff9db; color: #5c4813; border-bottom: 1px solid var(--border);
 }
-.loading-lines { display: grid; gap: 10px; padding: 8px 0; }
-.loading-lines.list { padding: 16px 22px; gap: 16px; }
-.loading-lines span {
-  display: block; height: 12px; border-radius: 6px;
-  background: linear-gradient(90deg, var(--hover) 25%, #e9e4dd 50%, var(--hover) 75%); background-size: 200% 100%;
-  animation: shimmer 1.2s infinite;
-}
-.loading-lines span:nth-child(2n) { width: 80%; }
-.loading-lines span:nth-child(3n) { width: 60%; }
-@keyframes shimmer { to { background-position: -200% 0; } }
 
 .sender-line { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .sender-meta { display: flex; align-items: center; gap: 2px; flex: none; }
@@ -572,12 +562,11 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
   to { opacity: 0; transform: translateX(-24px); height: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }
 }
 
-.app, .login-card { animation: fade-in 0.35s var(--ease-out); }
-.login-card { animation-name: zoom-in; }
+.login-card { animation: zoom-in 0.35s var(--ease-out); }
 .view-enter { animation: rise-in 0.28s var(--ease-out); }
 .content.padded > .view-enter { display: flex; flex-direction: column; gap: 16px; }
 .viewer { animation: slide-in 0.28s var(--ease-out); }
-.row { animation: rise-in 0.32s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 18ms); }
+.row { animation: rise-in 0.18s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 8ms); }
 .row.leaving { animation: row-out 0.28s var(--ease) forwards; pointer-events: none; overflow: hidden; }
 .message-body > *, .attachments, .reply-bar { animation: fade-in 0.35s var(--ease-out); }
 .details { animation: pop-in 0.2s var(--ease-out); transform-origin: top left; }
@@ -2862,4 +2851,84 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
   .task-import-error { margin: 0 14px 14px; }
   .task-import-help { grid-template-columns: 1fr; margin: 14px; }
   .notification-menu { position: fixed; top: 66px; right: 8px; left: 8px; width: auto; }
+}
+
+/* ---------- loading ---------- */
+/* A bone is a grey shape with a light sweeping across it. Only the sweep moves (transform), so
+   the browser doesn't have to repaint anything for it. */
+.skeleton {
+  position: relative; display: block; overflow: hidden; height: 12px; min-width: 0; border-radius: 6px;
+  background: #e8ecf2;
+}
+.skeleton::after {
+  content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 65%), transparent);
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-sweep { to { transform: translateX(100%); } }
+/* Waits a moment before showing: what arrives quickly never shows a skeleton at all. */
+.skeleton-group { animation: fade-in 0.2s ease-out 120ms both; }
+.skeleton-group.no-delay { animation: none; }
+.skeleton.thin { height: 10px; }
+.skeleton.sk-circle { width: 32px; height: 32px; flex: none; border-radius: 50%; }
+.skeleton.sk-circle.small { width: 22px; height: 22px; }
+.skeleton.sk-box { width: 16px; height: 16px; flex: none; border-radius: 4px; }
+.sk-stack { display: grid; gap: 8px; min-width: 0; }
+
+.sk-text { display: grid; gap: 12px; padding: 8px 0; }
+.sk-row { display: flex; align-items: center; gap: 12px; min-height: 66px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.sk-row .sk-stack:not(.sk-hide-phone) { flex: 1; }
+.sk-row .skeleton.sk-circle { width: 40px; height: 40px; }
+.sk-owner { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sk-owner .skeleton:last-child { flex: 1; }
+.skeleton.sk-date { width: 44px; flex: none; }
+.sk-hide-phone { display: none; }
+.sk-people { display: grid; gap: 4px; padding: 8px; }
+.sk-person { display: flex; align-items: center; gap: 12px; padding: 8px; }
+.sk-person .sk-stack { flex: 1; }
+.sk-panel { display: grid; gap: 20px; }
+.skeleton.sk-heading { width: min(260px, 60%); height: 24px; }
+.sk-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.sk-tiles .skeleton { height: 84px; border-radius: 12px; }
+.sk-table { display: grid; gap: 16px; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.settings-loading { padding: 24px 28px; }
+
+/* The app's outline, shown while its code arrives. */
+.skeleton-shell .skeleton.search { height: 46px; background: var(--hover); border-radius: 999px; padding: 0; }
+.skeleton-shell .skeleton.rail-box { width: 44px; height: 44px; border-radius: 12px; background: var(--navy-2); }
+.skeleton-shell .rail .skeleton::after { background: linear-gradient(90deg, transparent, rgb(255 255 255 / 18%), transparent); }
+.skeleton-shell .account { flex: none; }
+.skeleton.sk-compose { flex: none; height: 44px; margin-bottom: 10px; border-radius: 12px; }
+.sk-nav { display: flex; align-items: center; gap: 12px; flex: none; height: 38px; padding: 0 8px; }
+.sk-nav .skeleton:last-child { flex: none; }
+@media (max-width: 800px) {
+  .skeleton-shell .sidebar { display: none; }
+}
+@media (min-width: 801px) {
+  /* The same columns as .row on a laptop. */
+  .sk-row {
+    display: grid; gap: 0 14px; min-height: 62px; padding: 10px 20px;
+    grid-template-columns: 22px 28px 32px minmax(0, 200px) minmax(0, 1fr) 18px 140px 84px;
+  }
+  .sk-row .skeleton.sk-circle { width: 32px; height: 32px; }
+  .sk-row .sk-owner .skeleton.sk-circle { width: 22px; height: 22px; }
+  .sk-hide-phone { display: block; }
+  .sk-stack.sk-hide-phone { display: grid; }
+  .sk-owner.sk-hide-phone { display: flex; }
+  .skeleton.sk-date { justify-self: end; width: 56px; }
+}
+
+.opening-pill, .loading-more {
+  display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500;
+}
+.opening-pill {
+  position: fixed; z-index: 60; left: 50%; bottom: 28px; transform: translateX(-50%);
+  padding: 9px 16px; border-radius: 999px; background: #1b1f24; color: #fff; box-shadow: var(--shadow);
+  animation: fade-in 0.2s ease-out 150ms both;
+}
+.opening-pill svg, .loading-more svg { animation: spin 0.8s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after { display: none; }
+  .opening-pill svg, .loading-more svg { animation: none; }
 }

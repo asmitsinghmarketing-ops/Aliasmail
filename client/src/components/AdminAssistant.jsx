@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import AdminAiSettings from './AdminAiSettings.jsx';
 import Icon from './Icon.jsx';
+import { TextSkeleton } from './Loading.jsx';
 
 const PROVIDERS = { anthropic: 'Claude', gemini: 'Google Gemini (free tier)', openrouter: 'OpenRouter' };
 const usd = (n) => `$${(n || 0).toFixed(2)}`;
@@ -37,7 +38,7 @@ export default function AdminAssistant() {
     }
   }
 
-  if (!data) return error ? <div className="alert">{error}</div> : <div className="muted">Loading…</div>;
+  if (!data) return error ? <div className="alert">{error}</div> : <TextSkeleton />;
   const share = data.limits.monthlyUsd > 0 ? Math.min(100, (data.total.usd / data.limits.monthlyUsd) * 100) : 0;
   const cached = data.total.cacheRead + data.total.cacheWrite + data.total.input;
 

@@ -4,6 +4,7 @@ import { displayName, formatDate, formatSize, personLabel, timeAgo } from '../fo
 import Avatar from './Avatar.jsx';
 import { LINK, hrefFor, linkifyNode } from '../linkify.js';
 import Icon from './Icon.jsx';
+import { TextSkeleton } from './Loading.jsx';
 
 // A sender can't loosen that with their own <meta name="referrer"> or referrerpolicy="unsafe-url".
 const noReferrerOverrides = (html) =>
@@ -441,7 +442,7 @@ export default function MessageView({ aside, phoneMore,
           )}
 
           <div className="message-body">
-            {!msg && !error && <div className="loading-lines"><span /><span /><span /></div>}
+            {!msg && !error && <TextSkeleton lines={6} />}
             {msg && (msg.html ? <HtmlBody html={msg.html} /> : <PlainBody text={msg.text || ''} />)}
           </div>
 

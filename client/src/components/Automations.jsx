@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './Icon.jsx';
+import { PanelSkeleton, PeopleSkeleton } from './Loading.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
 import { ask } from './Dialog.jsx';
 
@@ -23,6 +24,7 @@ export default function Automations({ onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [loaded, setLoaded] = useState(false);
 
   const load = async () => {
     try {
@@ -30,6 +32,7 @@ export default function Automations({ onClose }) {
       setData(next);
       setSelectedId((current) => current && next.automations.some((item) => item.id === current) ? current : next.automations[0]?.id || null);
     } catch (err) { setError(err.message); }
+    finally { setLoaded(true); }
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -97,13 +100,13 @@ export default function Automations({ onClose }) {
 
       <div className="automations-layout">
         <aside className="automations-list">
-          <div className="automation-list-head"><span>Your workflows</span><b>{data.automations.length}</b></div>
+          <div className="automation-list-head"><span>Your workflows</span>{loaded && <b>{data.automations.length}</b>}</div>
           {data.automations.map((item) => (
             <button key={item.id} className={item.id === selectedId ? 'active' : ''} onClick={() => { setSelectedId(item.id); setCreating(false); setError(''); }}>
               <span className={`automation-dot ${item.enabled ? 'on' : ''}`} /><span><strong>{item.name}</strong><small>{item.enabled ? 'Active' : 'Draft'} · {item.steps.length} step{item.steps.length === 1 ? '' : 's'}</small></span>
             </button>
           ))}
-          {!data.automations.length && <div className="automation-list-empty"><Icon name="scheduleSend" size={28} /><p>No automations yet.</p></div>}
+          {!loaded ? <PeopleSkeleton rows={3} /> : !data.automations.length && <div className="automation-list-empty"><Icon name="scheduleSend" size={28} /><p>No automations yet.</p></div>}
         </aside>
 
         <main className="automations-main">
@@ -128,6 +131,8 @@ export default function Automations({ onClose }) {
               <section className="automation-run-box"><div><h2>Run now</h2><p>Information entered here is available to steps as <code>{'{{input.text}}'}</code>.</p></div><textarea rows="3" value={runInput} onChange={(event) => setRunInput(event.target.value)} placeholder="Optional information for this run…" /><button className="btn btn-primary" disabled={busy || !selected.enabled} onClick={run}><Icon name="scheduleSend" size={17} /> Run automation</button>{!selected.enabled && <small>Activate the automation before running it.</small>}</section>
               <section className="automation-history"><h2>Run history</h2>{runs.length ? runs.map((item) => <Run key={item.id} run={item} />) : <p className="muted">This automation has not run yet.</p>}</section>
             </section>
+          ) : !loaded ? (
+            <PanelSkeleton />
           ) : (
             <div className="automations-empty"><span><Icon name="scheduleSend" size={38} /></span><h1>Build repeatable workflows</h1><p>Describe a process once, review the AI-generated steps, and run it from here or through the Assistant.</p><button className="btn btn-primary" onClick={() => setCreating(true)}><Icon name="sparkle" size={18} /> Create your first automation</button></div>
           )}

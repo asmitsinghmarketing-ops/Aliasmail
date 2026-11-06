@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { formatDate } from '../format.js';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
+import { TextSkeleton } from './Loading.jsx';
 import RecipientField from './RecipientField.jsx';
 
 const START = '/api/auth/google/start?mode=';
@@ -155,7 +156,7 @@ export default function GoogleApps() {
   useEffect(load, [load]);
 
   if (error) return <div className="alert">{error}</div>;
-  if (!status) return <div className="muted">Loading…</div>;
+  if (!status) return <TextSkeleton />;
   if (!status.googleEnabled) return <p className="muted">Google apps aren’t set up for this Nextspace. Ask your administrator.</p>;
 
   const apps = APPS.filter((a) => status[`${a.id}Enabled`]);

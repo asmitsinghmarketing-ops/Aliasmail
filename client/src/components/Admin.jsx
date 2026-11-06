@@ -6,6 +6,7 @@ import AdminSpeed from './AdminSpeed.jsx';
 import Avatar from './Avatar.jsx';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
+import { PanelSkeleton, TextSkeleton } from './Loading.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
 import MessageView from './MessageView.jsx';
 import Pager from './Pager.jsx';
@@ -86,7 +87,7 @@ export default function Admin({ user, onLogout, onOpenMail, onRolesChanged }) {
 
         <main className="content padded">
           {error && <div className="alert">{error}</div>}
-          {!overview && !error && <div className="empty">Loading…</div>}
+          {!overview && !error && <PanelSkeleton />}
           {overview && (
             <div className="view-enter" key={tab}>
               {tab === 'overview' && <Overview overview={overview} onReload={reload} onNavigate={go} />}
@@ -902,7 +903,7 @@ function Roles({ overview, onChanged, onOpenAliases, startAdding }) {
         </div>
       )}
 
-      {!roles && !error && <div className="empty">Loading…</div>}
+      {!roles && !error && <PanelSkeleton />}
       {roles?.length === 0 && (
         <div className="card empty-state">
           <span className="empty-mark" aria-hidden="true"><Icon name="shield" size={30} /></span>
@@ -1210,7 +1211,7 @@ function AllMail({ overview, onChanged }) {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={6} className="empty">Loading…</td>
+                <td colSpan={6}><TextSkeleton lines={5} /></td>
               </tr>
             )}
             {!loading && list.items.length === 0 && (

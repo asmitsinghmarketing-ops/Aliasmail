@@ -1,7 +1,6 @@
 // 2-step verification pieces shared by sign-in and Settings: the code field, Google
 // Authenticator setup (QR code) and the backup codes list.
 import { useEffect, useRef, useState } from 'react';
-import QRCode from 'qrcode';
 import Icon from './Icon.jsx';
 
 const APP_STORE = 'https://apps.apple.com/app/google-authenticator/id388497605';
@@ -59,6 +58,7 @@ export function AuthenticatorSetup({ start, confirm, onDone, onCancel }) {
     start()
       .then(async (data) => {
         setSetup(data);
+        const { default: QRCode } = await import('qrcode');
         setQr(await QRCode.toDataURL(data.otpauthUrl, { margin: 1, width: 200, errorCorrectionLevel: 'M', color: { dark: '#1f1d1a', light: '#ffffff' } }));
       })
       .catch((err) => setError(err.message));
@@ -93,7 +93,7 @@ export function AuthenticatorSetup({ start, confirm, onDone, onCancel }) {
       </ol>
 
       <div className="qr-box">
-        {qr ? <img src={qr} alt="QR code for Google Authenticator" width="200" height="200" /> : <div className="qr-placeholder">{error ? '' : 'Loading…'}</div>}
+        {qr ? <img src={qr} alt="QR code for Google Authenticator" width="200" height="200" /> : <div className={`qr-placeholder ${error ? '' : 'skeleton'}`} />}
         <div className="qr-side">
           {!showKey ? (
             <button type="button" className="link" onClick={() => setShowKey(true)} disabled={!setup}>

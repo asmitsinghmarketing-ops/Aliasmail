@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { formatDate, timeAgo } from '../format.js';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
+import { TextSkeleton } from './Loading.jsx';
 import { AuthenticatorSetup, BackupCodes, CodeField } from './TwoStep.jsx';
 
 const METHOD = {
@@ -115,7 +116,7 @@ export default function SecurityPanel({ account, owner }) {
     }
   }
 
-  if (!status) return <div className="muted">{error || 'Loading…'}</div>;
+  if (!status) return error ? <div className="muted">{error}</div> : <TextSkeleton lines={4} />;
   const others = sessions.filter((s) => !s.current);
 
   return (

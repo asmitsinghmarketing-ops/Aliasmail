@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
+import { PanelSkeleton } from './Loading.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
 import { ask } from './Dialog.jsx';
 import NotificationCenter from './NotificationCenter.jsx';
@@ -302,7 +303,7 @@ export default function Tasks({ user, startTask, onClose }) {
           </div>
           {error && <div className="alert"><span>{error}</span><button className="link" onClick={() => setError('')}>Dismiss</button></div>}
           {notice && <div className="alert ok"><span>{notice}</span><button className="link" onClick={() => setNotice('')}>Dismiss</button></div>}
-          {loading ? <div className="empty">Loading tasks…</div> : !data.projects.length ? (
+          {loading ? <PanelSkeleton /> : !data.projects.length ? (
             <div className="tasks-empty"><span><Icon name="checkCircle" size={36} /></span><h2>Plan your team’s work</h2><p>Create a project, add tasks, choose owners and track work from start to finish.</p><button className="btn btn-primary" onClick={createProject}><Icon name="add" size={18} /> Create project</button></div>
           ) : view === 'board' ? (
             <div className="task-board">

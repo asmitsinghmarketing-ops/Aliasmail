@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import compression from 'compression';
 import express from 'express';
 import config from './config.js';
 import { db, flush, load } from './store.js';
@@ -95,6 +96,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// Compress the app's code and styles and the API's JSON. Nothing else from the API: attachment
+// downloads report their progress, and the live event stream has to reach the browser at once.
+app.use(compression({
+  filter: (req, res) => (req.path.startsWith('/api/') && !String(res.getHeader('Content-Type')).includes('json') ? false : compression.filter(req, res)),
+}));
+
 // Requests that change something must carry this header. Browsers won't let another website add
 // it to a request sent to us, which (with SameSite=Strict cookies) blocks cross-site request forgery.
 app.use('/api', (req, res, next) => {
@@ -145,6 +152,10 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 // Serve the built React app in production (npm run build in ../client).
 if (fs.existsSync(config.clientDist)) {
+  // Built files have a hash of their content in the name, so a browser can keep them for good. A
+  // file that is gone (an old tab after a release) is a 404, not the app's page in its place.
+  app.use('/assets', express.static(path.join(config.clientDist, 'assets'), { immutable: true, maxAge: '1y', index: false }));
+  app.use('/assets', (req, res) => res.status(404).end());
   app.use(express.static(config.clientDist));
   app.use((req, res, next) => (req.method === 'GET' ? res.sendFile(path.join(config.clientDist, 'index.html')) : next()));
 }
