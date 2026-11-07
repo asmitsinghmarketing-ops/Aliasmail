@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -11,8 +12,23 @@ const ADMIN = { email: 'owner@example.com', password: 'admin-password-123' };
 const HEADERS = { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' };
 let server;
 let dir;
+let model;
+let answers = [];
+const prompts = [];
 
 test.before(async () => {
+  // Stands in for the AI model: gives the next prepared answer, and remembers what it was asked.
+  model = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      prompts.push(JSON.stringify(JSON.parse(body).messages));
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: answers.shift() }, finish_reason: 'stop' }] })}\n\n`);
+      res.end('data: [DONE]\n\n');
+    });
+  });
+  await new Promise((resolve) => model.listen(0, '127.0.0.1', resolve));
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aliasmail-automations-'));
   server = spawn(process.execPath, ['src/index.js'], {
     cwd: new URL('..', import.meta.url),
@@ -20,7 +36,7 @@ test.before(async () => {
       ...process.env, PORT: String(PORT), DATA_FILE: path.join(dir, 'db.json'), DATABASE_URL: '', NODE_ENV: 'test', IP_LOCATION: 'off',
       JWT_SECRET: 'automations-test-secret', MAIL_USER: ADMIN.email, MAIL_PASSWORD: '', MAIL_BRIDGE_URL: '', MAIL_BRIDGE_TOKEN: '',
       MAIL_TRANSPORT: 'direct', ADMIN_EMAIL: ADMIN.email, ADMIN_PASSWORD: ADMIN.password,
-      ANTHROPIC_API_KEY: '', GEMINI_API_KEY: '', OPENROUTER_API_KEY: '',
+      ANTHROPIC_API_KEY: '', GEMINI_API_KEY: '', ASSISTANT_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'test-key', OPENROUTER_MODEL: 'test/model', OPENROUTER_URL: `http://127.0.0.1:${model.address().port}/api/v1`,
     },
     stdio: 'ignore',
   });
@@ -33,6 +49,7 @@ test.before(async () => {
 
 test.after(async () => {
   server?.kill();
+  model?.close();
   await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -43,7 +60,7 @@ async function signIn(credentials) {
   return (url, options = {}) => fetch(`${BASE}/api${url}`, { ...options, headers: { ...HEADERS, Cookie: cookie } });
 }
 
-test('users save, activate and run allowlisted workflows with logs and ownership', async () => {
+test('users save and run allowlisted workflows with logs and ownership', async () => {
   const admin = await signIn(ADMIN);
   for (const name of ['john', 'mary']) {
     const response = await admin('/admin/aliases', { method: 'POST', body: JSON.stringify({ address: `${name}@example.com`, password: `${name}-password-1`, displayName: name[0].toUpperCase() + name.slice(1) }) });
@@ -66,11 +83,11 @@ test('users save, activate and run allowlisted workflows with logs and ownership
   const made = await john('/automations', { method: 'POST', body: JSON.stringify({ prompt: 'Follow up a lead', plan }) });
   assert.equal(made.status, 201);
   const automation = await made.json();
-  assert.equal(automation.enabled, false);
-  assert.equal((await admin(`/automations/${automation.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: true }) })).status, 404, 'another account cannot change it');
-  assert.equal((await john(`/automations/${automation.id}/run`, { method: 'POST', body: JSON.stringify({ input: { text: 'Acme website audit' } }) })).status, 404, 'draft cannot run');
+  assert.equal((await admin(`/automations/${automation.id}/run`, { method: 'POST', body: JSON.stringify({ input: { text: 'x' } }) })).status, 404, 'another account cannot run it');
+  const noInput = await john(`/automations/${automation.id}/run`, { method: 'POST', body: JSON.stringify({ input: {} }) });
+  assert.equal(noInput.status, 400, 'details it needs are asked for, not left blank');
+  assert.match((await noInput.json()).error, /needs details/);
 
-  assert.equal((await john(`/automations/${automation.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: true }) })).status, 200);
   const queued = await john(`/automations/${automation.id}/run`, { method: 'POST', body: JSON.stringify({ input: { text: 'Acme website audit' } }) });
   assert.equal(queued.status, 202);
   const runId = (await queued.json()).id;
@@ -97,4 +114,97 @@ test('users save, activate and run allowlisted workflows with logs and ownership
   assert.equal(unsafe.status, 400);
   assert.match((await unsafe.json()).error, /unsupported function/i);
   assert.equal((await john(`/automations/${automation.id}`, { method: 'DELETE' })).status, 200);
+});
+
+test('an idea becomes a checked list of functions from the model, which then run in order', async () => {
+  const admin = await signIn(ADMIN);
+  const john = await signIn({ email: 'john@example.com', password: 'john-password-1' });
+  const project = await (await admin('/tasks/projects', { method: 'POST', body: JSON.stringify({ name: 'Support', color: '#0b5cd5' }) })).json();
+  const plan = (body) => john('/automations/plan', { method: 'POST', body: JSON.stringify(body) });
+  const good = {
+    name: 'New complaint',
+    description: 'Logs a complaint and tells Mary.',
+    steps: [
+      { action: 'create_task', label: 'Log it', params: { projectId: project.id, title: 'Complaint: {{input.text}}', assignee: 'mary@example.com' } },
+      { action: 'notify_user', label: 'Tell Mary', params: { to: 'mary@example.com', title: 'Task made: {{steps.1.title}}' } },
+    ],
+  };
+
+  // The model is told the idea and what it may use; its answer comes back unsaved.
+  answers = [`Here you go: ${JSON.stringify(good)}`];
+  prompts.length = 0;
+  const planned = await plan({ prompt: 'When a complaint comes in, log it and tell Mary' });
+  assert.equal(planned.status, 200);
+  const steps = await planned.json();
+  assert.deepEqual(steps.steps.map((step) => step.action), ['create_task', 'notify_user']);
+  assert.ok(prompts[0].includes('log it and tell Mary') && prompts[0].includes('create_draft') && prompts[0].includes(project.id));
+  assert.ok(!(await (await john('/automations')).json()).automations.some((item) => item.name === 'New complaint'), 'planning saves nothing');
+
+  // A wrong answer goes back once with the reason, and the corrected one is used.
+  answers = [JSON.stringify({ name: 'Bad', steps: [{ action: 'send_note', params: { to: 'stranger@else.test', text: 'x' } }] }), JSON.stringify(good)];
+  prompts.length = 0;
+  assert.equal((await plan({ prompt: 'Tell someone' })).status, 200);
+  assert.equal(prompts.length, 2);
+  assert.ok(prompts[1].includes('stranger@else.test') && prompts[1].includes('rejected'));
+
+  // Two wrong answers: nothing is offered. Each of these would otherwise fail or come out blank.
+  for (const bad of [
+    { name: 'x', steps: [{ action: 'run_javascript', params: {} }] },
+    { name: 'x', steps: [{ action: 'create_task', params: { projectId: 'made-up', title: 'x' } }] },
+    { name: 'x', steps: [{ action: 'send_note', params: { to: 'mary@example.com', text: '{{input.phone}}' } }] },
+    { name: 'x', steps: [{ action: 'send_note', params: { to: 'mary@example.com', text: '{{steps.1.title}}' } }] },
+    { name: 'x', steps: [{ action: 'create_draft', params: { to: 'not-an-address', body: 'x' } }] },
+    { name: 'x', steps: [{ action: 'create_task', params: { projectId: project.id, title: 'x', dueDate: 'next week' } }] },
+  ]) {
+    answers = [JSON.stringify(bad), JSON.stringify(bad)];
+    assert.notEqual((await plan({ prompt: 'Do it' })).status, 200, JSON.stringify(bad));
+    assert.equal((await john('/automations', { method: 'POST', body: JSON.stringify({ prompt: 'Do it', plan: bad }) })).status, 400, 'saving checks it too');
+  }
+  answers = ['no json here', 'still none'];
+  assert.notEqual((await plan({ prompt: 'Do it' })).status, 200);
+
+  // What it can't do, it says so rather than doing something else.
+  answers = [JSON.stringify({ unsupported: 'There is no function for sending SMS.' })];
+  const unsupported = await plan({ prompt: 'Send an SMS' });
+  assert.equal(unsupported.status, 422);
+  assert.match((await unsupported.json()).error, /sending SMS/);
+
+  // Saved, it runs straight away, in order, one step using what the one before made.
+  const saved = await (await john('/automations', { method: 'POST', body: JSON.stringify({ prompt: 'Complaints', plan: steps }) })).json();
+  const finished = async (id) => {
+    for (let i = 0; i < 60; i++) {
+      const found = (await (await john('/automations')).json()).runs.find((item) => item.id === id);
+      if (found && !['queued', 'running'].includes(found.status)) return found;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error('run did not finish');
+  };
+  const started = await john(`/automations/${saved.id}/run`, { method: 'POST', body: JSON.stringify({ input: { text: 'Late order' } }) });
+  assert.equal(started.status, 202);
+  const run = await finished((await started.json()).id);
+  assert.deepEqual(run.steps.map((step) => [step.action, step.status]), [['create_task', 'completed'], ['notify_user', 'completed']]);
+  const mary = await signIn({ email: 'mary@example.com', password: 'mary-password-1' });
+  const told = (await (await mary('/notifications')).json()).items;
+  assert.ok(told.some((item) => item.title === 'Task made: Complaint: Late order'));
+
+  // A failed step stops the ones after it, and they're shown as not run.
+  const failing = await (await john('/automations', { method: 'POST', body: JSON.stringify({ prompt: 'Fails', plan: {
+    name: 'Fails',
+    steps: [
+      { action: 'notify_user', label: 'First', params: { to: 'mary@example.com', title: 'First ran' } },
+      { action: 'send_note', label: 'Second', params: { to: '{{input.email}}', text: 'x' } },
+      { action: 'notify_user', label: 'Third', params: { to: 'mary@example.com', title: 'Third must not run' } },
+    ],
+  } }) })).json();
+  const stopped = await john(`/automations/${failing.id}/run`, { method: 'POST', body: JSON.stringify({ input: { email: 'outsider@else.test' } }) });
+  const failed = await finished((await stopped.json()).id);
+  assert.equal(failed.status, 'failed');
+  assert.deepEqual(failed.steps.map((step) => step.status), ['completed', 'failed', 'skipped']);
+  assert.ok(!(await (await mary('/notifications')).json()).items.some((item) => item.title === 'Third must not run'));
+
+  // Nothing starts if something it depends on has gone since it was saved.
+  assert.equal((await admin(`/tasks/projects/${project.id}`, { method: 'DELETE' })).status < 300, true);
+  const gone = await john(`/automations/${saved.id}/run`, { method: 'POST', body: JSON.stringify({ input: { text: 'x' } }) });
+  assert.equal(gone.status, 400);
+  assert.match((await gone.json()).error, /project/);
 });

@@ -1,3 +1,5 @@
+// Automations: describe an idea, the AI model works out which functions to run, check the list in
+// plain words, and run it. The list is saved, so it can be run again from here or the Assistant.
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './Icon.jsx';
@@ -5,89 +7,261 @@ import { PanelSkeleton, PeopleSkeleton } from './Loading.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
 import { ask } from './Dialog.jsx';
 
-const ACTION_LABELS = {
-  create_task: 'Create task',
-  send_note: 'Send instant note',
-  create_draft: 'Create email draft',
-  notify_user: 'Notify teammate',
+const FUNCTIONS = {
+  create_task: { label: 'Create a task', icon: 'checkCircle' },
+  send_note: { label: 'Send an instant note', icon: 'chat' },
+  create_draft: { label: 'Write an email draft', icon: 'draft' },
+  notify_user: { label: 'Notify a teammate', icon: 'bell' },
 };
 
-const dateTime = (value) => value ? new Date(value).toLocaleString() : '';
+const EXAMPLES = [
+  'When a new lead comes in, create a high-priority task and tell the sales team',
+  'Write a welcome email draft to a new client and remind me to follow up',
+  'Log a customer complaint as a task and notify the support lead',
+];
+
+const INPUT_FIELDS = {
+  text: { label: 'Details', placeholder: 'What should this run be about?' },
+  name: { label: 'Name', placeholder: 'Their name' },
+  email: { label: 'Email', placeholder: 'name@example.com', type: 'email' },
+};
+
+const VARIABLE = /(\{\{\s*[\w.-]+\s*\}\})/g;
+
+/** Which details have to be given at run time (the server checks this too). */
+function inputsOf(steps) {
+  const text = JSON.stringify(steps.map((step) => step.params));
+  return Object.keys(INPUT_FIELDS).filter((key) => new RegExp(`\\{\\{\\s*input\\.${key}\\s*\\}\\}`).test(text));
+}
+
+function variableLabel(name) {
+  const earlier = /^steps\.(\d+)\.(\w+)$/.exec(name);
+  if (earlier) return `${{ id: 'link', title: 'title', subject: 'subject' }[earlier[2]] || earlier[2]} from step ${earlier[1]}`;
+  return {
+    'input.text': 'the details you enter', 'input.name': 'the name you enter', 'input.email': 'the email you enter',
+    'actor.email': 'your email', 'automation.name': 'this automation’s name',
+  }[name] || name;
+}
+
+/** A value from a step, with anything filled in later shown in words rather than {{code}}. */
+function Filled({ value }) {
+  return String(value).split(VARIABLE).map((part, i) => (
+    i % 2 ? <mark key={i}>{variableLabel(part.replace(/[{}\s]/g, ''))}</mark> : part
+  ));
+}
+
+/** What a step will do, in the words someone would use: names instead of ids. */
+function stepDetails({ action, params = {} }, context) {
+  const person = (value) => context.team?.find((p) => p.address === String(value).toLowerCase())?.name || value;
+  const rows = {
+    create_task: [
+      ['Task', params.title],
+      ['Project', context.projects?.find((p) => p.id === params.projectId)?.name || params.projectId],
+      ['For', params.assignee && person(params.assignee)],
+      ['Priority', params.priority && params.priority !== 'medium' && params.priority[0].toUpperCase() + params.priority.slice(1)],
+      ['Due', params.dueDate],
+      ['Notes', params.description],
+    ],
+    send_note: [['To', person(params.to)], ['Message', params.text]],
+    create_draft: [['To', params.to], ['Cc', params.cc], ['Subject', params.subject], ['Message', params.body]],
+    notify_user: [['To', person(params.to)], ['Title', params.title], ['Message', params.body]],
+  }[action] || [];
+  return rows.filter(([, value]) => value);
+}
+
+function StepList({ steps, context, statuses }) {
+  return (
+    <ol className="auto-steps">
+      {steps.map((step, index) => {
+        const status = statuses?.[index];
+        const fn = FUNCTIONS[step.action];
+        return (
+          <li key={step.id || index} className={status || ''}>
+            <span className="auto-step-mark">{status === 'completed' ? <Icon name="check" size={16} /> : status === 'failed' ? <Icon name="close" size={16} /> : index + 1}</span>
+            <div>
+              <span className="auto-step-function"><Icon name={fn?.icon || 'info'} size={15} /> {fn?.label || step.action}</span>
+              <strong>{step.label}</strong>
+              <dl>
+                {stepDetails(step, context).map(([label, value]) => (
+                  <div key={label}><dt>{label}</dt><dd><Filled value={value} /></dd></div>
+                ))}
+              </dl>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function InputFields({ fields, values, onChange }) {
+  if (!fields.length) return null;
+  return (
+    <div className="auto-inputs">
+      {fields.map((key) => {
+        const field = INPUT_FIELDS[key];
+        return (
+          <label key={key}>
+            <span>{field.label}</span>
+            {key === 'text'
+              ? <textarea rows="3" value={values[key] || ''} placeholder={field.placeholder} maxLength="4000" onChange={(event) => onChange({ ...values, [key]: event.target.value })} />
+              : <input type={field.type || 'text'} value={values[key] || ''} placeholder={field.placeholder} maxLength="200" onChange={(event) => onChange({ ...values, [key]: event.target.value })} />}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+const when = (value) => (value ? new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '');
+const RUN_WORDS = { queued: 'Starting…', running: 'Running…', completed: 'Finished', failed: 'Stopped' };
+const STEP_WORDS = { completed: 'Done', failed: 'Failed', skipped: 'Not run', running: 'Running…' };
+
+function RunEntry({ run, open }) {
+  const done = run.steps.filter((step) => step.status === 'completed').length;
+  return (
+    <details className={`auto-run ${run.status}`} open={open}>
+      <summary>
+        <span className="auto-run-state"><Icon name={run.status === 'completed' ? 'checkCircle' : run.status === 'failed' ? 'info' : 'refresh'} size={18} /></span>
+        <span className="auto-run-title"><strong>{RUN_WORDS[run.status] || run.status}</strong><small>{when(run.createdAt)}</small></span>
+        <b>{done} of {run.steps.length || '…'} done</b>
+      </summary>
+      <div>
+        {run.status === 'failed' && done > 0 && <p className="auto-run-note">Steps marked Done really happened and weren’t undone.</p>}
+        <ul>
+          {run.steps.map((step) => (
+            <li key={step.stepId} className={step.status}>
+              <span>{step.label}</span>
+              <em>{STEP_WORDS[step.status] || step.status}</em>
+              {step.error && <small>{step.error}</small>}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </details>
+  );
+}
 
 export default function Automations({ onClose }) {
   const [data, setData] = useState({ automations: [], runs: [], context: { actions: [] }, aiEnabled: false });
+  const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [creating, setCreating] = useState(false);
-  const [prompt, setPrompt] = useState('');
+  const [showList, setShowList] = useState(true); // Phones show the list or one automation, not both.
+  const [idea, setIdea] = useState('');
   const [plan, setPlan] = useState(null);
-  const [runInput, setRunInput] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [values, setValues] = useState({});
+  const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [loaded, setLoaded] = useState(false);
 
   const load = async () => {
     try {
       const next = await api('/automations');
       setData(next);
-      setSelectedId((current) => current && next.automations.some((item) => item.id === current) ? current : next.automations[0]?.id || null);
-    } catch (err) { setError(err.message); }
-    finally { setLoaded(true); }
+      setSelectedId((current) => (next.automations.some((item) => item.id === current) ? current : next.automations[0]?.id || null));
+      return next;
+    } catch (err) {
+      setError(err.message);
+      return null;
+    }
   };
-  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
-    if (!data.runs.some((run) => run.status === 'queued' || run.status === 'running')) return undefined;
-    const timer = setInterval(load, 1500);
+    load().then((next) => {
+      setLoaded(true);
+      // Nothing saved yet: go straight to making the first one.
+      if (next && !next.automations.length) { setCreating(true); setShowList(false); }
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const running = data.runs.some((run) => run.status === 'queued' || run.status === 'running');
+  useEffect(() => {
+    if (!running) return undefined;
+    const timer = setInterval(load, 1000);
     return () => clearInterval(timer);
-  }, [data.runs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selected = data.automations.find((item) => item.id === selectedId) || null;
   const runs = useMemo(() => data.runs.filter((run) => run.automationId === selectedId), [data.runs, selectedId]);
+  const latest = runs[0];
+  const steps = creating ? plan?.steps || [] : selected?.steps || [];
+  const fields = useMemo(() => inputsOf(steps), [steps]);
+  const missing = fields.some((key) => !String(values[key] || '').trim());
+  const onSelected = latest && latest.status !== 'queued' ? latest.steps.map((step) => step.status) : null;
 
-  const generate = async () => {
-    if (!prompt.trim()) return;
-    setBusy(true); setError(''); setPlan(null);
-    try { setPlan(await api('/automations/plan', { method: 'POST', body: { prompt } })); }
-    catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+  const startNew = () => {
+    setCreating(true); setShowList(false); setPlan(null); setIdea(''); setValues({}); setError('');
   };
 
-  const savePlan = async () => {
-    setBusy(true); setError('');
+  const open = (id) => {
+    setSelectedId(id); setCreating(false); setShowList(false); setValues({}); setError('');
+  };
+
+  const design = async () => {
+    setBusy('design'); setError(''); setPlan(null); setValues({});
     try {
-      const saved = await api('/automations', { method: 'POST', body: { prompt, plan } });
+      setPlan(await api('/automations/plan', { method: 'POST', body: { prompt: idea } }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const runSaved = (id) => api(`/automations/${id}/run`, { method: 'POST', body: { input: values } });
+
+  const saveAnd = async (thenRun) => {
+    setBusy(thenRun ? 'run' : 'save'); setError('');
+    try {
+      const saved = await api('/automations', { method: 'POST', body: { prompt: idea, plan } });
+      if (thenRun) {
+        try {
+          await runSaved(saved.id);
+        } catch (err) {
+          setError(`Saved, but it couldn’t start: ${err.message}`);
+        }
+      }
+      setCreating(false); setPlan(null); setIdea('');
+      if (!thenRun) setValues({});
+      setSelectedId(saved.id);
       await load();
-      setSelectedId(saved.id); setCreating(false); setPrompt(''); setPlan(null);
-      setNotice('Automation saved as a draft. Review it, then activate it.');
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
   };
 
-  const toggle = async () => {
-    setBusy(true); setError('');
+  const runNow = async () => {
+    setBusy('run'); setError('');
     try {
-      const updated = await api(`/automations/${selected.id}`, { method: 'PATCH', body: { enabled: !selected.enabled } });
-      setData((current) => ({ ...current, automations: current.automations.map((item) => item.id === updated.id ? updated : item) }));
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  };
-
-  const run = async () => {
-    setBusy(true); setError('');
-    try {
-      await api(`/automations/${selected.id}/run`, { method: 'POST', body: { input: { text: runInput } } });
-      setRunInput(''); setNotice('Automation queued. Its progress appears below.'); await load();
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+      await runSaved(selected.id);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
   };
 
   const remove = async () => {
-    if (!(await ask({ title: `Delete “${selected.name}”?`, message: 'Its previous run history will remain, but the automation cannot be used again.', confirmLabel: 'Delete automation', danger: true }))) return;
-    setBusy(true);
-    try { await api(`/automations/${selected.id}`, { method: 'DELETE' }); setSelectedId(null); await load(); }
-    catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    if (!(await ask({ title: `Delete “${selected.name}”?`, message: 'This can’t be undone. What it already did, like tasks it created, stays.', confirmLabel: 'Delete', danger: true }))) return;
+    setBusy('delete'); setError('');
+    try {
+      await api(`/automations/${selected.id}`, { method: 'DELETE' });
+      setSelectedId(null);
+      setShowList(true);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
   };
+
+  const backToList = data.automations.length > 0 && (
+    <button type="button" className="auto-back" onClick={() => { setShowList(true); setCreating(false); setError(''); }}><Icon name="back" size={18} /> All automations</button>
+  );
 
   return (
     <div className="automations-app">
@@ -95,57 +269,97 @@ export default function Automations({ onClose }) {
         <button type="button" className="icon-btn tasks-back" onClick={onClose} title="Back to mailbox" aria-label="Back to mailbox"><Icon name="back" /></button>
         <button className="tasks-brand" type="button" onClick={onClose}><Logo /><Wordmark /></button>
         <span className="tasks-divider" /><strong>Automations</strong><span className="push-right" />
-        <button type="button" className="btn btn-primary" onClick={() => { setCreating(true); setPlan(null); setPrompt(''); setError(''); }}><Icon name="sparkle" size={18} /> Create with AI</button>
+        <button type="button" className="btn btn-primary" onClick={startNew}><Icon name="add" size={18} /> New</button>
       </header>
 
-      <div className="automations-layout">
+      <div className={`automations-layout ${showList ? '' : 'detail'}`}>
         <aside className="automations-list">
-          <div className="automation-list-head"><span>Your workflows</span>{loaded && <b>{data.automations.length}</b>}</div>
-          {data.automations.map((item) => (
-            <button key={item.id} className={item.id === selectedId ? 'active' : ''} onClick={() => { setSelectedId(item.id); setCreating(false); setError(''); }}>
-              <span className={`automation-dot ${item.enabled ? 'on' : ''}`} /><span><strong>{item.name}</strong><small>{item.enabled ? 'Active' : 'Draft'} · {item.steps.length} step{item.steps.length === 1 ? '' : 's'}</small></span>
-            </button>
-          ))}
-          {!loaded ? <PeopleSkeleton rows={3} /> : !data.automations.length && <div className="automation-list-empty"><Icon name="scheduleSend" size={28} /><p>No automations yet.</p></div>}
+          {!loaded ? <PeopleSkeleton rows={3} /> : data.automations.map((item) => {
+            const last = data.runs.find((run) => run.automationId === item.id);
+            return (
+              <button type="button" key={item.id} className={!creating && item.id === selectedId ? 'active' : ''} onClick={() => open(item.id)}>
+                <strong>{item.name}</strong>
+                <small>{item.steps.length} step{item.steps.length === 1 ? '' : 's'}{last ? ` · last run ${when(last.createdAt)}` : ' · not run yet'}</small>
+              </button>
+            );
+          })}
+          {loaded && !data.automations.length && <p className="auto-list-empty">Automations you save appear here.</p>}
         </aside>
 
         <main className="automations-main">
-          {error && <div className="alert"><span>{error}</span><button className="link" onClick={() => setError('')}>Dismiss</button></div>}
-          {notice && <div className="alert ok"><span>{notice}</span><button className="link" onClick={() => setNotice('')}>Dismiss</button></div>}
+          <div className="auto-column">
+            {!showList && backToList}
+            {error && <div className="alert"><span>{error}</span><button type="button" className="link" onClick={() => setError('')}>Dismiss</button></div>}
 
-          {creating ? (
-            <section className="automation-builder">
-              <div className="automation-hero-icon"><Icon name="sparkle" size={26} /></div>
-              <span className="eyebrow">AI workflow builder</span><h1>What should AliasMail automate?</h1>
-              <p>Describe the result in plain language. AI can choose only approved AliasMail functions; it cannot create or execute code.</p>
-              <textarea rows="6" autoFocus value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Example: Create a high-priority task in the Sales project and notify amit@example.com with the information I provide when I run it." maxLength="5000" />
-              <div className="automation-builder-actions"><button className="btn btn-ghost" onClick={() => { setCreating(false); setPlan(null); }}>Cancel</button><button className="btn btn-primary" disabled={busy || !prompt.trim()} onClick={generate}><Icon name="sparkle" size={17} /> {busy ? 'Designing…' : plan ? 'Generate again' : 'Design automation'}</button></div>
-              {plan && <Plan plan={plan} />}
-              {plan && <div className="automation-save"><div><strong>Ready to save?</strong><span>It will remain inactive until you turn it on.</span></div><button className="btn btn-primary" disabled={busy} onClick={savePlan}>Save automation</button></div>}
-            </section>
-          ) : selected ? (
-            <section className="automation-detail">
-              <header><div><span className="eyebrow">Manual trigger</span><h1>{selected.name}</h1><p>{selected.description || selected.prompt}</p></div><span className={`automation-status ${selected.enabled ? 'active' : ''}`}>{selected.enabled ? 'Active' : 'Draft'}</span></header>
-              <div className="automation-controls"><button className={`btn ${selected.enabled ? 'btn-outline' : 'btn-primary'}`} disabled={busy} onClick={toggle}>{selected.enabled ? 'Pause automation' : 'Activate automation'}</button><button className="btn btn-ghost automation-delete" disabled={busy} onClick={remove}><Icon name="trash" size={17} /> Delete</button></div>
-              <Plan plan={selected} compact />
-              <section className="automation-run-box"><div><h2>Run now</h2><p>Information entered here is available to steps as <code>{'{{input.text}}'}</code>.</p></div><textarea rows="3" value={runInput} onChange={(event) => setRunInput(event.target.value)} placeholder="Optional information for this run…" /><button className="btn btn-primary" disabled={busy || !selected.enabled} onClick={run}><Icon name="scheduleSend" size={17} /> Run automation</button>{!selected.enabled && <small>Activate the automation before running it.</small>}</section>
-              <section className="automation-history"><h2>Run history</h2>{runs.length ? runs.map((item) => <Run key={item.id} run={item} />) : <p className="muted">This automation has not run yet.</p>}</section>
-            </section>
-          ) : !loaded ? (
-            <PanelSkeleton />
-          ) : (
-            <div className="automations-empty"><span><Icon name="scheduleSend" size={38} /></span><h1>Build repeatable workflows</h1><p>Describe a process once, review the AI-generated steps, and run it from here or through the Assistant.</p><button className="btn btn-primary" onClick={() => setCreating(true)}><Icon name="sparkle" size={18} /> Create your first automation</button></div>
-          )}
+            {!loaded ? (
+              <PanelSkeleton />
+            ) : creating ? (
+              <>
+                <h1>What should happen?</h1>
+                <p className="auto-lead">Describe it in your own words. AI works out the steps, and you check them before anything runs.</p>
+                {!data.aiEnabled && <div className="alert"><span>AI isn’t set up yet. An administrator can add it in Admin console → Assistant.</span></div>}
+                <textarea className="auto-idea" rows="4" autoFocus value={idea} maxLength="5000" placeholder="Example: when a new lead comes in, create a task in Sales and notify Amit" onChange={(event) => { setIdea(event.target.value); setPlan(null); }} />
+                {!idea.trim() && (
+                  <div className="auto-examples">
+                    {EXAMPLES.map((example) => <button type="button" key={example} onClick={() => setIdea(example)}>{example}</button>)}
+                  </div>
+                )}
+                {!plan && (
+                  <button type="button" className="btn btn-primary auto-main-button" disabled={Boolean(busy) || !idea.trim() || !data.aiEnabled} onClick={design}>
+                    <Icon name="sparkle" size={18} /> {busy === 'design' ? 'Working out the steps…' : 'Work out the steps'}
+                  </button>
+                )}
+                {plan && (
+                  <section className="auto-plan">
+                    <h2>{plan.name}</h2>
+                    {plan.description && <p className="auto-lead">{plan.description}</p>}
+                    <StepList steps={plan.steps} context={data.context} />
+                    <InputFields fields={fields} values={values} onChange={setValues} />
+                    <div className="auto-actions">
+                      <button type="button" className="btn btn-primary auto-main-button" disabled={Boolean(busy) || missing} onClick={() => saveAnd(true)}>
+                        <Icon name="play" size={18} /> {busy === 'run' ? 'Starting…' : 'Run now'}
+                      </button>
+                      <button type="button" className="btn btn-outline" disabled={Boolean(busy)} onClick={() => saveAnd(false)}>{busy === 'save' ? 'Saving…' : 'Save for later'}</button>
+                      <button type="button" className="btn btn-ghost" disabled={Boolean(busy)} onClick={design}><Icon name="refresh" size={17} /> Try again</button>
+                    </div>
+                    <p className="auto-hint">Run now also saves it, so you can run it again.</p>
+                  </section>
+                )}
+              </>
+            ) : selected ? (
+              <>
+                <div className="auto-title">
+                  <div>
+                    <h1>{selected.name}</h1>
+                    <p className="auto-lead">{selected.description || selected.prompt}</p>
+                  </div>
+                  <button type="button" className="icon-btn danger" disabled={Boolean(busy)} title="Delete" aria-label={`Delete ${selected.name}`} onClick={remove}><Icon name="trash" size={20} /></button>
+                </div>
+                <section className="auto-plan">
+                  <StepList steps={selected.steps} context={data.context} statuses={onSelected} />
+                  <InputFields fields={fields} values={values} onChange={setValues} />
+                  <div className="auto-actions">
+                    <button type="button" className="btn btn-primary auto-main-button" disabled={Boolean(busy) || running || missing} onClick={runNow}>
+                      <Icon name="play" size={18} /> {busy === 'run' || running ? 'Running…' : runs.length ? 'Run again' : 'Run now'}
+                    </button>
+                  </div>
+                </section>
+                {runs.length > 0 && (
+                  <section className="auto-history">
+                    <h2>Runs</h2>
+                    {runs.slice(0, 20).map((run, index) => <RunEntry key={run.id} run={run} open={index === 0} />)}
+                  </section>
+                )}
+              </>
+            ) : (
+              <div className="auto-none">
+                <p>Choose an automation, or make a new one.</p>
+                <button type="button" className="btn btn-primary" onClick={startNew}><Icon name="add" size={18} /> New automation</button>
+              </div>
+            )}
+          </div>
         </main>
       </div>
     </div>
   );
-}
-
-function Plan({ plan, compact = false }) {
-  return <div className={`automation-plan ${compact ? 'compact' : ''}`}><div className="automation-plan-head"><div><span className="eyebrow">Workflow plan</span><h2>{plan.name}</h2>{plan.description && <p>{plan.description}</p>}</div><span>{plan.steps.length} step{plan.steps.length === 1 ? '' : 's'}</span></div><ol>{plan.steps.map((step, index) => <li key={step.id || `${step.action}-${index}`}><span>{index + 1}</span><div><strong>{step.label}</strong><small>{ACTION_LABELS[step.action] || step.action}</small>{!compact && <dl>{Object.entries(step.params || {}).filter(([, value]) => value).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>}</div></li>)}</ol></div>;
-}
-
-function Run({ run }) {
-  return <details className={`automation-run ${run.status}`}><summary><span className="automation-run-state"><Icon name={run.status === 'completed' ? 'checkCircle' : run.status === 'failed' ? 'info' : 'refresh'} size={18} /></span><span><strong>{run.status[0].toUpperCase() + run.status.slice(1)}</strong><small>{dateTime(run.createdAt)}</small></span><b>{run.steps.filter((step) => step.status === 'completed').length}/{Math.max(run.steps.length, 1)}</b></summary><div>{run.error && <p className="automation-run-error">{run.error}</p>}{run.steps.map((step) => <p key={step.stepId}><Icon name={step.status === 'completed' ? 'check' : step.status === 'failed' ? 'close' : 'refresh'} size={15} /> {step.label}{step.error && <small>{step.error}</small>}</p>)}</div></details>;
 }

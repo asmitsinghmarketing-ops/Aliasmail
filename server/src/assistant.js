@@ -166,7 +166,7 @@ What you can do:
 - draft_email: prepare an email (new, or a reply with reply_to_id). It appears as a card; the person presses Send or edits it first.
 - schedule_meeting: prepare a Google Meet meeting in their Google Calendar, with invitations. It appears as a card; the person presses Create.
 - send_note: prepare an instant note to a teammate (private, inside Nextspace). It appears as a card; the person presses Send.
-- list_automations and run_automation: find one of the person's active saved workflows and prepare it as a card. The person presses Run before its steps execute.
+- list_automations and run_automation: find one of the person's saved workflows and prepare it as a card. The person presses Run before its steps execute.
 
 Rules:
 - You never send or create anything yourself. After preparing a card, tell the person in one short sentence to check it and press the button. Never say it has been sent.
@@ -243,12 +243,12 @@ const TOOLS = [
   },
   {
     name: 'list_automations',
-    description: 'List the person’s active saved automations. Use this before run_automation to identify the correct workflow.',
+    description: 'List the person’s saved automations. Use this before run_automation to identify the correct workflow.',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'run_automation',
-    description: 'Prepare one active saved automation to run. It is shown as a confirmation card; no steps execute until the person presses Run.',
+    description: 'Prepare one saved automation to run. It is shown as a confirmation card; no steps execute until the person presses Run.',
     input_schema: {
       type: 'object',
       properties: {
@@ -342,11 +342,11 @@ async function runTool(name, input, me) {
     return { card: { kind: 'note', title: `Note to ${mate.name || to}`, data } };
   }
   if (name === 'list_automations') {
-    const list = automationsFor(me).filter((automation) => automation.enabled).map(({ id, name: automationName, description, steps }) => ({ id, name: automationName, description, steps: steps.map((step) => step.label) }));
-    return { result: list.length ? JSON.stringify(list) : 'The person has no active automations.' };
+    const list = automationsFor(me).map(({ id, name: automationName, description, steps }) => ({ id, name: automationName, description, steps: steps.map((step) => step.label) }));
+    return { result: list.length ? JSON.stringify(list) : 'The person has no automations.' };
   }
   if (name === 'run_automation') {
-    const automation = automationFor(me, text(i.id, 80, 'id'), { enabled: true });
+    const automation = automationFor(me, text(i.id, 80, 'id'));
     const input = i.input && typeof i.input === 'object' && !Array.isArray(i.input)
       ? Object.fromEntries(Object.entries(i.input).slice(0, 30).map(([key, value]) => [String(key).slice(0, 60), String(value).slice(0, 2000)]))
       : {};
@@ -401,29 +401,56 @@ const claudeToolResults = (results) => ({
   content: results.map(({ use, content, isError }) => ({ type: 'tool_result', tool_use_id: use.id, content, ...(isError && { is_error: true }) })),
 });
 
-/** Turn a person's description into a validated allowlisted workflow. Nothing is saved or run. */
+class CannotAutomate extends Error {}
+
+/** Ask the model which functions, in order, carry out someone's idea. Nothing is saved or run. */
 export async function planAutomation({ person, prompt, context }) {
   const request = String(prompt || '').trim().slice(0, 5000);
   if (!request) throw new HttpError(400, 'Describe what the automation should do');
   checkLimits(person);
   const via = provider();
   const call = { gemini: callGemini, openrouter: callOpenRouter }[via] ?? callClaude;
-  const userMessage = { gemini: geminiUserMessage, openrouter: openrouterUserMessage }[via]?.(
-    `Create an automation for this request:\n${request}\n\nAvailable context:\n${JSON.stringify(context)}`,
-  ) ?? { role: 'user', content: [{ type: 'text', text: `Create an automation for this request:\n${request}\n\nAvailable context:\n${JSON.stringify(context)}` }] };
-  const system = `You compile descriptions into AliasMail workflow JSON. Return ONLY one JSON object, with no markdown or commentary:
-{"name":"short name","description":"what it does","steps":[{"action":"allowed action","label":"human label","params":{}}]}
-Use only actions and exact project ids/team email addresses from the provided context. Supported template variables are {{input.text}}, {{input.name}}, {{input.email}}, {{actor.email}}, {{automation.name}}. Prefer {{input.text}} when the workflow needs information supplied at run time. Never invent actions, people, projects or executable code. Keep 1-12 steps.`;
-  let output = '';
-  const response = await call({ system, history: [userMessage], tools: [], fast: true, onText: (part) => { output += part; }, onReset: () => { output = ''; } });
-  record(person, modelName(), response.usage);
-  const start = output.indexOf('{');
-  const end = output.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new HttpError(502, 'The AI did not return an automation plan. Try describing it more simply.');
-  let parsed;
-  try { parsed = JSON.parse(output.slice(start, end + 1)); }
-  catch { throw new HttpError(502, 'The AI returned an invalid automation plan. Try again.'); }
-  return validateAutomationPlan(parsed);
+  const available = JSON.stringify({ today: new Date().toISOString().slice(0, 10), ...context });
+  const userMessage = (ask) => {
+    const content = `Create an automation for this request:\n${ask}\n\nAvailable context:\n${available}`;
+    return { gemini: geminiUserMessage, openrouter: openrouterUserMessage }[via]?.(content) ?? { role: 'user', content: [{ type: 'text', text: content }] };
+  };
+  const system = `You turn a person's automation idea into the ordered list of functions to run. Return ONLY one JSON object, with no markdown or commentary:
+{"name":"short name","description":"what it does, in one sentence","steps":[{"action":"function from context.actions","label":"short description of this step","params":{}}]}
+If the available functions can't do what was asked, don't approximate it: return {"unsupported":"one sentence saying what is missing"}.
+Rules:
+- Steps run one after another, and a failed step stops the rest. Use 1-12 steps.
+- Use only the listed functions and their fields, and exact project ids and team email addresses from the context. Never invent functions, people, projects or code.
+- If the idea leaves out something that changes each time it runs, ask for it with {{input.text}}, {{input.name}} or {{input.email}}. Those are the only inputs. Don't use an input for anything the idea already states.
+- A step can use what an earlier step made: {{steps.1.id}}, {{steps.1.title}}, {{steps.1.subject}}, numbered from 1. Also available: {{actor.email}}, {{automation.name}}.
+- Due dates are YYYY-MM-DD. Use context.today to work out dates the idea gives.`;
+  // A list that doesn't pass the checks goes back to the model once, with the reason.
+  let correction = '';
+  for (let attempt = 0; ; attempt++) {
+    const ask = `${request}${correction}`;
+    let output = '';
+    let response;
+    try {
+      response = await call({ system, history: [userMessage(ask)], tools: [], fast: true, onText: (part) => { output += part; }, onReset: () => { output = ''; } });
+    } catch (err) {
+      throw err instanceof HttpError ? err : new HttpError(502, friendly(err));
+    }
+    record(person, modelName(), response.usage);
+    try {
+      const start = output.indexOf('{');
+      const end = output.lastIndexOf('}');
+      if (start < 0 || end <= start) throw new HttpError(400, 'The answer was not a JSON object.');
+      let parsed;
+      try { parsed = JSON.parse(output.slice(start, end + 1)); }
+      catch { throw new HttpError(400, 'The answer was not valid JSON.'); }
+      if (parsed.unsupported) throw new CannotAutomate(String(parsed.unsupported).slice(0, 300));
+      return validateAutomationPlan(parsed, context);
+    } catch (err) {
+      if (err instanceof CannotAutomate) throw new HttpError(422, `This can’t be automated yet: ${err.message}`);
+      if (attempt >= 1) throw new HttpError(502, `The AI couldn’t work out valid steps. Try describing it more simply. (${err.message})`);
+      correction = `\n\nYour previous answer was rejected: ${err.message}\nPrevious answer: ${output.slice(0, 4000)}\nAnswer again with a corrected JSON object.`;
+    }
+  }
 }
 
 /* ---------------------------------- one turn ---------------------------------- */
