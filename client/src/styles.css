@@ -1079,7 +1079,7 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
   .app:has(.bottom-nav) .toast { bottom: calc(148px + env(safe-area-inset-bottom)); }
 
   /* Side drawer: narrower than the screen, like an app's navigation drawer. */
-  .sidebar, .sidebar.collapsed { width: min(86vw, 320px); border-radius: 0 18px 18px 0; }
+  .sidebar, .sidebar.collapsed { width: min(86vw, 320px); border-radius: 0; }
 
   /* Message view: its own app bar replaces the search bar. */
   .app:has(.viewer) .topbar { display: none; }
