@@ -46,13 +46,30 @@ const FOLDERS = [
 ];
 
 const CATEGORY_TABS = [
+  // Everything in the Inbox together. The server only narrows the list for the four categories below.
+  { id: 'all', label: 'All', icon: 'mail', color: '#2b8a3e' },
   { id: 'primary', label: 'Primary', icon: 'inbox', color: 'var(--alias)' },
   { id: 'promotions', label: 'Promotions', icon: 'tag', color: 'var(--green)' },
   { id: 'social', label: 'Social', icon: 'people', color: '#1971c2' },
   { id: 'updates', label: 'Updates', icon: 'info', color: 'var(--orange)' },
-  // Everything in the Inbox together. The server only narrows the list for the four categories above.
-  { id: 'all', label: 'All', icon: 'mail', color: '#2b8a3e' },
 ];
+
+// Which Inbox tab was open last, for each mailbox on this device. Browser storage can be blocked
+// or empty (private windows), and then it simply opens on Primary.
+const TAB_KEY = 'nextspace-inbox-tab';
+function rememberedTab(address) {
+  try {
+    const saved = localStorage.getItem(`${TAB_KEY}:${address}`);
+    return CATEGORY_TABS.some((tab) => tab.id === saved) ? saved : 'primary';
+  } catch {
+    return 'primary';
+  }
+}
+function rememberTab(address, tab) {
+  try {
+    localStorage.setItem(`${TAB_KEY}:${address}`, tab);
+  } catch { /* Not remembered this time; nothing else depends on it. */ }
+}
 
 // The list is split by when mail arrived, like Outlook: Today, Yesterday, this week, this month,
 // then month by month.
@@ -404,6 +421,18 @@ function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh
   );
 }
 
+/** One tab in the left bar: an icon with its name under it. */
+function RailTab({ tab }) {
+  const name = tab.title || tab.label;
+  return (
+    <button type="button" className={`rail-btn ${tab.on ? 'on' : ''}`} title={name} aria-label={tab.badge ? `${name}, ${tab.badge} unread` : name} onClick={tab.onClick}>
+      <Icon name={tab.icon} size={22} />
+      <span className="rail-label">{tab.label}</span>
+      {tab.badge > 0 && <span className="rail-badge">{tab.badge > 99 ? '99+' : tab.badge}</span>}
+    </button>
+  );
+}
+
 export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin, onOpenTasks, onOpenAutomations }) {
   const [folder, setFolder] = useState('inbox');
   const [team, setTeam] = useState([]); // who can own a conversation
@@ -418,7 +447,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const [latestNote, setLatestNote] = useState(null);
   const notesView = useRef({ open: false, me: '' });
   notesView.current = { open: notesOpen, me: notesMe };
-  const [category, setCategory] = useState('primary');
+  const [category, setCategory] = useState(() => rememberedTab(user.email));
+  useEffect(() => { rememberTab(user.email, category); }, [user.email, category]);
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
@@ -501,6 +531,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     }
   }, [folder, category, page, search, phone]);
   latestLoad.current = load;
+
+  useEffect(() => { document.querySelector('.rail-box.on')?.scrollIntoView({ block: 'nearest' }); }, [me]);
 
   useEffect(() => whenIdle(() => {
     Compose.preload();
@@ -1477,52 +1509,47 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   const drawerVisiblyOpen = !collapsed;
 
+  // The left bar's tabs. To add one, add a line here. The list scrolls if it outgrows the screen,
+  // and `pinned` keeps a tab in view at the bottom.
+  const railTabs = [
+    { id: 'tasks', label: 'Tasks', icon: 'checkCircle', onClick: onOpenTasks },
+    { id: 'automations', label: 'Automate', title: 'Automations', icon: 'scheduleSend', onClick: onOpenAutomations, hidden: shared },
+    { id: 'assistant', label: 'Assistant', icon: 'sparkle', on: assistantOpen, onClick: () => setAssistantOpen(!assistantOpen), hidden: shared },
+    { id: 'notes', label: 'Notes', title: 'Instant notes', icon: 'chat', on: notesOpen, badge: notesUnread, onClick: () => (notesOpen ? setNotesOpen(false) : openNotes()) },
+    { id: 'meet', label: 'Meeting', title: 'New meeting', icon: 'videocam', onClick: () => setModal('meet'), hidden: !meetOn || shared },
+    { id: 'settings', label: 'Settings', icon: 'settings', pinned: true, onClick: () => { setSettingsTab('profile'); setModal('settings'); }, hidden: shared },
+  ].filter((tab) => !tab.hidden);
+
   return (
     <div className={`app has-rail ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.some((m) => m.phase === 'waiting') ? 'has-send-tray' : ''}`}>
-      <nav className="rail" aria-label="Mailboxes">
+      <nav className="rail" aria-label="Workspace">
         <Logo inverse size={46} className="rail-logo" />
+        <div className="rail-mailboxes" role="group" aria-label="Mailboxes">
+          {[{ ...account, address: account.email, own: true }, ...mailboxes].map((m) => {
+            const current = m.address === me;
+            const label = m.own ? 'Your mailbox' : m.displayName || m.address;
+            return (
+              <button
+                key={m.address}
+                type="button"
+                className={`rail-box ${current ? 'on' : ''}`}
+                title={`${label} · ${m.address}`}
+                aria-label={label}
+                aria-current={current ? 'true' : undefined}
+                onClick={() => !current && onSwitchMailbox(m.own ? null : m.address)}
+              >
+                {initialsOf(m.displayName, m.address)}
+              </button>
+            );
+          })}
+        </div>
         <span className="rail-divider" aria-hidden="true" />
-        {[{ ...account, address: account.email, own: true }, ...mailboxes].map((m) => {
-          const current = m.address === me;
-          const label = m.own ? 'Your mailbox' : m.displayName || m.address;
-          return (
-            <button
-              key={m.address}
-              type="button"
-              className={`rail-box ${current ? 'on' : ''}`}
-              title={`${label} · ${m.address}`}
-              aria-label={label}
-              aria-current={current ? 'true' : undefined}
-              onClick={() => !current && onSwitchMailbox(m.own ? null : m.address)}
-            >
-              {initialsOf(m.displayName, m.address)}
-            </button>
-          );
-        })}
-        <span className="rail-fill" />
-        <button type="button" className="rail-btn" title="Tasks" aria-label="Tasks" onClick={onOpenTasks}>
-          <Icon name="checkCircle" size={22} />
-        </button>
-        {!shared && <button type="button" className="rail-btn" title="Automations" aria-label="Automations" onClick={onOpenAutomations}><Icon name="scheduleSend" size={22} /></button>}
-        {!shared && (
-          <button type="button" className={`rail-btn ${assistantOpen ? 'on' : ''}`} title="Assistant" aria-label="Assistant" onClick={() => setAssistantOpen(!assistantOpen)}>
-            <Icon name="sparkle" size={22} />
-          </button>
-        )}
-        <button type="button" className={`rail-btn ${notesOpen ? 'on' : ''}`} title="Instant notes" aria-label={`Instant notes${notesUnread ? `, ${notesUnread} unread` : ''}`} onClick={() => (notesOpen ? setNotesOpen(false) : openNotes())}>
-          <Icon name="chat" size={22} />
-          {notesUnread > 0 && <span className="rail-badge">{notesUnread > 99 ? '99+' : notesUnread}</span>}
-        </button>
-        {meetOn && !shared && (
-          <button type="button" className="rail-btn" title="New meeting" aria-label="New meeting" onClick={() => setModal('meet')}>
-            <Icon name="videocam" size={22} />
-          </button>
-        )}
-        {!shared && (
-          <button type="button" className="rail-btn" title="Settings" aria-label="Settings" onClick={() => { setSettingsTab('profile'); setModal('settings'); }}>
-            <Icon name="settings" size={22} />
-          </button>
-        )}
+        <div className="rail-tabs">
+          {railTabs.filter((tab) => !tab.pinned).map((tab) => <RailTab key={tab.id} tab={tab} />)}
+        </div>
+        <div className="rail-pinned">
+          {railTabs.filter((tab) => tab.pinned).map((tab) => <RailTab key={tab.id} tab={tab} />)}
+        </div>
       </nav>
       <header className="topbar">
         <div className="brand">

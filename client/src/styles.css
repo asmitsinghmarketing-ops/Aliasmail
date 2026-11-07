@@ -3150,3 +3150,26 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
     transform: translate3d(var(--drawer-handle-offset, 0), 0, 0);
   }
 }
+
+/* ---------- the left bar on laptops ----------
+   Mailboxes at the top and tabs below each scroll by themselves, and pinned tabs stay at the bottom,
+   so more of either can be added without anything falling off the screen. */
+@media (min-width: 801px) {
+  .rail { gap: 8px; padding: 14px 0 8px; overflow: hidden; }
+  .rail-logo { flex: none; margin-bottom: 0; }
+  .rail-divider { flex: none; }
+  .rail-mailboxes, .rail-tabs {
+    width: 100%; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; overflow: hidden auto;
+    scrollbar-width: none;
+  }
+  .rail-mailboxes::-webkit-scrollbar, .rail-tabs::-webkit-scrollbar { display: none; }
+  /* Scrolls past 40% of the height, so tabs always have room too. */
+  .rail-mailboxes { flex: 0 1 auto; max-height: 40vh; padding: 3px 0; }
+  .rail-box { flex: none; }
+  .rail-tabs { flex: 1 1 0; gap: 2px; }
+  .rail-pinned { flex: none; width: 100%; display: flex; flex-direction: column; align-items: center; padding-top: 6px; border-top: 1px solid #25418a; }
+  .rail-btn { flex: none; width: 64px; height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-radius: 10px; }
+  .rail-label { max-width: 100%; overflow: hidden; font-size: 10.5px; font-weight: 500; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+  .rail-btn.on .rail-label { font-weight: 600; }
+  .rail-badge { top: 3px; right: 10px; }
+}
