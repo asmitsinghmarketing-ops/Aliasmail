@@ -15,6 +15,7 @@ const FUNCTIONS = {
 };
 
 const EXAMPLES = [
+  'When an email with invoice in the subject arrives, create a task and notify me',
   'When a new lead comes in, create a high-priority task and tell the sales team',
   'Write a welcome email draft to a new client and remind me to follow up',
   'Log a customer complaint as a task and notify the support lead',
@@ -40,6 +41,7 @@ function variableLabel(name) {
   return {
     'input.text': 'the details you enter', 'input.name': 'the name you enter', 'input.email': 'the email you enter',
     'actor.email': 'your email', 'automation.name': 'this automation’s name',
+    'email.from': 'the sender’s address', 'email.fromName': 'the sender’s name', 'email.subject': 'the email’s subject', 'email.snippet': 'the start of the email',
   }[name] || name;
 }
 
@@ -67,6 +69,29 @@ function stepDetails({ action, params = {} }, context) {
     notify_user: [['To', person(params.to)], ['Title', params.title], ['Message', params.body]],
   }[action] || [];
   return rows.filter(([, value]) => value);
+}
+
+const isAutomatic = (item) => item?.trigger?.type === 'email_received';
+
+/** When it runs, as the first line of the list. */
+function TriggerLine({ trigger }) {
+  const automatic = trigger?.type === 'email_received';
+  const conditions = automatic ? [
+    trigger.fromContains && <>from <mark>{trigger.fromContains}</mark></>,
+    trigger.subjectContains && <>with <mark>{trigger.subjectContains}</mark> in the subject</>,
+  ].filter(Boolean) : [];
+  return (
+    <div className="auto-trigger">
+      <span className="auto-step-mark"><Icon name={automatic ? 'mail' : 'play'} size={16} /></span>
+      <div>
+        <span className="auto-step-function">When</span>
+        <strong>{automatic ? 'An email arrives' : 'You run it'}</strong>
+        {conditions.length > 0 && <span className="auto-trigger-if">{conditions.map((condition, i) => <span key={i}>{i > 0 && ' and '}{condition}</span>)}</span>}
+        {automatic && !conditions.length && <span className="auto-trigger-if">Any email to you</span>}
+        {automatic && <small>Promotional and social mail, and your own mail, don’t count.</small>}
+      </div>
+    </div>
+  );
 }
 
 function StepList({ steps, context, statuses }) {
@@ -123,7 +148,7 @@ function RunEntry({ run, open }) {
     <details className={`auto-run ${run.status}`} open={open}>
       <summary>
         <span className="auto-run-state"><Icon name={run.status === 'completed' ? 'checkCircle' : run.status === 'failed' ? 'info' : 'refresh'} size={18} /></span>
-        <span className="auto-run-title"><strong>{RUN_WORDS[run.status] || run.status}</strong><small>{when(run.createdAt)}</small></span>
+        <span className="auto-run-title"><strong>{RUN_WORDS[run.status] || run.status}</strong><small>{when(run.createdAt)}{run.trigger ? ` · ${run.trigger.fromName}: ${run.trigger.subject || '(no subject)'}` : ''}</small></span>
         <b>{done} of {run.steps.length || '…'} done</b>
       </summary>
       <div>
@@ -175,11 +200,18 @@ export default function Automations({ onClose }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const running = data.runs.some((run) => run.status === 'queued' || run.status === 'running');
+  const watching = !creating && isAutomatic(data.automations.find((item) => item.id === selectedId)) && data.automations.find((item) => item.id === selectedId)?.enabled;
   useEffect(() => {
     if (!running) return undefined;
     const timer = setInterval(load, 1000);
     return () => clearInterval(timer);
   }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
+  // It can start at any moment, so keep its list of runs up to date while it's on screen.
+  useEffect(() => {
+    if (!watching) return undefined;
+    const timer = setInterval(load, 15_000);
+    return () => clearInterval(timer);
+  }, [watching]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selected = data.automations.find((item) => item.id === selectedId) || null;
   const runs = useMemo(() => data.runs.filter((run) => run.automationId === selectedId), [data.runs, selectedId]);
@@ -187,7 +219,8 @@ export default function Automations({ onClose }) {
   const steps = creating ? plan?.steps || [] : selected?.steps || [];
   const fields = useMemo(() => inputsOf(steps), [steps]);
   const missing = fields.some((key) => !String(values[key] || '').trim());
-  const onSelected = latest && latest.status !== 'queued' ? latest.steps.map((step) => step.status) : null;
+  // Ticks show how the last run went; for one that runs itself, that's what the Runs list is for.
+  const onSelected = latest && latest.status !== 'queued' && !isAutomatic(selected) ? latest.steps.map((step) => step.status) : null;
 
   const startNew = () => {
     setCreating(true); setShowList(false); setPlan(null); setIdea(''); setValues({}); setError('');
@@ -213,8 +246,8 @@ export default function Automations({ onClose }) {
   const saveAnd = async (thenRun) => {
     setBusy(thenRun ? 'run' : 'save'); setError('');
     try {
-      const saved = await api('/automations', { method: 'POST', body: { prompt: idea, plan } });
-      if (thenRun) {
+      const saved = await api('/automations', { method: 'POST', body: { prompt: idea, plan, enabled: thenRun } });
+      if (thenRun && !isAutomatic(plan)) {
         try {
           await runSaved(saved.id);
         } catch (err) {
@@ -236,6 +269,18 @@ export default function Automations({ onClose }) {
     setBusy('run'); setError('');
     try {
       await runSaved(selected.id);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const setOn = async (enabled) => {
+    setBusy('switch'); setError('');
+    try {
+      await api(`/automations/${selected.id}`, { method: 'PATCH', body: { enabled } });
       await load();
     } catch (err) {
       setError(err.message);
@@ -279,7 +324,7 @@ export default function Automations({ onClose }) {
             return (
               <button type="button" key={item.id} className={!creating && item.id === selectedId ? 'active' : ''} onClick={() => open(item.id)}>
                 <strong>{item.name}</strong>
-                <small>{item.steps.length} step{item.steps.length === 1 ? '' : 's'}{last ? ` · last run ${when(last.createdAt)}` : ' · not run yet'}</small>
+                <small>{isAutomatic(item) ? (item.enabled ? 'On · ' : 'Off · ') : ''}{item.steps.length} step{item.steps.length === 1 ? '' : 's'}{last ? ` · last run ${when(last.createdAt)}` : ' · not run yet'}</small>
               </button>
             );
           })}
@@ -313,16 +358,17 @@ export default function Automations({ onClose }) {
                   <section className="auto-plan">
                     <h2>{plan.name}</h2>
                     {plan.description && <p className="auto-lead">{plan.description}</p>}
+                    <TriggerLine trigger={plan.trigger} />
                     <StepList steps={plan.steps} context={data.context} />
                     <InputFields fields={fields} values={values} onChange={setValues} />
                     <div className="auto-actions">
                       <button type="button" className="btn btn-primary auto-main-button" disabled={Boolean(busy) || missing} onClick={() => saveAnd(true)}>
-                        <Icon name="play" size={18} /> {busy === 'run' ? 'Starting…' : 'Run now'}
+                        <Icon name={isAutomatic(plan) ? 'check' : 'play'} size={18} /> {busy === 'run' ? 'Starting…' : isAutomatic(plan) ? 'Turn on' : 'Run now'}
                       </button>
-                      <button type="button" className="btn btn-outline" disabled={Boolean(busy)} onClick={() => saveAnd(false)}>{busy === 'save' ? 'Saving…' : 'Save for later'}</button>
+                      <button type="button" className="btn btn-outline" disabled={Boolean(busy)} onClick={() => saveAnd(false)}>{busy === 'save' ? 'Saving…' : isAutomatic(plan) ? 'Save, leave off' : 'Save for later'}</button>
                       <button type="button" className="btn btn-ghost" disabled={Boolean(busy)} onClick={design}><Icon name="refresh" size={17} /> Try again</button>
                     </div>
-                    <p className="auto-hint">Run now also saves it, so you can run it again.</p>
+                    <p className="auto-hint">{isAutomatic(plan) ? 'Once on, these steps run by themselves each time a matching email arrives, without asking.' : 'Run now also saves it, so you can run it again.'}</p>
                   </section>
                 )}
               </>
@@ -336,13 +382,23 @@ export default function Automations({ onClose }) {
                   <button type="button" className="icon-btn danger" disabled={Boolean(busy)} title="Delete" aria-label={`Delete ${selected.name}`} onClick={remove}><Icon name="trash" size={20} /></button>
                 </div>
                 <section className="auto-plan">
+                  <TriggerLine trigger={selected.trigger} />
                   <StepList steps={selected.steps} context={data.context} statuses={onSelected} />
-                  <InputFields fields={fields} values={values} onChange={setValues} />
-                  <div className="auto-actions">
-                    <button type="button" className="btn btn-primary auto-main-button" disabled={Boolean(busy) || running || missing} onClick={runNow}>
-                      <Icon name="play" size={18} /> {busy === 'run' || running ? 'Running…' : runs.length ? 'Run again' : 'Run now'}
-                    </button>
-                  </div>
+                  {isAutomatic(selected) ? (
+                    <div className={`auto-switch ${selected.enabled ? 'on' : ''}`}>
+                      <span><strong>{selected.enabled ? 'On' : 'Off'}</strong><small>{selected.enabled ? 'Runs by itself when a matching email arrives.' : 'Nothing runs until you turn it on.'}</small></span>
+                      <button type="button" className={`btn ${selected.enabled ? 'btn-outline' : 'btn-primary'}`} disabled={Boolean(busy)} onClick={() => setOn(!selected.enabled)}>{selected.enabled ? 'Turn off' : 'Turn on'}</button>
+                    </div>
+                  ) : (
+                    <>
+                      <InputFields fields={fields} values={values} onChange={setValues} />
+                      <div className="auto-actions">
+                        <button type="button" className="btn btn-primary auto-main-button" disabled={Boolean(busy) || running || missing} onClick={runNow}>
+                          <Icon name="play" size={18} /> {busy === 'run' || running ? 'Running…' : runs.length ? 'Run again' : 'Run now'}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </section>
                 {runs.length > 0 && (
                   <section className="auto-history">

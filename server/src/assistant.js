@@ -342,7 +342,7 @@ async function runTool(name, input, me) {
     return { card: { kind: 'note', title: `Note to ${mate.name || to}`, data } };
   }
   if (name === 'list_automations') {
-    const list = automationsFor(me).map(({ id, name: automationName, description, steps }) => ({ id, name: automationName, description, steps: steps.map((step) => step.label) }));
+    const list = automationsFor(me).filter((automation) => automation.trigger?.type !== 'email_received').map(({ id, name: automationName, description, steps }) => ({ id, name: automationName, description, steps: steps.map((step) => step.label) }));
     return { result: list.length ? JSON.stringify(list) : 'The person has no automations.' };
   }
   if (name === 'run_automation') {
@@ -416,14 +416,19 @@ export async function planAutomation({ person, prompt, context }) {
     return { gemini: geminiUserMessage, openrouter: openrouterUserMessage }[via]?.(content) ?? { role: 'user', content: [{ type: 'text', text: content }] };
   };
   const system = `You turn a person's automation idea into the ordered list of functions to run. Return ONLY one JSON object, with no markdown or commentary:
-{"name":"short name","description":"what it does, in one sentence","steps":[{"action":"function from context.actions","label":"short description of this step","params":{}}]}
+{"name":"short name","description":"what it does, in one sentence","trigger":{"type":"manual"},"steps":[{"action":"function from context.actions","label":"short description of this step","params":{}}]}
 If the available functions can't do what was asked, don't approximate it: return {"unsupported":"one sentence saying what is missing"}.
 Rules:
 - Steps run one after another, and a failed step stops the rest. Use 1-12 steps.
 - Use only the listed functions and their fields, and exact project ids and team email addresses from the context. Never invent functions, people, projects or code.
 - If the idea leaves out something that changes each time it runs, ask for it with {{input.text}}, {{input.name}} or {{input.email}}. Those are the only inputs. Don't use an input for anything the idea already states.
 - A step can use what an earlier step made: {{steps.1.id}}, {{steps.1.title}}, {{steps.1.subject}}, numbered from 1. Also available: {{actor.email}}, {{automation.name}}.
-- Due dates are YYYY-MM-DD. Use context.today to work out dates the idea gives.`;
+- Due dates are YYYY-MM-DD. Use context.today to work out dates the idea gives.
+Triggers:
+- By default a person starts it: {"type":"manual"}.
+- If the idea says it should happen when an email arrives: {"type":"email_received","fromContains":"","subjectContains":""}. Fill in fromContains or subjectContains only for conditions the idea states.
+- There are no other triggers. For anything else automatic, such as a schedule, return unsupported.
+- With email_received nobody is there to enter anything: never use {{input.*}}. Use {{email.from}}, {{email.fromName}}, {{email.subject}} and {{email.snippet}} instead, and only those. Those values are never available otherwise.`;
   // A list that doesn't pass the checks goes back to the model once, with the reason.
   let correction = '';
   for (let attempt = 0; ; attempt++) {

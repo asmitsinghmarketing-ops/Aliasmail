@@ -2,6 +2,10 @@
 // (assistant.js, planAutomation), the person reviews the list, and the functions run in order. The
 // model can only choose from the functions below: generated JavaScript, URLs and arbitrary backend
 // calls are never accepted. Every list is checked here before it is saved and again before it runs.
+//
+// An automation can also start by itself when an email arrives. The model is only asked once, when
+// the automation is made: incoming mail never reaches it, so an email can't talk it into anything,
+// and text from an email only ever fills in the values of steps already chosen.
 import crypto from 'node:crypto';
 import { db, save } from './store.js';
 import { HttpError } from './errors.js';
@@ -9,6 +13,8 @@ import { createTask, taskStore } from './routes/tasks.js';
 import { createNote } from './instant-notes.js';
 import { createNotification } from './notifications.js';
 import { teammates } from './team.js';
+import { isVisibleTo } from './aliases.js';
+import { mailEvents } from './mail-events.js';
 
 const MAX_AUTOMATIONS = 100;
 const MAX_STEPS = 12;
@@ -18,6 +24,13 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const VARIABLE = /\{\{\s*([\w.-]+)\s*\}\}/g;
 // What can be asked for when an automation runs.
 const INPUTS = { text: 'details', name: 'a name', email: 'an email address' };
+// What a step can use from the email that started it.
+const EMAIL_VALUES = ['email.from', 'email.fromName', 'email.subject', 'email.snippet'];
+const EMAIL_TRIGGER = 'email_received';
+const FRESH_MS = 30 * 60e3; // Only mail that has just arrived, not old mail found by a sync.
+const MAX_BATCH = 50; // More at once than this is a mailbox being imported, not new mail.
+const MAX_RUNS_PER_HOUR = 30; // Past this something is wrong, like a flood of mail: switch it off.
+const IGNORED_CATEGORIES = new Set(['promotions', 'social']);
 
 export const actionCatalog = [
   { action: 'create_task', description: 'Create a task in an existing project', fields: ['projectId', 'title', 'description?', 'assignee?', 'priority?', 'dueDate?'] },
@@ -65,11 +78,14 @@ function paramsFor(action, input) {
 const hasVariable = (value) => /\{\{/.test(String(value));
 
 /** The {{…}} values a step uses; anything unknown would otherwise quietly come out blank. */
-function checkVariables(step, index) {
+function checkVariables(step, index, trigger) {
   for (const value of Object.values(step.params)) {
     for (const [, name] of String(value).matchAll(VARIABLE)) {
       const earlier = /^steps\.(\d+)\.(id|title|subject)$/.exec(name);
-      const known = (name.startsWith('input.') && name.slice(6) in INPUTS) || ['actor.email', 'automation.name'].includes(name);
+      // Nobody is there to type anything when an email starts it, and no email when someone does.
+      const known = trigger.type === EMAIL_TRIGGER
+        ? EMAIL_VALUES.includes(name) || ['actor.email', 'automation.name'].includes(name)
+        : (name.startsWith('input.') && name.slice(6) in INPUTS) || ['actor.email', 'automation.name'].includes(name);
       if (!known && !(earlier && Number(earlier[1]) >= 1 && Number(earlier[1]) <= index)) {
         throw new HttpError(400, `Step ${index + 1} uses an unknown value: ${name}`);
       }
@@ -105,19 +121,26 @@ export function inputsOf(steps) {
   return Object.keys(INPUTS).filter((key) => found.has(key));
 }
 
+function triggerFrom(value) {
+  if (!value || value.type === 'manual') return { type: 'manual' };
+  if (value.type !== EMAIL_TRIGGER) throw new HttpError(400, `Unsupported trigger: ${short(value.type, 40, 'Trigger', false)}`);
+  return { type: EMAIL_TRIGGER, fromContains: short(value.fromContains, 200, 'Sender', false), subjectContains: short(value.subjectContains, 200, 'Subject', false) };
+}
+
 export function validateAutomationPlan(value, context = planningContext()) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'The AI did not return a valid automation');
   const steps = Array.isArray(value.steps) ? value.steps : [];
   if (!steps.length || steps.length > MAX_STEPS) throw new HttpError(400, `An automation needs 1 to ${MAX_STEPS} steps`);
+  const trigger = triggerFrom(value.trigger);
   return {
     name: short(value.name, 100, 'Automation name'),
     description: short(value.description, 500, 'Description', false),
-    trigger: { type: 'manual' },
+    trigger,
     steps: steps.map((step, index) => {
       const action = short(step?.action, 40, `Step ${index + 1} function`);
       if (!ACTIONS.has(action)) throw new HttpError(400, `Step ${index + 1} uses an unsupported function: ${action}`);
       const checked = { id: crypto.randomUUID(), action, label: short(step?.label || action.replaceAll('_', ' '), 100, 'Step label'), params: paramsFor(action, step?.params) };
-      checkVariables(checked, index);
+      checkVariables(checked, index, trigger);
       checkTargets(checked, index, context);
       return checked;
     }),
@@ -136,7 +159,7 @@ export function createAutomation(owner, input) {
   if (automationsFor(owner).length >= MAX_AUTOMATIONS) throw new HttpError(400, `You can keep up to ${MAX_AUTOMATIONS} automations`);
   const plan = validateAutomationPlan(input?.plan);
   const now = new Date().toISOString();
-  const item = { id: crypto.randomUUID(), owner, prompt: template(input?.prompt, 5000, 'Description'), ...plan, enabled: true, version: 1, createdAt: now, updatedAt: now };
+  const item = { id: crypto.randomUUID(), owner, prompt: template(input?.prompt, 5000, 'Description'), ...plan, enabled: plan.trigger.type === 'manual' || input?.enabled === true, version: 1, createdAt: now, updatedAt: now };
   store().items.push(item);
   save();
   return item;
@@ -144,6 +167,7 @@ export function createAutomation(owner, input) {
 
 export function updateAutomation(owner, id, input) {
   const item = automationFor(owner, id);
+  if (typeof input?.enabled === 'boolean') item.enabled = input.enabled;
   if (input?.name !== undefined) item.name = short(input.name, 100, 'Automation name');
   if (input?.description !== undefined) item.description = short(input.description, 500, 'Description', false);
   item.updatedAt = new Date().toISOString();
@@ -191,7 +215,7 @@ async function executeStep(step, context) {
 
 async function execute(run, automation, actor, input) {
   run.status = 'running'; run.startedAt = new Date().toISOString(); save();
-  const context = { input, actor: { email: actor }, automation: { id: automation.id, name: automation.name }, steps: {} };
+  const context = { input, actor: { email: actor }, automation: { id: automation.id, name: automation.name }, steps: {}, email: run.trigger || {} };
   try {
     for (const [index, step] of automation.steps.entries()) {
       const entry = { stepId: step.id, action: step.action, label: step.label, status: 'running', startedAt: new Date().toISOString() };
@@ -216,10 +240,15 @@ async function execute(run, automation, actor, input) {
   }
   run.finishedAt = new Date().toISOString();
   save();
+  // Nobody is watching a run that started by itself, so say when one goes wrong.
+  if (run.status === 'failed' && run.trigger) {
+    createNotification({ to: actor, type: 'automation', title: `“${automation.name}” stopped`, body: run.error, entity: { kind: 'automation', id: automation.id }, actor });
+  }
 }
 
 export function startAutomation(owner, id, input = {}) {
   const automation = automationFor(owner, id);
+  if (automation.trigger?.type === EMAIL_TRIGGER) throw new HttpError(400, 'This automation runs by itself when an email arrives');
   const given = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   if (JSON.stringify(given).length > 20_000) throw new HttpError(400, 'Automation input is too large');
   const values = Object.fromEntries(Object.keys(INPUTS).filter((key) => given[key] != null).map((key) => [key, String(given[key]).trim()]));
@@ -230,12 +259,69 @@ export function startAutomation(owner, id, input = {}) {
   // A project or teammate may have gone since this was saved: find out before any step runs.
   const context = planningContext();
   automation.steps.forEach((step, index) => checkTargets(step, index, context));
-  const run = { id: crypto.randomUUID(), automationId: automation.id, automationName: automation.name, owner, status: 'queued', input: values, steps: [], createdAt: new Date().toISOString(), startedAt: null, finishedAt: null, error: '' };
+  return queueRun(automation, owner, values);
+}
+
+function queueRun(automation, owner, values, trigger = null) {
+  const run = { id: crypto.randomUUID(), automationId: automation.id, automationName: automation.name, owner, status: 'queued', input: values, trigger, steps: [], createdAt: new Date().toISOString(), startedAt: null, finishedAt: null, error: '' };
   store().runs.push(run);
   if (store().runs.length > 1000) store().runs.splice(0, store().runs.length - 1000);
   save();
   setImmediate(() => execute(run, automation, owner, values));
   return run;
+}
+
+/** Does this email meet the automation's conditions? */
+function emailMatches(trigger, mail) {
+  const contains = (text, wanted) => !wanted || String(text || '').toLowerCase().includes(wanted.toLowerCase());
+  return contains(`${mail.from?.name || ''} ${mail.from?.address || ''}`, trigger.fromContains) && contains(mail.subject, trigger.subjectContains);
+}
+
+/** New mail has arrived: start the automations it's for. */
+export function runEmailAutomations(records) {
+  const now = Date.now();
+  const fresh = records.filter((mail) => now - Date.parse(mail.arrivedAt || mail.date) < FRESH_MS);
+  if (!fresh.length || fresh.length > MAX_BATCH) return;
+  for (const automation of store().items) {
+    if (!automation.enabled || automation.trigger?.type !== EMAIL_TRIGGER) continue;
+    const { owner } = automation;
+    for (const mail of fresh) {
+      // Their own mail is skipped so that nothing can ever set itself off.
+      if (mail.from?.address === owner || IGNORED_CATEGORIES.has(mail.category) || !isVisibleTo(mail, owner)) continue;
+      if (!emailMatches(automation.trigger, mail)) continue;
+      const key = mail.messageId || `uid:${mail.uid}`;
+      const earlier = store().runs.filter((run) => run.automationId === automation.id && run.trigger);
+      if (earlier.some((run) => run.trigger.key === key)) continue;
+      if (earlier.filter((run) => now - Date.parse(run.createdAt) < 3600e3).length >= MAX_RUNS_PER_HOUR) {
+        automation.enabled = false;
+        save();
+        createNotification({
+          to: owner, type: 'automation', title: `“${automation.name}” was turned off`,
+          body: `It ran ${MAX_RUNS_PER_HOUR} times in an hour, which is more than expected. Check it, then turn it back on.`,
+          entity: { kind: 'automation', id: automation.id }, actor: owner,
+        });
+        break;
+      }
+      queueRun(automation, owner, {}, {
+        type: 'email', key, from: mail.from?.address || '', fromName: mail.from?.name || mail.from?.address || '',
+        subject: String(mail.subject || ''), snippet: String(mail.snippet || ''),
+      });
+    }
+  }
+}
+
+let listening = false;
+/** Listen for new mail (once, at startup). A problem here must never disturb the mail sync. */
+export function startEmailAutomations() {
+  if (listening) return;
+  listening = true;
+  mailEvents.on('arrived', (records) => {
+    try {
+      runEmailAutomations(records);
+    } catch (err) {
+      console.error('[automations] couldn’t start from new mail:', err.message);
+    }
+  });
 }
 
 export const runsFor = (owner, automationId) => store().runs.filter((run) => run.owner === owner && (!automationId || run.automationId === automationId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));

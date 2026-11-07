@@ -2611,6 +2611,19 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .auto-steps dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .auto-steps mark { padding: 1px 6px; border-radius: 5px; background: #fff3d6; color: #6b4e00; }
 
+.auto-trigger { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.auto-trigger > div { display: grid; gap: 3px; min-width: 0; }
+.auto-trigger strong { font-size: 14px; font-weight: 600; }
+.auto-trigger .auto-step-mark { background: #efe9fd; color: var(--violet); }
+.auto-trigger-if { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.auto-trigger mark { padding: 1px 6px; border-radius: 5px; background: #efe9fd; color: #4c2fb0; }
+.auto-trigger small { color: var(--muted); font-size: 12px; }
+.auto-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 11px; background: #f1f3f6; }
+.auto-switch.on { background: #ebfbee; }
+.auto-switch > span { flex: 1 1 200px; display: grid; gap: 1px; }
+.auto-switch strong { font-weight: 600; }
+.auto-switch.on strong { color: var(--green); }
+.auto-switch small { color: var(--muted); font-size: 12px; }
 .auto-inputs { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border); }
 .auto-inputs label { display: grid; gap: 5px; font-size: 13px; font-weight: 600; }
 .auto-inputs input, .auto-inputs textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: #fff; font-weight: 400; line-height: 1.45; resize: vertical; }

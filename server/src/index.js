@@ -20,6 +20,7 @@ import notificationRoutes from './routes/notifications.js';
 import automationRoutes from './routes/automations.js';
 import callRoutes from './routes/calls.js';
 import { startPush } from './push.js';
+import { startEmailAutomations } from './automations.js';
 import { attachLive } from './live.js';
 import adminRoutes from './routes/admin.js';
 
@@ -176,6 +177,7 @@ const server = app.listen(config.port, () => console.log(`Nextspace API running 
 attachLive(server);
 // Notifications for new mail and instant notes.
 startPush();
+startEmailAutomations();
 checkDeployment();
 
 if (config.configured) {
