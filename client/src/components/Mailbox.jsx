@@ -23,6 +23,9 @@ import { lazyPage, MailListSkeleton, OpeningPill, TextSkeleton, whenIdle } from 
 
 // Opened on demand, and fetched as soon as the mailbox is idle so that opening them is instant.
 const Compose = lazyPage(() => import('./Compose.jsx'));
+const Tour = lazyPage(() => import('./Tour.jsx'));
+// Who has finished the tour since this page loaded, as their account only says so at sign-in.
+const toursSeen = new Set();
 const Settings = lazyPage(() => import('./Settings.jsx'));
 const Assistant = lazyPage(() => import('./Assistant.jsx'));
 const MeetDialog = lazyPage(() => import('./MeetDialog.jsx'));
@@ -425,7 +428,7 @@ function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh
 function RailTab({ tab }) {
   const name = tab.title || tab.label;
   return (
-    <button type="button" className={`rail-btn ${tab.on ? 'on' : ''}`} title={name} aria-label={tab.badge ? `${name}, ${tab.badge} unread` : name} onClick={tab.onClick}>
+    <button type="button" data-tour={tab.id} className={`rail-btn ${tab.on ? 'on' : ''}`} title={name} aria-label={tab.badge ? `${name}, ${tab.badge} unread` : name} onClick={tab.onClick}>
       <Icon name={tab.icon} size={22} />
       <span className="rail-label">{tab.label}</span>
       {tab.badge > 0 && <span className="rail-badge">{tab.badge > 99 ? '99+' : tab.badge}</span>}
@@ -1511,12 +1514,38 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   // The left bar's tabs. To add one, add a line here. The list scrolls if it outgrows the screen,
   // and `pinned` keeps a tab in view at the bottom.
+  // The tour: by itself on someone's first time in their own mailbox, once the page has settled and
+  // nothing else is open; and again whenever they ask.
+  const [touring, setTouring] = useState(false);
+  useEffect(() => {
+    if (touring || shared || account.tourDone || toursSeen.has(account.email) || loading || open || modal || draft) return undefined;
+    const timer = setTimeout(() => setTouring(true), 500);
+    return () => clearTimeout(timer);
+  }, [touring, shared, account.tourDone, account.email, loading, open, modal, draft]);
+  const finishTour = useCallback(() => {
+    setTouring(false);
+    if (toursSeen.has(account.email)) return;
+    toursSeen.add(account.email);
+    if (!account.tourDone) api('/auth/tour', { method: 'POST', body: {} }).catch(() => {});
+  }, [account.email, account.tourDone]);
+  function startTour() {
+    setCollapsed(true);
+    setModal(null);
+    setNotesOpen(false);
+    setAssistantOpen(false);
+    closeViewer();
+    setFolder('inbox');
+    setSearch('');
+    setTimeout(() => setTouring(true), 400); // Once the Inbox is back on screen.
+  }
+
   const railTabs = [
     { id: 'tasks', label: 'Tasks', icon: 'checkCircle', onClick: onOpenTasks },
     { id: 'automations', label: 'Automate', title: 'Automations', icon: 'scheduleSend', onClick: onOpenAutomations, hidden: shared },
     { id: 'assistant', label: 'Assistant', icon: 'sparkle', on: assistantOpen, onClick: () => setAssistantOpen(!assistantOpen), hidden: shared },
     { id: 'notes', label: 'Notes', title: 'Instant notes', icon: 'chat', on: notesOpen, badge: notesUnread, onClick: () => (notesOpen ? setNotesOpen(false) : openNotes()) },
     { id: 'meet', label: 'Meeting', title: 'New meeting', icon: 'videocam', onClick: () => setModal('meet'), hidden: !meetOn || shared },
+    { id: 'tour', label: 'Tour', title: 'Take the tour', icon: 'info', pinned: true, onClick: () => startTour(), hidden: shared },
     { id: 'settings', label: 'Settings', icon: 'settings', pinned: true, onClick: () => { setSettingsTab('profile'); setModal('settings'); }, hidden: shared },
   ].filter((tab) => !tab.hidden);
 
@@ -1602,7 +1631,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         <div className="account">
           <NotificationCenter onNavigate={(notification) => { if (notification.type?.startsWith('task-')) onOpenTasks(); }} />
           {onOpenAdmin && (
-            <button className="btn btn-outline admin-switch" title="Manage aliases and the whole mailbox" onClick={onOpenAdmin}>
+            <button data-tour="admin" className="btn btn-outline admin-switch" title="Manage aliases and the whole mailbox" onClick={onOpenAdmin}>
               <Icon name="shield" size={18} /> <span className="hide-sm">Admin console</span>
             </button>
           )}
@@ -1766,12 +1795,20 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 <span className="nav-label">Back to my mailbox</span>
               </button>
             ) : (
-              <button className="nav-item mobile-only" onClick={() => { setCollapsed(true); setModal('settings'); }} title="Settings">
-                <span className="nav-icon" style={{ '--c': '#495057' }}>
-                  <Icon name="settings" size={18} />
-                </span>
-                <span className="nav-label">Settings</span>
-              </button>
+              <>
+                <button className="nav-item mobile-only" onClick={startTour} title="Take the tour">
+                  <span className="nav-icon" style={{ '--c': 'var(--brand)' }}>
+                    <Icon name="info" size={18} />
+                  </span>
+                  <span className="nav-label">Take the tour</span>
+                </button>
+                <button className="nav-item mobile-only" onClick={() => { setCollapsed(true); setModal('settings'); }} title="Settings">
+                  <span className="nav-icon" style={{ '--c': '#495057' }}>
+                    <Icon name="settings" size={18} />
+                  </span>
+                  <span className="nav-label">Settings</span>
+                </button>
+              </>
             )}
             <button className="nav-item mobile-only" onClick={onLogout} title="Sign out">
               <span className="nav-icon" style={{ '--c': '#495057' }}>
@@ -1881,17 +1918,17 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               );
             })}
             {!shared && (
-              <button type="button" className={assistantOpen ? 'on' : ''} onClick={() => { setNotesOpen(false); setAssistantOpen(true); }}>
+              <button type="button" data-tour="nav-assistant" className={assistantOpen ? 'on' : ''} onClick={() => { setNotesOpen(false); setAssistantOpen(true); }}>
                 <span className="bottom-nav-icon"><Icon name="sparkle" /></span>
                 Assistant
               </button>
             )}
-            <button type="button" onClick={onOpenTasks}>
+            <button type="button" data-tour="nav-tasks" onClick={onOpenTasks}>
               <span className="bottom-nav-icon"><Icon name="checkCircle" /></span>
               Tasks
             </button>
-            {!shared && <button type="button" onClick={onOpenAutomations}><span className="bottom-nav-icon"><Icon name="scheduleSend" /></span>Automate</button>}
-            <button type="button" className={notesOpen ? 'on' : ''} onClick={() => (notesOpen ? setNotesOpen(false) : openNotes())}>
+            {!shared && <button type="button" data-tour="nav-automations" onClick={onOpenAutomations}><span className="bottom-nav-icon"><Icon name="scheduleSend" /></span>Automate</button>}
+            <button type="button" data-tour="nav-notes" className={notesOpen ? 'on' : ''} onClick={() => (notesOpen ? setNotesOpen(false) : openNotes())}>
               <span className="bottom-nav-icon">
                 <Icon name="chat" />
                 {notesUnread > 0 && <span className="bottom-nav-badge">{notesUnread > 99 ? '99+' : notesUnread}</span>}
@@ -2235,6 +2272,12 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           )}
         </main>
       </div>
+
+      {touring && (
+        <Suspense fallback={null}>
+          <Tour phone={phone} isAdmin={user.role === 'admin'} onClose={finishTour} />
+        </Suspense>
+      )}
 
       {draft && (
         <Suspense fallback={<OpeningPill />}>

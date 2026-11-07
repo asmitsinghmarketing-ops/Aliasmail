@@ -80,12 +80,13 @@ const switchable = (role, email) =>
 function profile({ role, email }) {
   if (role === 'admin') {
     const { displayName = '', avatar } = db().owner;
-    return { role: 'admin', email, mailbox: config.mailbox, displayName, avatarUrl: avatarUrl(avatar), mailboxes: switchable(role, email) };
+    return { role: 'admin', email, mailbox: config.mailbox, displayName, avatarUrl: avatarUrl(avatar), mailboxes: switchable(role, email), tourDone: Boolean(db().owner.tourDoneAt) };
   }
   const alias = findAlias(email);
   return {
     role: 'user', email: alias.address, displayName: alias.displayName, color: alias.color, avatarUrl: avatarUrl(alias.avatar),
     mailboxes: switchable(role, email),
+    tourDone: Boolean(alias.tourDoneAt),
   };
 }
 
@@ -477,6 +478,16 @@ router.post('/mfa/setup/confirm', sessionOrTicket, (req, res) => {
 /* ---------------------------------- signed-in account security ---------------------------------- */
 
 router.get('/me', requireAuth(), (req, res) => res.json(profile(req.user)));
+
+/** They've finished or skipped the first-login tour: kept with the account, not the device. */
+router.post('/tour', requireAuth(), (req, res) => {
+  const holder = req.user.role === 'admin' ? db().owner : findAlias(req.user.email);
+  if (holder && !holder.tourDoneAt) {
+    holder.tourDoneAt = new Date().toISOString();
+    save();
+  }
+  res.json({ ok: true });
+});
 
 router.get('/mfa', requireAuth(), (req, res) => {
   const { role, email } = req.user;

@@ -3173,3 +3173,26 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
   .rail-btn.on .rail-label { font-weight: 600; }
   .rail-badge { top: 3px; right: 10px; }
 }
+
+/* ---------- the first-login tour ---------- */
+/* Under an incoming call (120) and a call in progress (110), which matter more. */
+/* touch-action: a swipe here must not reach the browser, where one from the edge means "go back". */
+.tour { position: fixed; z-index: 105; inset: 0; touch-action: none; animation: fade-in 0.2s ease-out; }
+.tour-spot {
+  position: fixed; border-radius: 12px; box-shadow: 0 0 0 200vmax rgb(15 23 42 / 62%); outline: 2px solid #fff; pointer-events: none;
+  transition: top 0.28s cubic-bezier(0.32, 0.72, 0, 1), left 0.28s cubic-bezier(0.32, 0.72, 0, 1), width 0.28s cubic-bezier(0.32, 0.72, 0, 1), height 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.tour-spot.none { top: 50%; left: 50%; width: 0; height: 0; outline: 0; }
+.tour-card {
+  position: fixed; display: grid; gap: 10px; box-sizing: border-box; padding: 18px 18px 14px; border-radius: 14px; background: var(--surface); box-shadow: 0 12px 40px rgb(15 23 42 / 30%);
+  transition: top 0.28s cubic-bezier(0.32, 0.72, 0, 1), left 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.tour-card h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.tour-card p { margin: 0; color: #3c4653; font-size: 14px; line-height: 1.5; }
+.tour-progress { overflow: hidden; height: 3px; margin-top: 2px; border-radius: 2px; background: var(--hover); }
+.tour-progress span { display: block; height: 100%; border-radius: 2px; background: var(--brand); transition: width 0.28s ease-out; }
+.tour-actions { display: flex; align-items: center; gap: 6px; }
+.tour-count { margin-right: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.tour-skip { min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: 13px; font-weight: 600; }
+.tour-skip:hover { color: var(--text); }
+.tour-actions .btn { padding: 7px 14px; }
