@@ -772,9 +772,6 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
     transform: translateX(0); transition: transform 0.22s ease;
   }
   .sidebar.collapsed { width: 100vw; transform: translateX(-110%); }
-  .sidebar.dragging { transition: none; }
-  .sidebar.dragging.collapsed { transform: translateX(calc(-110% + var(--drawer-drag-offset, 0px))); }
-  .sidebar.dragging:not(.collapsed) { transform: translateX(var(--drawer-drag-offset, 0px)); }
   .sidebar .compose-btn { align-self: flex-start; padding: 14px 20px; }
   .sidebar nav { display: grid; gap: 2px; width: 100%; }
   .sidebar .nav-item { width: 100%; min-height: 46px; justify-content: flex-start; border-radius: 0 24px 24px 0; padding: 7px 16px; gap: 14px; }
@@ -3132,10 +3129,24 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .install-alt .btn { background: none; border-color: var(--border); color: var(--text); }
 .install-foot { margin: 0; color: var(--muted); font-size: 13px; text-align: center; }
 
-/* Phone menu: it closes by swiping, and this handle at its edge shows that it can be dragged. */
+/* Phone menu: slides with one easing curve, and closes by swiping. Only transform and opacity change,
+   which phones can animate without redrawing anything. */
 @media (max-width: 800px) {
+  .sidebar, .sidebar.collapsed { will-change: transform; transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.32s ease-out; }
+  .sidebar.collapsed { transform: translate3d(-100%, 0, 0); box-shadow: none; }
+  .sidebar.dragging, .sidebar.collapsed.dragging { transition: none; box-shadow: 8px 0 28px rgb(32 33 36 / 18%); }
+  .app:has(.sidebar.dragging) .compose-fab { display: none; }
+
+  .sidebar-backdrop {
+    opacity: 0; visibility: hidden; pointer-events: none; will-change: opacity;
+    transition: opacity 0.32s ease-out, visibility 0s linear 0.32s;
+  }
+  .sidebar-backdrop.open { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity 0.32s ease-out, visibility 0s; }
+  .sidebar-backdrop.dragging { visibility: visible; transition: none; }
+  /* The handle at the menu's edge shows that it can be dragged. */
   .sidebar-backdrop::before {
-    content: ''; position: absolute; top: 50%; left: calc(min(86vw, 320px) + 7px + var(--drawer-handle-offset, 0px));
+    content: ''; position: absolute; top: 50%; left: calc(min(86vw, 320px) + 7px);
     width: 4px; height: 44px; margin-top: -22px; border-radius: 2px; background: rgb(255 255 255 / 75%);
+    transform: translate3d(var(--drawer-handle-offset, 0), 0, 0);
   }
 }

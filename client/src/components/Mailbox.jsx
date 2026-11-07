@@ -437,7 +437,6 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const [modal, setModal] = useState(null); // 'settings' | 'shortcuts'
   // Phones hide the drawer; tablets and small laptops start with the icon rail so the list has room.
   const [collapsed, setCollapsed] = useState(() => window.matchMedia('(max-width: 1100px)').matches);
-  const [drawerDrag, setDrawerDrag] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -700,10 +699,24 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   useEffect(() => {
     if (!window.matchMedia('(max-width: 800px)').matches) return undefined;
 
+    // The menu follows the finger by moving it directly. Going through React here would redraw the
+    // whole mailbox on every frame of the drag, which is what makes a drag stutter.
+    const parts = () => [document.getElementById('mail-sidebar'), document.querySelector('.sidebar-backdrop')];
+
+    const letGo = () => {
+      const [sidebar, backdrop] = parts();
+      for (const element of [sidebar, backdrop]) element?.classList.remove('dragging');
+      if (sidebar) sidebar.style.transform = '';
+      if (backdrop) {
+        backdrop.style.opacity = '';
+        backdrop.style.removeProperty('--drawer-handle-offset');
+      }
+    };
+
     const onTouchStart = (event) => {
       if (event.touches.length !== 1) return;
       const touch = event.touches[0];
-      const sidebar = document.getElementById('mail-sidebar');
+      const [sidebar] = parts();
       const width = sidebar?.getBoundingClientRect().width || Math.min(320, window.innerWidth * 0.86);
       // Closed, only the screen's edge opens it. Open, a swipe can start anywhere: on the menu or the
       // dimmed page beside it, as swiping is how it closes.
@@ -717,7 +730,6 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         active: false,
         startedAt: Date.now(),
       };
-      setDrawerDrag(0);
     };
 
     const onTouchMove = (event) => {
@@ -728,36 +740,48 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       const dy = touch.clientY - swipe.startY;
       if (!swipe.active && Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
         drawerSwipe.current = null;
-        setDrawerDrag(null);
         return;
       }
       if (Math.abs(dx) < 4 || Math.abs(dx) < Math.abs(dy)) return;
 
-      swipe.active = true;
       event.preventDefault();
-      const offset = swipe.wasCollapsed
-        ? Math.max(0, Math.min(swipe.width * 1.1, dx))
-        : Math.max(-swipe.width, Math.min(0, dx));
-      setDrawerDrag(offset);
+      const [sidebar, backdrop] = parts();
+      if (!sidebar) return;
+      if (!swipe.active) {
+        swipe.active = true;
+        for (const element of [sidebar, backdrop]) element?.classList.add('dragging');
+      }
+      // How far along the menu is, from 0 (closed) to the width of the menu (open).
+      const shown = swipe.wasCollapsed ? Math.max(0, Math.min(swipe.width, dx)) : Math.max(0, swipe.width + Math.min(0, dx));
+      sidebar.style.transform = `translate3d(${shown - swipe.width}px, 0, 0)`;
+      if (backdrop) {
+        backdrop.style.opacity = String(shown / swipe.width);
+        backdrop.style.setProperty('--drawer-handle-offset', `${shown - swipe.width}px`);
+      }
     };
 
     const finishSwipe = (event) => {
       const swipe = drawerSwipe.current;
       if (!swipe) return;
       drawerSwipe.current = null;
+      if (!swipe.active) return;
       const touch = event.changedTouches[0];
       const dx = touch ? touch.clientX - swipe.startX : 0;
       // Far enough, or a quick flick in that direction.
       const flicked = Math.abs(dx) > 24 && Math.abs(dx) / Math.max(1, Date.now() - swipe.startedAt) > 0.4;
       const threshold = Math.max(56, swipe.width * 0.18);
-      setDrawerDrag(null);
-      if (swipe.active && swipe.wasCollapsed && (dx > threshold || (flicked && dx > 0))) setCollapsed(false);
-      else if (swipe.active && !swipe.wasCollapsed && (dx < -threshold || (flicked && dx < 0))) setCollapsed(true);
+      const nowOpen = swipe.wasCollapsed ? dx > threshold || (flicked && dx > 0) : !(dx < -threshold || (flicked && dx < 0));
+      // All in one go, so it glides on from where the finger left it rather than jumping first.
+      const [sidebar, backdrop] = parts();
+      letGo();
+      sidebar?.classList.toggle('collapsed', !nowOpen);
+      backdrop?.classList.toggle('open', nowOpen);
+      setCollapsed(!nowOpen);
     };
 
     const cancelSwipe = () => {
       drawerSwipe.current = null;
-      setDrawerDrag(null);
+      letGo();
     };
 
     document.addEventListener('touchstart', onTouchStart, { passive: true });
@@ -1449,7 +1473,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const rowPerson = (item) =>
     (['sent', 'draft', 'scheduled'].includes(item.kind) ? item.to?.[0] : item.from) || { name: '', address: '' };
 
-  const drawerVisiblyOpen = !collapsed || (drawerDrag !== null && drawerDrag > 0);
+  const drawerVisiblyOpen = !collapsed;
 
   return (
     <div className={`app has-rail ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.some((m) => m.phase === 'waiting') ? 'has-send-tray' : ''}`}>
@@ -1625,8 +1649,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       <div className="layout">
         <aside
           id="mail-sidebar"
-          className={`sidebar ${collapsed ? 'collapsed' : ''} ${drawerDrag !== null ? 'dragging' : ''}`}
-          style={drawerDrag !== null ? { '--drawer-drag-offset': `${drawerDrag}px` } : undefined}
+          className={`sidebar ${collapsed ? 'collapsed' : ''}`}
         >
           <div className="mobile-drawer-head">
             <div className="mobile-drawer-brand">
@@ -1801,19 +1824,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             ))}
           </nav>
         </aside>
-        {drawerVisiblyOpen && (
-          <button
-            className="sidebar-backdrop"
-            type="button"
-            aria-label="Close navigation menu"
-            // The page brightens as the menu is dragged away, and the handle moves with it.
-            style={drawerDrag ? {
-              opacity: collapsed ? Math.min(1, drawerDrag / (drawerSwipe.current?.width || 320)) : Math.max(0, 1 + drawerDrag / (drawerSwipe.current?.width || 320)),
-              '--drawer-handle-offset': collapsed ? `${drawerDrag - (drawerSwipe.current?.width || 320)}px` : `${drawerDrag}px`,
-            } : undefined}
-            onClick={() => setCollapsed(true)}
-          />
-        )}
+        <button
+          className={`sidebar-backdrop ${collapsed ? '' : 'open'}`}
+          type="button"
+          aria-label="Close navigation menu"
+          tabIndex={collapsed ? -1 : 0}
+          onClick={() => setCollapsed(true)}
+        />
 
         {!open && modal !== 'settings' && (
           <button className="compose-fab" type="button" onClick={() => compose()} aria-label="Compose">
