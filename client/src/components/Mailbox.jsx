@@ -50,6 +50,8 @@ const CATEGORY_TABS = [
   { id: 'promotions', label: 'Promotions', icon: 'tag', color: 'var(--green)' },
   { id: 'social', label: 'Social', icon: 'people', color: '#1971c2' },
   { id: 'updates', label: 'Updates', icon: 'info', color: 'var(--orange)' },
+  // Everything in the Inbox together. The server only narrows the list for the four categories above.
+  { id: 'all', label: 'All', icon: 'mail', color: '#2b8a3e' },
 ];
 
 // The list is split by when mail arrived, like Outlook: Today, Yesterday, this week, this month,
@@ -2107,7 +2109,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                     {search
                       ? 'No messages match your search.'
                       : CATEGORIZED.includes(folder)
-                        ? `Nothing in ${CATEGORY_TABS.find((t) => t.id === category)?.label} — you’re all caught up.`
+                        ? category === 'all' ? 'Your Inbox is empty — you’re all caught up.' : `Nothing in ${CATEGORY_TABS.find((t) => t.id === category)?.label} — you’re all caught up.`
                         : `Nothing in ${folderLabel}.`}
                   </div>
                 )}
@@ -2173,7 +2175,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                       </span>
                       <span className="row-main">
                         {folder === 'all' && !item.archived && <span className="tag">Inbox</span>}
-                        {search && item.category && item.category !== 'primary' && <span className="tag">{item.category}</span>}
+                        {(search || (showTabs && category === 'all')) && item.category && item.category !== 'primary' && <span className="tag">{item.category}</span>}
                         {item.notes > 0 && <span className="tag notes-tag" title="Team notes">{item.notes} {item.notes === 1 ? 'note' : 'notes'}</span>}
                         {item.via === 'cc' && <span className="tag cc" title="You were CC'd">cc</span>}
                         {item.via === 'bcc' && <span className="tag bcc" title="You were BCC'd">bcc</span>}
