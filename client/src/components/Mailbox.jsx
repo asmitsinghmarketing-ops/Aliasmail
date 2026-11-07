@@ -705,7 +705,9 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       const touch = event.touches[0];
       const sidebar = document.getElementById('mail-sidebar');
       const width = sidebar?.getBoundingClientRect().width || Math.min(320, window.innerWidth * 0.86);
-      if (collapsed ? touch.clientX > 24 : touch.clientX > width) return;
+      // Closed, only the screen's edge opens it. Open, a swipe can start anywhere: on the menu or the
+      // dimmed page beside it, as swiping is how it closes.
+      if (collapsed && touch.clientX > 24) return;
 
       drawerSwipe.current = {
         startX: touch.clientX,
@@ -713,6 +715,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         width,
         wasCollapsed: collapsed,
         active: false,
+        startedAt: Date.now(),
       };
       setDrawerDrag(0);
     };
@@ -744,10 +747,12 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       drawerSwipe.current = null;
       const touch = event.changedTouches[0];
       const dx = touch ? touch.clientX - swipe.startX : 0;
+      // Far enough, or a quick flick in that direction.
+      const flicked = Math.abs(dx) > 24 && Math.abs(dx) / Math.max(1, Date.now() - swipe.startedAt) > 0.4;
       const threshold = Math.max(56, swipe.width * 0.18);
       setDrawerDrag(null);
-      if (swipe.active && swipe.wasCollapsed && dx > threshold) setCollapsed(false);
-      else if (swipe.active && !swipe.wasCollapsed && dx < -threshold) setCollapsed(true);
+      if (swipe.active && swipe.wasCollapsed && (dx > threshold || (flicked && dx > 0))) setCollapsed(false);
+      else if (swipe.active && !swipe.wasCollapsed && (dx < -threshold || (flicked && dx < 0))) setCollapsed(true);
     };
 
     const cancelSwipe = () => {
@@ -1628,9 +1633,6 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               <Logo className="mobile-drawer-logo" />
               <Wordmark />
             </div>
-            <button className="icon-btn mobile-drawer-close" type="button" aria-label="Close menu" onClick={() => setCollapsed(true)}>
-              <Icon name="close" />
-            </button>
           </div>
           <div className="pane-head">
             <span className="muted small">{(me.split('@')[1] || '').replace(/\.[a-z.]+$/i, '').replace(/^./, (c) => c.toUpperCase())}</span>
@@ -1799,11 +1801,16 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             ))}
           </nav>
         </aside>
-        {!collapsed && (
+        {drawerVisiblyOpen && (
           <button
             className="sidebar-backdrop"
             type="button"
             aria-label="Close navigation menu"
+            // The page brightens as the menu is dragged away, and the handle moves with it.
+            style={drawerDrag ? {
+              opacity: collapsed ? Math.min(1, drawerDrag / (drawerSwipe.current?.width || 320)) : Math.max(0, 1 + drawerDrag / (drawerSwipe.current?.width || 320)),
+              '--drawer-handle-offset': collapsed ? `${drawerDrag - (drawerSwipe.current?.width || 320)}px` : `${drawerDrag}px`,
+            } : undefined}
             onClick={() => setCollapsed(true)}
           />
         )}
