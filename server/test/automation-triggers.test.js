@@ -151,7 +151,8 @@ test('plans are checked for the trigger they run with', () => {
   assert.throws(() => auto.validateAutomationPlan(plan(INVOICES, '{{input.text}}')), /unknown value/, 'nobody is there to type it');
   assert.throws(() => auto.validateAutomationPlan(plan({ type: 'manual' }, '{{email.subject}}')), /unknown value/, 'no email to take it from');
   assert.throws(() => auto.validateAutomationPlan(plan(INVOICES, '{{email.password}}')), /unknown value/);
-  assert.throws(() => auto.validateAutomationPlan(plan({ type: 'schedule' }, 'x')), /Unsupported trigger/);
+  assert.throws(() => auto.validateAutomationPlan(plan({ type: 'every_full_moon' }, 'x')), /Unsupported trigger/);
+  assert.throws(() => auto.validateAutomationPlan(plan({ type: 'schedule' }, 'x')), /how often/, 'a schedule needs its details');
   assert.equal(auto.validateAutomationPlan(plan(undefined, 'x')).trigger.type, 'manual');
   assert.equal(auto.validateAutomationPlan(plan(INVOICES, '{{email.subject}}')).trigger.subjectContains, 'invoice');
 

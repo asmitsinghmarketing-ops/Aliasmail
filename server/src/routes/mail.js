@@ -289,6 +289,7 @@ function ownSpam(req) {
 const draftSummary = (d) =>
   plainSummary('draft', {
     id: d.id,
+    ...(d.automation && { automation: d.automation.name || 'An automation' }),
     subject: d.subject,
     snippet: toSnippet(d.text),
     from: { name: '', address: d.alias },
@@ -340,7 +341,8 @@ router.get('/folders', (req, res) => {
     sent: sentItems(me).length,
     scheduled: db().scheduled.filter((s) => s.alias === me && !s.outbox).length,
     outbox: db().scheduled.filter((s) => s.alias === me && s.outbox).length,
-    drafts: db().drafts.filter((d) => d.alias === me).length,
+    drafts: db().drafts.filter((d) => d.alias === me && !d.automation).length,
+    work: db().drafts.filter((d) => d.alias === me && d.automation).length,
     all: unread('all'),
     spam: messagesFor(me, db().spamBox.messages).length,
     trash: count(FOLDERS.trash),
@@ -371,7 +373,9 @@ router.get('/messages', (req, res) => {
 
   let items;
   if (folder === 'sent') items = sentItems(me);
-  else if (folder === 'drafts') items = db().drafts.filter((d) => d.alias === me).map(draftSummary);
+  else if (folder === 'drafts') items = db().drafts.filter((d) => d.alias === me && !d.automation).map(draftSummary);
+  // Emails automations prepared, waiting for a person to send them.
+  else if (folder === 'work') items = db().drafts.filter((d) => d.alias === me && d.automation).map(draftSummary);
   else if (folder === 'scheduled') items = db().scheduled.filter((s) => s.alias === me && !s.outbox).map(scheduledSummary);
   else if (folder === 'outbox') items = db().scheduled.filter((s) => s.alias === me && s.outbox).map(scheduledSummary);
   else if (folder === 'spam') items = messagesFor(me, db().spamBox.messages).map(spamSummary);
@@ -1113,5 +1117,64 @@ export async function assistantRead(me, id) {
     text: text.length > 12000 ? `${text.slice(0, 12000)}\n[… the rest of this email was left out]` : text,
   };
 }
+
+/**
+ * Mailbox actions for automations (automation-functions.js), always for one person and only on
+ * emails they can see. `ids` is a list like "12,15", from an earlier step or the email that started it.
+ */
+const idsFrom = (ids, me) => String(ids || '').split(',').map((id) => db().messages[id.trim()]).filter((m) => m && isVisibleTo(m, me)).slice(0, 200);
+export const mailTools = {
+  find(me, { folder = 'inbox', from = '', subject = '', unread = 'any', days, limit = 20 }) {
+    const since = Number(days) ? Date.now() - Number(days) * 86400e3 : 0;
+    const view = FOLDERS[folder] || FOLDERS.inbox;
+    const has = (text, wanted) => !wanted || String(text || '').toLowerCase().includes(String(wanted).toLowerCase());
+    return messagesFor(me)
+      .filter((m) => {
+        const s = stateOf(m, me);
+        return view(s) && has(`${m.from?.name || ''} ${m.from?.address || ''}`, from) && has(m.subject, subject)
+          && (unread === 'any' || (unread === 'unread' ? !s.read : s.read)) && (!since || Date.parse(m.date) >= since);
+      })
+      .sort(byDateDesc)
+      .slice(0, Math.min(50, Math.max(1, Number(limit) || 20)));
+  },
+  apply(me, ids, action, extra = {}) {
+    const msgs = idsFrom(ids, me);
+    if (!ACTIONS[action]) throw new HttpError(400, `Unknown change "${action}"`);
+    const patchFor = ACTIONS[action](extra, me);
+    for (const m of msgs) setState(m, me, patchFor(stateOf(m, me)));
+    save();
+    if (action === 'read' || action === 'unread') syncSeenToServer(msgs);
+    if (msgs.length) announceChange();
+    return msgs.length;
+  },
+  labelId(me, name) {
+    const label = myLabels(me).find((l) => l.name.toLowerCase() === String(name).trim().toLowerCase());
+    if (!label) throw new HttpError(400, `There’s no label called “${name}”`);
+    return label.id;
+  },
+  labels: (me) => myLabels(me).map((l) => l.name),
+  setOwner(me, ids, assignee) {
+    const msgs = idsFrom(ids, me);
+    for (const m of msgs) m.team = { ...teamOf(m), assignee };
+    save();
+    return msgs.length;
+  },
+  addNote(me, ids, text) {
+    const msgs = idsFrom(ids, me);
+    const note = String(text || '').trim().slice(0, MAX_NOTE);
+    if (!note) throw new HttpError(400, 'Write a note first');
+    const name = teammates().find((p) => p.address === me)?.name || '';
+    for (const m of msgs) m.team = { ...teamOf(m), notes: [...(teamOf(m).notes || []), { id: crypto.randomUUID(), by: me, name, text: note, at: new Date().toISOString() }].slice(-MAX_NOTES) };
+    save();
+    return msgs.length;
+  },
+  replyTo(me, ids) {
+    const m = idsFrom(ids, me)[0];
+    if (!m) return null;
+    const to = (m.replyTo || m.from)?.address;
+    if (!to) return null;
+    return { to, subject: /^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || ''}`.trim(), inReplyTo: m.messageId || '', references: m.messageId ? [m.messageId] : [] };
+  },
+};
 
 export default router;

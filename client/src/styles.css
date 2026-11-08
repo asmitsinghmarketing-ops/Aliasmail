@@ -3221,3 +3221,31 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .tab-settings-switch input:disabled { cursor: default; }
 .tab-settings-switch input:disabled + span { opacity: 0.5; }
 .tab-settings-reset { justify-self: start; }
+
+.auto-ai-note { margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: #efe9fd; color: #4c2fb0; font-size: 11px; font-style: normal; }
+.auto-run-stopped { color: var(--muted) !important; }
+.auto-inputs select { width: 100%; height: 42px; padding: 0 10px; border: 1px solid var(--border); border-radius: 9px; background: #fff; font-weight: 400; }
+.auto-inputs label small { color: var(--muted); font-weight: 400; }
+.auto-guide { padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: #fff; font-size: 13px; }
+.auto-guide summary { cursor: pointer; font-weight: 600; color: var(--brand); }
+.auto-guide p { margin: 10px 0 4px; color: var(--muted); line-height: 1.5; }
+.auto-guide h3 { margin: 12px 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.auto-guide ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; margin: 0; padding: 0; list-style: none; }
+.auto-guide li { display: flex; align-items: center; gap: 6px; }
+.auto-guide li svg { color: var(--brand); }
+.auto-guide li small { color: var(--muted); }
+
+/* Back from an email or Settings: the list is just there, without sliding in again. */
+.rows.settled .row:not(.leaving) { animation: none; }
+
+/* Work items: emails automations prepared, each sent with one click. */
+.tag.work-tag { background: #e3f6f8; color: #0b6b7a; }
+.work-actions { display: inline-flex; align-items: center; gap: 6px; grid-column: 7 / 9; grid-row: 1 / 3; justify-self: end; position: relative; z-index: 1; }
+.work-actions .btn { min-height: 34px; padding: 5px 14px; font-size: 13px; }
+.row:hover .work-actions ~ .row-hover { display: none; }
+@media (max-width: 800px) {
+  .work-actions { grid-column: 2 / 4; grid-row: auto; justify-self: start; margin-top: 8px; }
+  .work-actions .btn { min-height: 40px; }
+}
+/* The buttons take the place of the time and owner on a Work item. */
+.row:has(.work-actions) .row-date, .row:has(.work-actions) .row-owner, .row:has(.work-actions) .row-hover { display: none; }

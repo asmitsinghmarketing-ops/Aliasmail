@@ -208,3 +208,33 @@ test('an idea becomes a checked list of functions from the model, which then run
   assert.equal(gone.status, 400);
   assert.match((await gone.json()).error, /project/);
 });
+
+test('emails an automation prepares wait in Work items, not Drafts, until someone sends or discards them', async () => {
+  const john = await signIn({ email: 'john@example.com', password: 'john-password-1' });
+  const saved = await (await john('/automations', { method: 'POST', body: JSON.stringify({ prompt: 'x', plan: { name: 'Thank a client', steps: [{ action: 'create_draft', params: { to: '{{input.email}}', subject: 'Thank you', body: 'Thanks for your order.' } }] } }) })).json();
+  const started = await (await john(`/automations/${saved.id}/run`, { method: 'POST', body: JSON.stringify({ input: { email: 'client@outside.test' } }) })).json();
+  for (let i = 0; i < 60; i++) {
+    const run = (await (await john('/automations')).json()).runs.find((item) => item.id === started.id);
+    if (run?.status === 'completed') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const list = async (folder) => (await (await john(`/mail/messages?folder=${folder}`)).json()).items;
+  const work = await list('work');
+  const item = work.find((i) => i.subject === 'Thank you');
+  assert.ok(item, 'it is a Work item');
+  assert.deepEqual([item.kind, item.automation, item.to[0].address], ['draft', 'Thank a client', 'client@outside.test']);
+  assert.ok(!(await list('drafts')).some((i) => i.id === item.id), 'and not mixed in with the person’s own drafts');
+  const counts = await (await john('/mail/folders')).json();
+  assert.equal(counts.work, work.length);
+  // Opening it is opening a draft, with everything needed to send it.
+  const draft = await (await john(`/mail/drafts/${item.id}`)).json();
+  assert.deepEqual([draft.to, draft.text], ['client@outside.test', 'Thanks for your order.']);
+  // Editing it keeps it a Work item.
+  await john(`/mail/drafts/${item.id}`, { method: 'PUT', body: JSON.stringify({ to: 'client@outside.test', subject: 'Thank you!', text: 'Thanks again.' }) });
+  assert.ok((await list('work')).some((i) => i.id === item.id && i.subject === 'Thank you!'));
+  await john('/mail/drafts/delete', { method: 'POST', body: JSON.stringify({ ids: [item.id] }) });
+  assert.ok(!(await list('work')).some((i) => i.id === item.id), 'discarded');
+  // Someone else never sees them.
+  const mary = await signIn({ email: 'mary@example.com', password: 'mary-password-1' });
+  assert.equal((await (await mary('/mail/folders')).json()).work, 0);
+});

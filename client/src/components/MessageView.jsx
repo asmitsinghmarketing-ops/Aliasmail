@@ -323,7 +323,12 @@ export default function MessageView({ aside, phoneMore,
 
   const head = msg ? { ...msg, ...patch } : preview && { ...preview, ...patch };
   const others = head ? [...(head.to || []), ...(head.cc || [])].filter((p) => p.address !== me && p.address !== head.from?.address) : [];
-  const star = async () => setMsg({ ...msg, starred: (await onStar(head)).starred });
+  // At once; if saving fails, the mailbox puts it back.
+  const star = () => {
+    const value = !head.starred;
+    setMsg((current) => ({ ...current, starred: value }));
+    onStar(head, () => setMsg((current) => ({ ...current, starred: !value })));
+  };
 
   return (
     <div className="viewer">

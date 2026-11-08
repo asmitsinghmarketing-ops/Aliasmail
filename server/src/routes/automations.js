@@ -11,12 +11,12 @@ router.use(requireAuth());
 
 router.get('/', (req, res) => {
   const owner = personOf(req.user);
-  res.json({ automations: automationsFor(owner).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), runs: runsFor(owner).slice(0, 100), context: planningContext(), aiEnabled: assistantEnabled() });
+  res.json({ automations: automationsFor(owner).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), runs: runsFor(owner).slice(0, 100), context: planningContext(owner), aiEnabled: assistantEnabled() });
 });
 
 router.post('/plan', async (req, res) => {
   if (!assistantEnabled()) throw new HttpError(503, 'Set up the Assistant AI provider before creating an automation with AI');
-  res.json(await planAutomation({ person: personOf(req.user), prompt: req.body?.prompt, context: planningContext() }));
+  res.json(await planAutomation({ person: personOf(req.user), prompt: req.body?.prompt, context: planningContext(personOf(req.user)) }));
 });
 
 router.post('/', (req, res) => {

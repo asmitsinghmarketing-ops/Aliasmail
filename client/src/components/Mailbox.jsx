@@ -46,6 +46,8 @@ const FOLDERS = [
   // Like Gmail, the Outbox appears only while something in it is waiting to be sent.
   { id: 'outbox', label: 'Outbox', icon: 'outbox', count: 'outbox', plain: true, color: '#e03131', onlyWhenUsed: true },
   { id: 'drafts', label: 'Drafts', icon: 'draft', count: 'drafts', plain: true, color: '#ae3ec9' },
+  // Emails automations prepared, sent from here with one click. Shown while there are any.
+  { id: 'work', label: 'Work items', icon: 'send', count: 'work', color: '#0c8599', onlyWhenUsed: true },
   { id: 'all', label: 'All Mail', icon: 'mail', color: '#2b8a3e' },
   // Spam is switched off for now (also SYNCED_FOLDERS in server/src/mailbox.js). Uncomment to show it:
   // { id: 'spam', label: 'Spam', icon: 'spam', count: 'spam', plain: true, color: '#e03131' },
@@ -498,6 +500,15 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   const labelsById = useMemo(() => Object.fromEntries(labels.map((l) => [l.id, l])), [labels]);
   const showTabs = CATEGORIZED.includes(folder) && !search;
+  // Rows slide in when a new folder or tab opens, not every time the list comes back into view
+  // (closing an email or Settings), when it would only hold things up.
+  const listKey = `${folder}|${category}|${page}|${search}`;
+  const [settledList, setSettledList] = useState('');
+  useEffect(() => {
+    if (open || modal === 'settings' || settledList === listKey) return undefined;
+    const timer = setTimeout(() => setSettledList(listKey), 600);
+    return () => clearTimeout(timer);
+  }, [listKey, open, modal, settledList]);
 
   // `extra`: { tone: 'error' | 'warning' | 'success', title, actions: [{ label, onClick }] }.
   const flash = (text, undo, ms = 6000, extra = {}) => {
@@ -957,14 +968,14 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     if (!open && removesFromView(action)) setLeaving(new Set(ids));
     try {
       if (folder === 'sent') await api('/mail/sent/delete', { method: 'POST', body: { ids } });
-      else if (folder === 'drafts') await api('/mail/drafts/delete', { method: 'POST', body: { ids } });
+      else if (folder === 'drafts' || folder === 'work') await api('/mail/drafts/delete', { method: 'POST', body: { ids } });
       else if (folder === 'scheduled') await api('/mail/scheduled/cancel', { method: 'POST', body: { ids } });
       else if (folder === 'outbox') await api(action === 'retry' ? '/mail/outbox/retry' : action === 'cancel' ? '/mail/scheduled/cancel' : '/mail/outbox/delete', { method: 'POST', body: { ids } });
       else if (folder === 'spam') await api('/mail/spam/action', { method: 'POST', body: { ids, action } });
       else await api('/mail/messages/action', { method: 'POST', body: { ids, action, ...extra } });
 
       const [doneText, undoAction] =
-        folder === 'sent' || (folder === 'outbox' && action === 'delete') ? ['deleted', null] : folder === 'drafts' ? ['discarded', null] : folder === 'outbox' && action === 'cancel' ? ['moved to Drafts', null] : action === 'snooze' ? [`snoozed until ${shortTime(extra.until)}`, 'unsnooze'] : DONE[action] || [];
+        folder === 'sent' || (folder === 'outbox' && action === 'delete') ? ['deleted', null] : folder === 'drafts' || folder === 'work' ? ['discarded', null] : folder === 'outbox' && action === 'cancel' ? ['moved to Drafts', null] : action === 'snooze' ? [`snoozed until ${shortTime(extra.until)}`, 'unsnooze'] : DONE[action] || [];
       if (doneText && !silent) {
         const noun = ids.length === 1 ? 'Conversation' : `${ids.length} conversations`;
         const undo = undoAction && (() => act(ids, undoAction, {}, { silent: true }).then(() => flash('Action undone.')));
@@ -994,16 +1005,27 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     }
   }
 
-  async function toggleFlag(item, flag) {
+  // Changes on screen at once and is saved behind it: waiting for the server first made every
+  // click feel slow. If saving fails it's put back, with the reason, and `onFail` lets an open
+  // email put its own star back too.
+  function toggleFlag(item, flag, onFail) {
     const value = !item[flag];
     const action = flag === 'starred' ? (value ? 'star' : 'unstar') : value ? 'important' : 'notImportant';
-    setList((l) => ({ ...l, items: l.items.map((i) => (i.id === item.id ? { ...i, [flag]: value } : i)) }));
-    await api('/mail/messages/action', { method: 'POST', body: { ids: [item.id], action } });
-    api('/mail/folders').then(setCounts).catch(() => {});
-    if ((folder === 'starred' && flag === 'starred') || (folder === 'important' && flag === 'important')) load();
+    const show = (on) => setList((l) => ({ ...l, items: l.items.map((i) => (i.id === item.id ? { ...i, [flag]: on } : i)) }));
+    show(value);
+    api('/mail/messages/action', { method: 'POST', body: { ids: [item.id], action } })
+      .then(() => {
+        api('/mail/folders').then(setCounts).catch(() => {});
+        if ((folder === 'starred' && flag === 'starred') || (folder === 'important' && flag === 'important')) load();
+      })
+      .catch((err) => {
+        show(!value);
+        onFail?.();
+        flash(err.message);
+      });
     return { ...item, [flag]: value };
   }
-  const toggleStar = (item) => toggleFlag(item, 'starred');
+  const toggleStar = (item, onFail) => toggleFlag(item, 'starred', onFail);
 
   async function toggleLabel(ids, label, add) {
     await act(ids, add ? 'addLabel' : 'removeLabel', { labelId: label.id }, { silent: true });
@@ -1210,6 +1232,23 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   // An undone or failed send reopens compose with everything that was in it.
   const reopen = ({ files, draftId, sendAt, ...fields }) => setDraft({ ...fields, id: draftId, files, unsaved: true });
+
+  // A Work item goes out exactly like an email someone wrote: with the signature, Undo and the Outbox.
+  async function sendWorkItem(item) {
+    try {
+      const saved = await api(`/mail/drafts/${item.id}`);
+      setList((l) => ({ ...l, items: l.items.filter((i) => i.id !== item.id), total: Math.max(0, (l.total || 1) - 1) }));
+      const settings = await fetchRemembered('/mail/settings').catch(() => null);
+      handleSend({
+        to: saved.to, cc: saved.cc || '', bcc: saved.bcc || '', subject: saved.subject || '',
+        text: saved.text || '', html: htmlFromText(saved.text || '') + signatureBlock({ html: settings?.signatureHtml, text: settings?.signature }),
+        draftId: saved.id, inReplyTo: saved.inReplyTo || undefined, references: saved.references, files: [], driveFiles: [],
+      });
+    } catch (err) {
+      flash(err.message);
+      load();
+    }
+  }
 
   function handleSend(payload) {
     setDraft(null);
@@ -1649,7 +1688,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           )}
         </form>
         <div className="account">
-          <NotificationCenter onNavigate={(notification) => { if (notification.type?.startsWith('task-')) onOpenTasks(); }} />
+          <NotificationCenter onNavigate={(notification) => { if (notification.type?.startsWith('task-')) onOpenTasks(); else if (notification.entity?.kind === 'work') goTo('work'); }} />
           {onOpenAdmin && (
             <button data-tour="admin" className="btn btn-outline admin-switch" title="Manage aliases and the whole mailbox" onClick={onOpenAdmin}>
               <Icon name="shield" size={18} /> <span className="hide-sm">Admin console</span>
@@ -2183,7 +2222,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               )}
 
               {sendingRows}
-              <div className="rows" {...rowSwipe}>
+              <div className={`rows ${settledList === listKey ? 'settled' : ''}`} {...rowSwipe}>
                 {loading && <MailListSkeleton />}
                 {!loading && list.items.length === 0 && !sendingRows && (
                   <div className="empty">
@@ -2249,7 +2288,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                         <span className="row-spacer" />
                       )}
                       <span className="row-from">
-                        {item.kind === 'draft' && <span className="draft-label">Draft </span>}
+                        {item.kind === 'draft' && (item.automation ? <span className="tag work-tag" title="Prepared by this automation">{item.automation}</span> : <span className="draft-label">Draft </span>)}
                         {['sent', 'draft', 'scheduled'].includes(item.kind)
                           ? `To: ${(item.to || []).map((p) => personLabel(p, me)).join(', ') || '(no recipients)'}`
                           : personLabel(item.from, me)}
@@ -2277,6 +2316,12 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                       <span className="row-owner">{item.assignee && <OwnerChip address={item.assignee} me={me} team={team} avatars={people} />}</span>
                       <span className="row-date" title={formatDate(item.date, true)}>{rowDate(item)}</span>
                       <span className="row-hover">{actionButtons([item.id], [item], { compact: true })}</span>
+                      {folder === 'work' && item.automation && (
+                        <span className="work-actions" onClick={(event) => event.stopPropagation()}>
+                          <button type="button" className="btn btn-primary" onClick={() => sendWorkItem(item)}><Icon name="send" size={16} /> Send</button>
+                          <button type="button" className="btn btn-ghost" onClick={() => act([item.id], 'delete')}>Discard</button>
+                        </span>
+                      )}
                     </div>
                     </Fragment>
                   ))}

@@ -204,24 +204,24 @@ router.post('/items/import', (req, res) => {
   res.status(201).json({ imported: created.length, tasks: created });
 });
 
-router.patch('/items/:id', (req, res) => {
-  const found = task(req.params.id);
+/** Change a task, with the same checks, activity and notifications as the Tasks screen. */
+export function updateTask(id, body, actor) {
+  const found = task(id);
   const beforeStatus = found.status;
   const beforeAssignee = found.assignee;
-  const actor = personOf(req.user);
-  if (req.body?.projectId !== undefined) found.projectId = project(clean(req.body.projectId, 80, 'Project', true)).id;
-  if (req.body?.title !== undefined) found.title = clean(req.body.title, 200, 'Task title', true);
-  if (req.body?.description !== undefined) found.description = longText(req.body.description, 10000);
-  if (req.body?.status !== undefined) {
-    if (!STATUSES.has(req.body.status)) throw new HttpError(400, 'Unknown task status');
-    found.status = req.body.status;
+  if (body?.projectId !== undefined) found.projectId = project(clean(body.projectId, 80, 'Project', true)).id;
+  if (body?.title !== undefined) found.title = clean(body.title, 200, 'Task title', true);
+  if (body?.description !== undefined) found.description = longText(body.description, 10000);
+  if (body?.status !== undefined) {
+    if (!STATUSES.has(body.status)) throw new HttpError(400, 'Unknown task status');
+    found.status = body.status;
   }
-  if (req.body?.priority !== undefined) {
-    if (!PRIORITIES.has(req.body.priority)) throw new HttpError(400, 'Unknown task priority');
-    found.priority = req.body.priority;
+  if (body?.priority !== undefined) {
+    if (!PRIORITIES.has(body.priority)) throw new HttpError(400, 'Unknown task priority');
+    found.priority = body.priority;
   }
-  if (req.body?.assignee !== undefined) found.assignee = assignee(req.body.assignee);
-  if (req.body?.dueDate !== undefined) found.dueDate = dueDate(req.body.dueDate);
+  if (body?.assignee !== undefined) found.assignee = assignee(body.assignee);
+  if (body?.dueDate !== undefined) found.dueDate = dueDate(body.dueDate);
   found.updatedAt = new Date().toISOString();
   if (found.status === 'done' && beforeStatus !== 'done') found.completedAt = found.updatedAt;
   if (found.status !== 'done') found.completedAt = null;
@@ -238,8 +238,10 @@ router.patch('/items/:id', (req, res) => {
     });
   }
   save();
-  res.json(found);
-});
+  return found;
+}
+
+router.patch('/items/:id', (req, res) => res.json(updateTask(req.params.id, req.body, personOf(req.user))));
 
 router.delete('/items/:id', (req, res) => {
   const found = task(req.params.id);
