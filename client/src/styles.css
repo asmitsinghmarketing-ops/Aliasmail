@@ -3196,3 +3196,28 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .tour-skip { min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: 13px; font-weight: 600; }
 .tour-skip:hover { color: var(--text); }
 .tour-actions .btn { padding: 7px 14px; }
+
+/* ---------- Settings → Tabs ---------- */
+.tab-settings { display: grid; gap: 22px; }
+.tab-settings section { display: grid; gap: 8px; }
+.tab-settings h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.tab-settings h4 { margin: 10px 0 0; font-size: 13px; font-weight: 600; color: var(--muted); }
+.tab-settings p { margin: 0; }
+.tab-settings-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.tab-settings-list li { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 4px 8px 4px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.tab-settings-list li > svg { flex: none; color: var(--brand); }
+.tab-settings-list li.off > svg, .tab-settings-list li.off .tab-settings-name { color: var(--muted); }
+.tab-settings-name { flex: 1; min-width: 0; display: grid; font-weight: 500; }
+.tab-settings-name small { color: var(--muted); font-size: 12px; font-weight: 400; }
+.tab-settings-move { display: flex; }
+.tab-settings-move .up { transform: rotate(180deg); }
+.tab-settings-switch { position: relative; flex: none; display: inline-flex; width: 44px; height: 26px; cursor: pointer; }
+.tab-settings-switch input { position: absolute; inset: 0; z-index: 1; margin: 0; opacity: 0; cursor: inherit; }
+.tab-settings-switch span { width: 100%; border-radius: 13px; background: #c7ced8; transition: background-color 0.15s ease-out; }
+.tab-settings-switch span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 25%); transition: transform 0.15s ease-out; }
+.tab-settings-switch input:checked + span { background: var(--brand); }
+.tab-settings-switch input:checked + span::after { transform: translateX(18px); }
+.tab-settings-switch input:focus-visible + span { outline: 2px solid var(--brand); outline-offset: 2px; }
+.tab-settings-switch input:disabled { cursor: default; }
+.tab-settings-switch input:disabled + span { opacity: 0.5; }
+.tab-settings-reset { justify-self: start; }

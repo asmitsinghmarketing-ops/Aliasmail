@@ -87,3 +87,25 @@ test('it is still remembered after the server restarts', async () => {
   assert.equal((await signIn({ email: 'john@example.com', password: 'long-password-123' })).body.user.tourDone, true);
   assert.equal((await signIn({ email: 'mary@example.com', password: 'long-password-123' })).body.user.tourDone, false);
 });
+
+test('each person’s tab layout is kept on their account, and only tab names are accepted', async () => {
+  const john = await signIn({ email: 'john@example.com', password: 'long-password-123' });
+  assert.equal(john.body.user.layout, null);
+  const layout = { rail: { order: ['notes', 'tasks'], hidden: ['meet'] }, inbox: { order: ['all', 'primary'], hidden: ['social'] } };
+  const saved = await john.call('/auth/layout', { method: 'PUT', body: JSON.stringify(layout) });
+  assert.equal(saved.status, 200);
+  assert.deepEqual((await saved.json()).layout, layout);
+  assert.deepEqual((await signIn({ email: 'john@example.com', password: 'long-password-123' })).body.user.layout, layout, 'on another device too');
+  assert.equal((await signIn({ email: 'mary@example.com', password: 'long-password-123' })).body.user.layout, null, 'nobody else’s');
+
+  for (const bad of [[], 'x', { rail: 'x' }, { rail: { order: 'tasks' } }, { rail: { order: ['<script>'] } }, { inbox: { hidden: [1] } }, { rail: { order: Array.from({ length: 41 }, (_, i) => `t${i}`) } }]) {
+    assert.equal((await john.call('/auth/layout', { method: 'PUT', body: JSON.stringify(bad) })).status, 400, JSON.stringify(bad).slice(0, 60));
+  }
+  // Anything else sent along is dropped, and repeats are kept once.
+  const extra = await (await john.call('/auth/layout', { method: 'PUT', body: JSON.stringify({ rail: { order: ['tasks', 'tasks'], hidden: [], colour: 'red' }, theme: 'dark' }) })).json();
+  assert.deepEqual(extra.layout, { rail: { order: ['tasks'], hidden: [] } });
+  // Empty means back to the usual tabs.
+  assert.equal((await (await john.call('/auth/layout', { method: 'PUT', body: '{}' })).json()).layout, null);
+  assert.equal((await (await john.call('/auth/me')).json()).layout, null);
+  assert.equal((await fetch(`${BASE}/api/auth/layout`, { method: 'PUT', headers: HEADERS, body: '{}' })).status, 401);
+});

@@ -19,6 +19,7 @@ import { useRowSwipe } from '../rowSwipe.js';
 import { meetingText } from '../meet.js';
 import Pager from './Pager.jsx';
 import NotificationCenter from './NotificationCenter.jsx';
+import { arrange } from '../tabLayout.js';
 import { lazyPage, MailListSkeleton, OpeningPill, TextSkeleton, whenIdle } from './Loading.jsx';
 
 // Opened on demand, and fetched as soon as the mailbox is idle so that opening them is instant.
@@ -26,6 +27,9 @@ const Compose = lazyPage(() => import('./Compose.jsx'));
 const Tour = lazyPage(() => import('./Tour.jsx'));
 // Who has finished the tour since this page loaded, as their account only says so at sign-in.
 const toursSeen = new Set();
+// Tab layouts changed since this page loaded, for the same reason; and their saves, one at a time.
+const layoutsChanged = new Map();
+let layoutSaving = Promise.resolve();
 const Settings = lazyPage(() => import('./Settings.jsx'));
 const Assistant = lazyPage(() => import('./Assistant.jsx'));
 const MeetDialog = lazyPage(() => import('./MeetDialog.jsx'));
@@ -1539,6 +1543,19 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     setTimeout(() => setTouring(true), 400); // Once the Inbox is back on screen.
   }
 
+  // Their own choice of tabs and order (Settings → Tabs).
+  const [layout, setLayout] = useState(() => layoutsChanged.get(account.email) || account.layout || {});
+  const changeLayout = (next) => {
+    setLayout(next);
+    layoutsChanged.set(account.email, next);
+    layoutSaving = layoutSaving.then(() => api('/auth/layout', { method: 'PUT', body: next })).catch(() => flash('Couldn’t save your tabs. Try again in a moment.'));
+  };
+  const inboxTabs = arrange(CATEGORY_TABS, layout.inbox);
+  // A tab they've just hidden can't stay open.
+  useEffect(() => {
+    if (!inboxTabs.some((tab) => tab.id === category)) setCategory(inboxTabs[0].id);
+  }, [inboxTabs, category]);
+
   const railTabs = [
     { id: 'tasks', label: 'Tasks', icon: 'checkCircle', onClick: onOpenTasks },
     { id: 'automations', label: 'Automate', title: 'Automations', icon: 'scheduleSend', onClick: onOpenAutomations, hidden: shared },
@@ -1546,8 +1563,11 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     { id: 'notes', label: 'Notes', title: 'Instant notes', icon: 'chat', on: notesOpen, badge: notesUnread, onClick: () => (notesOpen ? setNotesOpen(false) : openNotes()) },
     { id: 'meet', label: 'Meeting', title: 'New meeting', icon: 'videocam', onClick: () => setModal('meet'), hidden: !meetOn || shared },
     { id: 'tour', label: 'Tour', title: 'Take the tour', icon: 'info', pinned: true, onClick: () => startTour(), hidden: shared },
-    { id: 'settings', label: 'Settings', icon: 'settings', pinned: true, onClick: () => { setSettingsTab('profile'); setModal('settings'); }, hidden: shared },
+    { id: 'settings', label: 'Settings', icon: 'settings', pinned: true, locked: true, onClick: () => { setSettingsTab('profile'); setModal('settings'); }, hidden: shared },
   ].filter((tab) => !tab.hidden);
+  const shownRail = arrange(railTabs, layout.rail);
+  // The phone's bottom bar: Inbox, then the first four of the same tabs in the same order, then More.
+  const phoneTabs = shownRail.filter((tab) => ['assistant', 'tasks', 'automations', 'notes'].includes(tab.id)).slice(0, 4);
 
   return (
     <div className={`app has-rail ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.some((m) => m.phase === 'waiting') ? 'has-send-tray' : ''}`}>
@@ -1574,10 +1594,10 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         </div>
         <span className="rail-divider" aria-hidden="true" />
         <div className="rail-tabs">
-          {railTabs.filter((tab) => !tab.pinned).map((tab) => <RailTab key={tab.id} tab={tab} />)}
+          {shownRail.filter((tab) => !tab.pinned).map((tab) => <RailTab key={tab.id} tab={tab} />)}
         </div>
         <div className="rail-pinned">
-          {railTabs.filter((tab) => tab.pinned).map((tab) => <RailTab key={tab.id} tab={tab} />)}
+          {shownRail.filter((tab) => tab.pinned).map((tab) => <RailTab key={tab.id} tab={tab} />)}
         </div>
       </nav>
       <header className="topbar">
@@ -1750,7 +1770,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                   {f.count && shownCounts[f.count] > 0 && <span className={`count ${f.plain ? 'plain' : ''}`}>{shownCounts[f.count]}</span>}
                 </button>,
                 ...(f.id === 'inbox'
-                  ? CATEGORY_TABS.map((t) => (
+                  ? inboxTabs.map((t) => (
                       <button
                         key={`category-${t.id}`}
                         className={`nav-item nav-sub mobile-only ${folder === 'inbox' && !search && category === t.id ? 'active' : ''}`}
@@ -1917,24 +1937,15 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 </button>
               );
             })}
-            {!shared && (
-              <button type="button" data-tour="nav-assistant" className={assistantOpen ? 'on' : ''} onClick={() => { setNotesOpen(false); setAssistantOpen(true); }}>
-                <span className="bottom-nav-icon"><Icon name="sparkle" /></span>
-                Assistant
+            {phoneTabs.map((tab) => (
+              <button key={tab.id} type="button" data-tour={`nav-${tab.id}`} className={tab.on ? 'on' : ''} onClick={tab.id === 'assistant' ? () => { setNotesOpen(false); setAssistantOpen(true); } : tab.onClick}>
+                <span className="bottom-nav-icon">
+                  <Icon name={tab.icon} />
+                  {tab.badge > 0 && <span className="bottom-nav-badge">{tab.badge > 99 ? '99+' : tab.badge}</span>}
+                </span>
+                {tab.label}
               </button>
-            )}
-            <button type="button" data-tour="nav-tasks" onClick={onOpenTasks}>
-              <span className="bottom-nav-icon"><Icon name="checkCircle" /></span>
-              Tasks
-            </button>
-            {!shared && <button type="button" data-tour="nav-automations" onClick={onOpenAutomations}><span className="bottom-nav-icon"><Icon name="scheduleSend" /></span>Automate</button>}
-            <button type="button" data-tour="nav-notes" className={notesOpen ? 'on' : ''} onClick={() => (notesOpen ? setNotesOpen(false) : openNotes())}>
-              <span className="bottom-nav-icon">
-                <Icon name="chat" />
-                {notesUnread > 0 && <span className="bottom-nav-badge">{notesUnread > 99 ? '99+' : notesUnread}</span>}
-              </span>
-              Notes
-            </button>
+            ))}
             <button type="button" className={folder === 'inbox' || notesOpen || assistantOpen ? '' : 'on'} onClick={() => { setAssistantOpen(false); setCollapsed(false); }}>
               <span className="bottom-nav-icon"><Icon name="menu" /></span>
               More
@@ -1947,6 +1958,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             <Suspense fallback={<div className="settings-loading"><TextSkeleton lines={6} /></div>}>
             <Settings
               initialTab={settingsTab}
+              tabs={{
+                layout,
+                onChange: changeLayout,
+                rail: railTabs.filter((tab) => !tab.pinned).map(({ id, label, icon, locked }) => ({ id, label, icon, locked })),
+                pinned: railTabs.filter((tab) => tab.pinned).map(({ id, label, icon, locked }) => ({ id, label, icon, locked })),
+                inbox: CATEGORY_TABS.map(({ id, label, icon }) => ({ id, label, icon })),
+              }}
               color={user.color}
               onAvatarChange={(avatarUrl) => {
                 onUserChange({ ...user, avatarUrl });
@@ -2114,7 +2132,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
               {showTabs && (
                 <div className="tabs">
-                  {CATEGORY_TABS.map((t) => (
+                  {inboxTabs.map((t) => (
                     <button
                       key={t.id}
                       className={`tab ${category === t.id ? 'on' : ''}`}

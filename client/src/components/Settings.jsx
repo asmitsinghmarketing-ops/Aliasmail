@@ -9,6 +9,7 @@ import { TextSkeleton } from './Loading.jsx';
 import SecurityPanel from './SecurityPanel.jsx';
 import GoogleApps from './GoogleApps.jsx';
 import NotificationSettings from './NotificationSettings.jsx';
+import TabSettings from './TabSettings.jsx';
 
 const GOOGLE_SIGNUP = 'https://accounts.google.com/signup';
 
@@ -66,7 +67,7 @@ function PrivateTabHelp({ onClose }) {
   );
 }
 
-export default function Settings({ color, initialTab = 'profile', onClose, onSaved, onAvatarChange }) {
+export default function Settings({ color, initialTab = 'profile', onClose, onSaved, onAvatarChange, tabs }) {
   const [privateHelp, setPrivateHelp] = useState(false);
   const [tab, setTab] = useState(initialTab);
   const [googleOn, setGoogleOn] = useState(initialTab === 'google');
@@ -305,6 +306,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
           ['profile', 'Profile', 'people'],
           ['security', 'Security', 'shield'],
           ['notifications', 'Notifications', 'bell'],
+          ...(tabs ? [['tabs', 'Tabs', 'dashboard']] : []),
           ...(googleOn ? [['google', 'Google apps', 'apps']] : []),
         ].map(([id, label, icon]) => (
           <button type="button" role="tab" aria-selected={tab === id} key={id} className={`settings-tab ${tab === id ? 'on' : ''}`} onClick={() => setTab(id)}>
@@ -313,7 +315,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
         ))}
       </div>
       <div className="view-enter settings-body" key={tab}>
-        {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : tab === 'notifications' ? <NotificationSettings /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <TextSkeleton lines={4} />}
+        {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : tab === 'notifications' ? <NotificationSettings /> : tab === 'tabs' && tabs ? <TabSettings {...tabs} /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <TextSkeleton lines={4} />}
       </div>
       {privateHelp && <PrivateTabHelp onClose={() => setPrivateHelp(false)} />}
       {cropping && <AvatarCropper file={cropping} onCancel={() => setCropping(null)} onDone={saveAvatar} />}

@@ -80,13 +80,14 @@ const switchable = (role, email) =>
 function profile({ role, email }) {
   if (role === 'admin') {
     const { displayName = '', avatar } = db().owner;
-    return { role: 'admin', email, mailbox: config.mailbox, displayName, avatarUrl: avatarUrl(avatar), mailboxes: switchable(role, email), tourDone: Boolean(db().owner.tourDoneAt) };
+    return { role: 'admin', email, mailbox: config.mailbox, displayName, avatarUrl: avatarUrl(avatar), mailboxes: switchable(role, email), tourDone: Boolean(db().owner.tourDoneAt), layout: db().owner.layout || null };
   }
   const alias = findAlias(email);
   return {
     role: 'user', email: alias.address, displayName: alias.displayName, color: alias.color, avatarUrl: avatarUrl(alias.avatar),
     mailboxes: switchable(role, email),
     tourDone: Boolean(alias.tourDoneAt),
+    layout: alias.layout || null,
   };
 }
 
@@ -478,6 +479,36 @@ router.post('/mfa/setup/confirm', sessionOrTicket, (req, res) => {
 /* ---------------------------------- signed-in account security ---------------------------------- */
 
 router.get('/me', requireAuth(), (req, res) => res.json(profile(req.user)));
+
+/** Which tabs someone shows and in what order (Settings → Tabs). Only names of tabs, never anything else. */
+const TAB_ID = /^[a-z0-9_-]{1,40}$/;
+function layoutFrom(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'Invalid tab layout');
+  const layout = {};
+  for (const group of ['rail', 'inbox']) {
+    if (body[group] === undefined) continue;
+    const prefs = body[group];
+    const ids = (value) => {
+      if (value === undefined) return [];
+      if (!Array.isArray(value) || value.length > 40 || !value.every((id) => typeof id === 'string' && TAB_ID.test(id))) throw new HttpError(400, 'Invalid tab layout');
+      return [...new Set(value)];
+    };
+    if (!prefs || typeof prefs !== 'object' || Array.isArray(prefs)) throw new HttpError(400, 'Invalid tab layout');
+    layout[group] = { order: ids(prefs.order), hidden: ids(prefs.hidden) };
+  }
+  return layout;
+}
+
+router.put('/layout', requireAuth(), (req, res) => {
+  const holder = req.user.role === 'admin' ? db().owner : findAlias(req.user.email);
+  const layout = layoutFrom(req.body);
+  if (holder) {
+    if (Object.keys(layout).length) holder.layout = layout;
+    else delete holder.layout; // Back to the usual tabs.
+    save();
+  }
+  res.json({ layout: holder?.layout || null });
+});
 
 /** They've finished or skipped the first-login tour: kept with the account, not the device. */
 router.post('/tour', requireAuth(), (req, res) => {
