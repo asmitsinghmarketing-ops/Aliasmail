@@ -19,6 +19,7 @@ import tasksRoutes from './routes/tasks.js';
 import notificationRoutes from './routes/notifications.js';
 import automationRoutes from './routes/automations.js';
 import callRoutes from './routes/calls.js';
+import attendanceRoutes from './routes/attendance.js';
 import { startPush } from './push.js';
 import { startEmailAutomations } from './automations.js';
 import { attachLive } from './live.js';
@@ -149,6 +150,7 @@ app.use('/api/tasks', tasksRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/automations', automationRoutes);
 app.use('/api/calls', callRoutes);
+app.use('/api/attendance', attendanceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

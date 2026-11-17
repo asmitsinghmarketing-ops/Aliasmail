@@ -3,9 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import {
   canShareScreen, chooseDevice, clearNotice, hangUp, inviteToCall,
-  toggleCamera, toggleHand, toggleMute, toggleScreen,
+  setRecording, toggleCamera, toggleHand, toggleMute, toggleScreen,
 } from '../calls.js';
+import { createCallRecorder, downloadRecording, recordingSupported } from '../callRecording.js';
 import { onlineNow } from '../live.js';
+import { ask } from './Dialog.jsx';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 
@@ -96,9 +98,9 @@ function Tile({ name, address, stream, videoOn, muted, hand, speaking, status, m
   );
 }
 
-function ControlButton({ icon, label, on, danger, disabled, onClick, badge }) {
+function ControlButton({ icon, label, on, danger, recording, disabled, onClick, badge }) {
   return (
-    <button type="button" className={`call-control ${on ? 'on' : ''} ${danger ? 'danger' : ''}`} aria-label={label} aria-pressed={on === undefined ? undefined : on} title={label} disabled={disabled} onClick={onClick}>
+    <button type="button" className={`call-control ${on ? 'on' : ''} ${danger ? 'danger' : ''} ${recording ? 'recording' : ''}`} aria-label={label} aria-pressed={on === undefined ? undefined : on} title={label} disabled={disabled} onClick={onClick}>
       <Icon name={icon} />
       {badge > 0 && <span className="call-control-badge">{badge}</span>}
       <span className="call-control-label">{label}</span>
@@ -185,8 +187,54 @@ function DevicesPanel({ state }) {
 export default function CallRoom({ state }) {
   const [minimized, setMinimized] = useState(false);
   const [panel, setPanel] = useState(null); // 'people' | 'devices'
+  const [recordError, setRecordError] = useState('');
+  const [recordSaved, setRecordSaved] = useState(false);
+  const [recordingStartedAt, setRecordingStartedAt] = useState(null);
+  const recorder = useRef(null);
   const duration = useDuration(state.startedAt);
   const { call, me, peers } = state;
+
+  // Keep a running recording in step with people joining/leaving and camera/screen changes.
+  useEffect(() => { recorder.current?.sync(state); }, [state]);
+
+  useEffect(() => () => {
+    const active = recorder.current;
+    recorder.current = null;
+    if (active) {
+      setRecording(false);
+      active.stop().then((blob) => downloadRecording(blob, active.startedAt));
+    }
+  }, []);
+
+  async function toggleRecording() {
+    setRecordError('');
+    setRecordSaved(false);
+    if (recorder.current) {
+      const active = recorder.current;
+      recorder.current = null;
+      setRecordingStartedAt(null);
+      setRecording(false);
+      const blob = await active.stop();
+      downloadRecording(blob, active.startedAt);
+      setRecordSaved(true);
+      return;
+    }
+    const allowed = await ask({
+      title: 'Record this call?',
+      message: 'Everyone in the call will see that recording is on. The recording stays on this computer and downloads when you stop or leave. Make sure everyone agrees before recording.',
+      confirmLabel: 'Start recording',
+    });
+    if (!allowed) return;
+    try {
+      recorder.current = await createCallRecorder(state);
+      setRecordingStartedAt(recorder.current.startedAt.getTime());
+      setRecording(true);
+    } catch (err) {
+      setRecordingStartedAt(null);
+      setRecording(false);
+      setRecordError(err.message);
+    }
+  }
 
   const voices = useMemo(() => [
     ...(state.localAudio && !state.muted ? [{ id: me, stream: state.localAudio }] : []),
@@ -212,6 +260,12 @@ export default function CallRoom({ state }) {
   const leading = presenter ? null : tiles.find((tile) => tile.speaking && tile.key !== me) || tiles.find((tile) => tile.key !== me) || tiles[0];
 
   const voicesPlayed = peers.map((peer) => peer.audio && <Voice key={peer.id} stream={peer.audio} speaker={state.speakerDevice} />);
+  const recordingPeers = call.peers.filter((peer) => peer.recording);
+  const recordingActive = state.recording || recordingPeers.length > 0;
+  const recordingDuration = useDuration(recordingStartedAt);
+  const recordingText = state.recording
+    ? 'You are recording this call'
+    : recordingPeers.length ? `${recordingPeers.map((peer) => peer.id === me ? 'You' : peer.name).join(', ')} ${recordingPeers.length === 1 ? 'is' : 'are'} recording this call` : '';
 
   if (minimized) {
     const shown = presenter
@@ -225,6 +279,7 @@ export default function CallRoom({ state }) {
           <span className="call-mini-expand"><Icon name="expand" size={18} /></span>
         </button>
         <div className="call-mini-bar">
+          {recordingActive && <span className="call-mini-recording" title={recordingText}><span /> REC {state.recording && recordingDuration ? recordingDuration : ''}</span>}
           <span className="call-mini-time">{duration || 'Calling…'}</span>
           <button type="button" className={`call-mini-btn ${state.muted ? 'on' : ''}`} aria-label={state.muted ? 'Unmute' : 'Mute'} title={state.muted ? 'Unmute' : 'Mute'} disabled={!state.micAvailable} onClick={toggleMute}>
             <Icon name={state.muted ? 'micOff' : 'mic'} size={20} />
@@ -253,6 +308,17 @@ export default function CallRoom({ state }) {
           <button type="button" aria-label="Dismiss" onClick={clearNotice}><Icon name="close" size={18} /></button>
         </div>
       )}
+
+      {recordingActive && (
+        <div className="call-recording-banner" role="status">
+          <span className="call-recording-dot" />
+          <span className="call-recording-copy"><strong>Recording</strong><small>{recordingText}</small></span>
+          {state.recording && <time>{recordingDuration || '00:00'}</time>}
+          {state.recording && <button type="button" onClick={toggleRecording}>Stop &amp; save</button>}
+        </div>
+      )}
+      {recordError && <div className="call-notice" role="alert"><span>{recordError}</span><button type="button" aria-label="Dismiss" onClick={() => setRecordError('')}><Icon name="close" size={18} /></button></div>}
+      {recordSaved && <div className="call-recording-saved" role="status"><Icon name="checkCircle" size={18} /><span><strong>Recording saved</strong><small>Find it in your Downloads folder.</small></span><button type="button" aria-label="Dismiss" onClick={() => setRecordSaved(false)}><Icon name="close" size={16} /></button></div>}
 
       <div className="call-room-body">
         {presenter ? (
@@ -285,6 +351,7 @@ export default function CallRoom({ state }) {
         <ControlButton icon={state.muted || !state.micAvailable ? 'micOff' : 'mic'} label={state.muted ? 'Unmute' : 'Mute'} on={state.muted || !state.micAvailable} disabled={!state.micAvailable} onClick={toggleMute} />
         <ControlButton icon={state.cameraOn ? 'videocam' : 'videocamOff'} label={state.cameraOn ? 'Camera off' : 'Camera on'} on={!state.cameraOn} onClick={toggleCamera} />
         {canShareScreen() && <ControlButton icon="screenShare" label={state.sharing ? 'Stop sharing' : 'Share screen'} on={state.sharing} onClick={toggleScreen} />}
+        {recordingSupported() && <ControlButton icon="record" label={state.recording ? 'Stop & save' : 'Record'} on={state.recording} recording={state.recording} onClick={toggleRecording} />}
         <ControlButton icon="hand" label={state.hand ? 'Lower hand' : 'Raise hand'} on={state.hand} onClick={toggleHand} />
         <ControlButton icon="personAdd" label="People" on={panel === 'people'} badge={peers.filter((peer) => peer.hand).length} onClick={() => setPanel(panel === 'people' ? null : 'people')} />
         <ControlButton icon="settings" label="Devices" on={panel === 'devices'} onClick={() => setPanel(panel === 'devices' ? null : 'devices')} />

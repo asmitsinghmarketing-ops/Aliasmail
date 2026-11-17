@@ -442,7 +442,7 @@ function RailTab({ tab }) {
   );
 }
 
-export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin, onOpenTasks, onOpenAutomations }) {
+export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin, onOpenTasks, onOpenAutomations, onOpenAttendance }) {
   const [folder, setFolder] = useState('inbox');
   const [team, setTeam] = useState([]); // who can own a conversation
   // Instant notes: the panel, its unread badge, and the latest note pushed over the live connection.
@@ -1597,6 +1597,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
 
   const railTabs = [
     { id: 'tasks', label: 'Tasks', icon: 'checkCircle', onClick: onOpenTasks },
+    { id: 'attendance', label: 'Attendance', icon: 'clock', onClick: onOpenAttendance, hidden: shared },
     { id: 'automations', label: 'Automate', title: 'Automations', icon: 'scheduleSend', onClick: onOpenAutomations, hidden: shared },
     { id: 'assistant', label: 'Assistant', icon: 'sparkle', on: assistantOpen, onClick: () => setAssistantOpen(!assistantOpen), hidden: shared },
     { id: 'notes', label: 'Notes', title: 'Instant notes', icon: 'chat', on: notesOpen, badge: notesUnread, onClick: () => (notesOpen ? setNotesOpen(false) : openNotes()) },
@@ -1606,7 +1607,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   ].filter((tab) => !tab.hidden);
   const shownRail = arrange(railTabs, layout.rail);
   // The phone's bottom bar: Inbox, then the first four of the same tabs in the same order, then More.
-  const phoneTabs = shownRail.filter((tab) => ['assistant', 'tasks', 'automations', 'notes'].includes(tab.id)).slice(0, 4);
+  const phoneTabs = shownRail.filter((tab) => ['assistant', 'tasks', 'attendance', 'automations', 'notes'].includes(tab.id)).slice(0, 4);
 
   return (
     <div className={`app has-rail ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.some((m) => m.phase === 'waiting') ? 'has-send-tray' : ''}`}>

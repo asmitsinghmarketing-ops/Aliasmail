@@ -114,9 +114,9 @@ test('a call rings, connects, passes connection details between windows, and end
   const signal = await waitFor(mary.got, (m) => m.type === 'call-signal');
   assert.deepEqual([signal.from, signal.to, signal.data.description.sdp], [started.peerId, joined.peerId, 'x']);
 
-  await call('mary', `/calls/${started.call.id}/state`, { peerId: joined.peerId, muted: true, camera: true, sharing: true, hand: true });
+  await call('mary', `/calls/${started.call.id}/state`, { peerId: joined.peerId, muted: true, camera: true, sharing: true, hand: true, recording: true });
   const updated = await waitFor(john.got, (m) => m.type === 'call-room' && m.call.peers.some((peer) => peer.muted));
-  assert.deepEqual(['muted', 'camera', 'sharing', 'hand'].map((key) => updated.call.peers.find((peer) => peer.id === joined.peerId)[key]), [true, true, true, true]);
+  assert.deepEqual(['muted', 'camera', 'sharing', 'hand', 'recording'].map((key) => updated.call.peers.find((peer) => peer.id === joined.peerId)[key]), [true, true, true, true, true]);
 
   // When one of two leaves, the call is over for the other.
   await call('mary', `/calls/${started.call.id}/leave`, { peerId: joined.peerId });

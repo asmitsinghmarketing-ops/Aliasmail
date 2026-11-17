@@ -37,7 +37,7 @@ const publicCall = (call) => ({
   expiresAt: call.expiresAt,
   invited: [...call.invited].map(([address, invite]) => ({ address, name: nameOf(address), status: invite.status })),
   peers: [...call.peers].map(([id, peer]) => ({
-    id, address: peer.address, name: nameOf(peer.address), muted: peer.muted, camera: peer.camera, sharing: peer.sharing, hand: peer.hand,
+    id, address: peer.address, name: nameOf(peer.address), muted: peer.muted, camera: peer.camera, sharing: peer.sharing, hand: peer.hand, recording: peer.recording,
   })),
 });
 
@@ -113,7 +113,7 @@ function ring(call, addresses) {
 
 function addPeer(call, address) {
   const id = crypto.randomUUID();
-  call.peers.set(id, { address, muted: false, camera: false, sharing: false, hand: false, lastSeen: Date.now() });
+  call.peers.set(id, { address, muted: false, camera: false, sharing: false, hand: false, recording: false, lastSeen: Date.now() });
   return id;
 }
 
@@ -233,7 +233,7 @@ router.post('/:id/invite', (req, res) => {
 router.post('/:id/state', (req, res) => {
   const { call, peer } = peerFor(req);
   let changed = false;
-  for (const key of ['muted', 'camera', 'sharing', 'hand']) {
+  for (const key of ['muted', 'camera', 'sharing', 'hand', 'recording']) {
     if (typeof req.body?.[key] === 'boolean' && peer[key] !== req.body[key]) {
       peer[key] = req.body[key];
       changed = true;

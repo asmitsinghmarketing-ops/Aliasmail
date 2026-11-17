@@ -6,12 +6,14 @@ import { isInstallPage } from './install.js';
 import { DialogHost } from './components/Dialog.jsx';
 import UpdateNotice from './components/UpdateNotice.jsx';
 import AriaTooltip from './components/AriaTooltip.jsx';
+import { startAttendanceHeartbeat } from './attendance.js';
 
 const Mailbox = lazyPage(() => import('./components/Mailbox.jsx'));
 const Admin = lazyPage(() => import('./components/Admin.jsx'));
 const Tasks = lazyPage(() => import('./components/Tasks.jsx'));
 const CallCenter = lazyPage(() => import('./components/CallCenter.jsx'));
 const Automations = lazyPage(() => import('./components/Automations.jsx'));
+const Attendance = lazyPage(() => import('./components/Attendance.jsx'));
 const InstallPage = lazyPage(() => import('./components/InstallPage.jsx'));
 
 // Start on the mailbox's code straight away, while the sign-in check runs, so one doesn't wait for
@@ -36,7 +38,7 @@ function Screen() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
   const [adminView, setAdminView] = useState('mail'); // admin only: 'mail' | 'console'
-  const [workspace, setWorkspace] = useState(() => new URLSearchParams(window.location.search).has('task') ? 'tasks' : 'mail'); // mail | tasks | automations
+  const [workspace, setWorkspace] = useState(() => new URLSearchParams(window.location.search).has('task') ? 'tasks' : 'mail'); // mail | tasks | automations | attendance
   const [taskToOpen, setTaskToOpen] = useState(() => new URLSearchParams(window.location.search).get('task'));
   const [shared, setShared] = useState(null); // address of an open group mailbox, or null
 
@@ -93,9 +95,13 @@ function Screen() {
     return whenIdle(() => {
       Tasks.preload();
       Automations.preload();
+      Attendance.preload();
       if (isAdmin) Admin.preload();
     });
   }, [signedIn, isAdmin]);
+
+  // Once clocked in, presence continues across Mail, Tasks, Automations and other workspaces.
+  useEffect(() => (signedIn ? startAttendanceHeartbeat() : undefined), [signedIn]);
 
   const logout = async () => {
     switchMailbox(null);
@@ -143,6 +149,8 @@ function Screen() {
         <Tasks user={user} startTask={taskToOpen} onClose={() => { setTaskToOpen(null); setWorkspace('mail'); }} />
       ) : workspace === 'automations' ? (
         <Automations onClose={() => setWorkspace('mail')} />
+      ) : workspace === 'attendance' ? (
+        <Attendance user={user} onClose={() => setWorkspace('mail')} />
       ) : (
         <Mailbox
             key={sharedBox ? `shared:${sharedBox.address}` : 'own'}
@@ -157,6 +165,7 @@ function Screen() {
             onOpenAdmin={user.role === 'admin' ? () => setAdminView('console') : undefined}
             onOpenTasks={() => setWorkspace('tasks')}
             onOpenAutomations={() => setWorkspace('automations')}
+            onOpenAttendance={() => setWorkspace('attendance')}
           />
       )}
     </Suspense>

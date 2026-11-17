@@ -22,6 +22,7 @@ const IDLE = {
   cameraOn: false,
   sharing: false,
   hand: false,
+  recording: false,
   micAvailable: true,
   localCamera: null,
   localScreen: null,
@@ -112,7 +113,7 @@ const path = (suffix = '') => `/calls/${state.call.id}${suffix}`;
 
 function sendState() {
   if (state.phase !== 'in-call') return;
-  api(path('/state'), { method: 'POST', body: { peerId: state.me, muted: state.muted, camera: state.cameraOn, sharing: state.sharing, hand: state.hand } })
+  api(path('/state'), { method: 'POST', body: { peerId: state.me, muted: state.muted, camera: state.cameraOn, sharing: state.sharing, hand: state.hand, recording: state.recording } })
     .then(applyCall)
     .catch(() => {}); // The next check-in tries again.
 }
@@ -293,7 +294,7 @@ function onLive(message) {
 function enter({ call, peerId, iceServers: servers }, notice) {
   iceServers = servers;
   clearTimeout(endedTimer);
-  set({ phase: 'in-call', call, me: peerId, notice, muted: false, hand: false, startedAt: null });
+  set({ phase: 'in-call', call, me: peerId, notice, muted: false, hand: false, recording: false, startedAt: null });
   publishLocal();
   stopLive = subscribeLive(onLive);
   checkIn = setInterval(sendState, CHECK_IN_MS);
@@ -391,6 +392,12 @@ export async function toggleScreen() {
 
 export function toggleHand() {
   set({ hand: !state.hand });
+  sendState();
+}
+
+/** Tell everyone in the room when this browser is recording the call. */
+export function setRecording(recording) {
+  set({ recording: Boolean(recording) });
   sendState();
 }
 
