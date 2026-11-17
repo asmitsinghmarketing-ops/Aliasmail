@@ -22,12 +22,17 @@ async function scenario(t, body) {
     inbox.messages[1] = msg(1, false);
     inbox.messages[2] = msg(2, true);
     const calls = [];
-    let server = { seen: [], flagError: null };
+    let server = { seen: [], flagError: null, holdSync: null, holdFlag: null };
     globalThis.fetch = async (url, init) => {
       const req = JSON.parse(init.body);
       calls.push(req);
+      // The mail server's answer is decided when the question arrives, even if it comes back later.
+      const seenAtAsk = [...server.seen];
+      if (req.action === 'sync' && server.holdSync) await server.holdSync;
+      if (req.action === 'flag' && server.holdFlag) await server.holdFlag;
+      if (req.action === 'flag' && !server.flagError) server.seen = req.seen ? [...new Set([...server.seen, ...req.uids])] : server.seen.filter((uid) => !req.uids.includes(uid));
       if (req.action === 'flag' && server.flagError) return { ok: false, status: 502, json: async () => ({ error: server.flagError }) };
-      const reply = req.action === 'sync' ? { uidValidity: '7', uids: req.folder === 'inbox' ? [1, 2] : [], seenUids: server.seen, messages: [] } : { ok: true, messages: [] };
+      const reply = req.action === 'sync' ? { uidValidity: '7', uids: req.folder === 'inbox' ? [1, 2] : [], seenUids: seenAtAsk, messages: [] } : { ok: true, messages: [] };
       return { ok: true, json: async () => reply };
     };
     ${body}
@@ -63,6 +68,48 @@ test('reading in AliasMail sets the server flag, and its own change is not mista
   assert.deepEqual(result.flag, { action: 'flag', folder: 'inbox', uids: [1], seen: true });
   assert.equal(result.one.imapRead, true);
   assert.equal(result.one.state['a@example.com'].read, true);
+});
+
+test('a sync that started before reading in AliasMail does not mark the message unread again', async (t) => {
+  const result = await scenario(t, `
+    server.seen = [2];
+    let release; server.holdSync = new Promise((r) => { release = r; });
+    const syncing = syncInbox({ inboxOnly: true });   // asks the mail server: 1 is still unread
+    await new Promise((r) => setTimeout(r, 30));
+    server.holdSync = null;
+    inbox.messages[1].state['a@example.com'].read = true;
+    await setServerSeen([1], true);                  // read in AliasMail while that answer is on its way
+    release();
+    await syncing;
+    const afterStale = inbox.messages[1].state['a@example.com'].read;
+    await syncInbox({ inboxOnly: true });            // the next sync sees it read
+    const afterFresh = inbox.messages[1].state['a@example.com'].read;
+    server.seen = [2];                               // then marked unread in another mail app
+    await syncInbox({ inboxOnly: true });
+    console.log(JSON.stringify({ afterStale, afterFresh, afterOtherApp: inbox.messages[1].state['a@example.com'].read }));
+  `);
+  assert.equal(result.afterStale, true);
+  assert.equal(result.afterFresh, true);
+  assert.equal(result.afterOtherApp, false);
+});
+
+test('a sync while the read flag is still being set does not undo it', async (t) => {
+  const result = await scenario(t, `
+    server.seen = [2];
+    let release; server.holdFlag = new Promise((r) => { release = r; });
+    inbox.messages[1].state['a@example.com'].read = true;
+    const flagging = setServerSeen([1], true);       // the mail server hasn't been told yet
+    await new Promise((r) => setTimeout(r, 30));
+    await syncInbox({ inboxOnly: true });            // so it still says unread
+    const duringFlag = inbox.messages[1].state['a@example.com'].read;
+    release();
+    await flagging;
+    await syncInbox({ inboxOnly: true });
+    console.log(JSON.stringify({ duringFlag, after: inbox.messages[1].state['a@example.com'].read, imapRead: inbox.messages[1].imapRead }));
+  `);
+  assert.equal(result.duringFlag, true);
+  assert.equal(result.after, true);
+  assert.equal(result.imapRead, true);
 });
 
 test('an old bridge without read flags leaves local state consistent', async (t) => {

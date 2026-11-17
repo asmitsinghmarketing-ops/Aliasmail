@@ -147,6 +147,12 @@ export function getMessage(path) {
 
 export const preloadMessage = (path) => getMessage(path).catch(() => {});
 
+/** Keep a kept copy in step with a change (star, read), so opening it again shows the change. */
+export function patchCachedMessage(path, patch) {
+  const kept = messageCache.get(path);
+  if (kept) messageCache.set(path, kept.then((data) => ({ ...data, ...patch })));
+}
+
 // Files that can be looked at in a new tab, by extension. Only types a browser shows without
 // running anything: never HTML or SVG, which could run scripts as this site.
 const PREVIEW_TYPES = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', txt: 'text/plain', csv: 'text/plain', log: 'text/plain' };

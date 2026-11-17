@@ -1,5 +1,5 @@
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, cachedMailboxList, fetchRemembered, prefetchMailboxList, preloadMessage } from '../api.js';
+import { api, cachedMailboxList, fetchRemembered, patchCachedMessage, prefetchMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import { escapeHtml, htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
 import { withDriveLinks } from '../drivePicker.js';
@@ -653,12 +653,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       const params = new URL(href, window.location.origin).searchParams;
       const id = params.get('message');
       const notesFrom = params.get('notes');
-      if (id && /^d+$/.test(id)) {
+      if (id && /^\d+$/.test(id)) {
         setAssistantOpen(false);
         setNotesOpen(false);
         setModal(null);
         setOpen({ id: Number(id), kind: 'inbox', subject: '', from: { name: '', address: '' }, date: '', to: [], cc: [], labels: [], read: true });
         setOpenMsg(null);
+        markOpenedRead(Number(id));
       } else if (notesFrom) {
         openNotes(notesFrom);
       }
@@ -1013,6 +1014,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     const action = flag === 'starred' ? (value ? 'star' : 'unstar') : value ? 'important' : 'notImportant';
     const show = (on) => setList((l) => ({ ...l, items: l.items.map((i) => (i.id === item.id ? { ...i, [flag]: on } : i)) }));
     show(value);
+    patchCachedMessage(`/mail/messages/${item.id}`, { [flag]: value });
     api('/mail/messages/action', { method: 'POST', body: { ids: [item.id], action } })
       .then(() => {
         api('/mail/folders').then(setCounts).catch(() => {});
@@ -1020,6 +1022,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       })
       .catch((err) => {
         show(!value);
+        patchCachedMessage(`/mail/messages/${item.id}`, { [flag]: !value });
         onFail?.();
         flash(err.message);
       });
@@ -1058,6 +1061,16 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     }
   }
 
+  // Opening an inbox email marks it read: it was loaded with ?peek=1, which doesn't.
+  function markOpenedRead(id) {
+    setList((l) => ({ ...l, items: l.items.map((i) => (i.kind === 'inbox' && i.id === id ? { ...i, read: true } : i)) }));
+    patchCachedMessage(`/mail/messages/${id}`, { read: true });
+    api('/mail/messages/action', { method: 'POST', body: { ids: [id], action: 'read' } })
+      .then(() => api('/mail/folders'))
+      .then(setCounts)
+      .catch(() => {});
+  }
+
   function openAt(index) {
     const item = list.items[index];
     if (!item) return;
@@ -1071,9 +1084,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     setCursor(index);
     // Messages are loaded without marking them read (so preloading is harmless); opening marks it.
     if (!item.read) {
-      setList((l) => ({ ...l, items: l.items.map((i) => (i.id === item.id ? { ...i, read: true } : i)) }));
-      const markRead = item.kind === 'inbox' ? api('/mail/messages/action', { method: 'POST', body: { ids: [item.id], action: 'read' } }) : Promise.resolve();
-      markRead.then(() => api('/mail/folders')).then(setCounts).catch(() => {});
+      if (item.kind === 'inbox') markOpenedRead(item.id);
+      else setList((l) => ({ ...l, items: l.items.map((i) => (i.id === item.id ? { ...i, read: true } : i)) }));
     }
     // Have the neighbours ready for j / k and the arrows.
     for (const near of [list.items[index + 1], list.items[index - 1]]) if (near) preload(near);
@@ -1526,8 +1538,10 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const selectedItems = list.items.filter((i) => selected.has(i.id));
   const openIndex = open ? list.items.findIndex((i) => i.id === open.id) : -1;
   // The list row is refreshed after every action, so it has the current star / labels / importance.
+  // Not in the list (opened from a notification, or just unstarred out of Starred): `open` is a
+  // stale copy, so the email's own state is shown instead.
   const live = openIndex >= 0 ? list.items[openIndex] : open;
-  const livePatch = live?.kind === 'inbox' ? { starred: live.starred, important: live.important, labels: live.labels, archived: live.archived } : null;
+  const livePatch = openIndex >= 0 && live?.kind === 'inbox' ?{ starred: live.starred, important: live.important, labels: live.labels, archived: live.archived } : null;
 
   const notice =
     open?.kind === 'spam'
@@ -2213,6 +2227,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                     // In another inbox tab (codes usually land in Updates): open it from here.
                     setOpen({ id, kind: 'inbox', subject, from, date, to: [], cc: [], labels: [], read: true });
                     setOpenMsg(null);
+                    markOpenedRead(id);
                   }}
                 />
               )}

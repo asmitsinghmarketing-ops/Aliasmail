@@ -111,6 +111,10 @@ async function syncFolder(folder, cache, quick = false) {
     const seen = new Set(result.seenUids.map(Number));
     for (const record of Object.values(cache.messages)) {
       const now = seen.has(record.uid);
+      // Read or unread was just changed here: this answer may predate it, so it can't undo it.
+      const local = seenChanges.get(seenKey(folder, record.uid));
+      if (local && (local.pending || local.at >= started)) continue;
+      if (local) seenChanges.delete(seenKey(folder, record.uid));
       // Read or unread in another mail app (Titan, Gmail, phone): that change wins for every account.
       if (typeof record.imapRead === 'boolean' && record.imapRead !== now) {
         for (const state of Object.values(record.state || {})) state.read = now;
@@ -552,6 +556,12 @@ export async function moveMessages(uids, from, to) {
 
 let flagSupportWarned = false;
 
+// Read / unread changes made in the app, by folder and uid: { at, pending }. A sync that started
+// before the change finished reached the mail server reports the old flag; without this it
+// would take that as a change made in another mail app and flip the message back.
+const seenChanges = new Map();
+const seenKey = (folder, uid) => `${folder}:${Number(uid)}`;
+
 /**
  * Set or clear the mail server's \Seen flag so other mail apps show the same read state.
  * The local copy is updated first, so the next sync doesn't mistake our own change for one
@@ -561,11 +571,17 @@ export async function setServerSeen(uids, seen, folder = 'inbox') {
   const cache = cacheOf(folder);
   const changed = uids.map(Number).filter((uid) => cache.messages[uid] && cache.messages[uid].imapRead !== seen);
   if (!changed.length || !config.configured) return;
-  for (const uid of changed) cache.messages[uid].imapRead = seen;
+  for (const uid of changed) {
+    cache.messages[uid].imapRead = seen;
+    seenChanges.set(seenKey(folder, uid), { at: Date.now(), pending: true });
+  }
   save();
+  const settled = () => { for (const uid of changed) seenChanges.set(seenKey(folder, uid), { at: Date.now(), pending: false }); };
   try {
     await bridge('flag', { folder, uids: changed, seen });
+    settled();
   } catch (err) {
+    settled();
     for (const uid of changed) if (cache.messages[uid]) cache.messages[uid].imapRead = !seen;
     save();
     if (/Unsupported/i.test(err.message)) {
