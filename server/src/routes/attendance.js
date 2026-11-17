@@ -63,6 +63,14 @@ router.get('/', (req, res) => {
   res.json({ me, isAdmin: admin, current, status: attendanceStatus(current, now), sessions, team });
 });
 
+router.delete('/', requireAuth('admin'), (req, res) => {
+  const attendance = store();
+  const removed = attendance.sessions.length;
+  attendance.sessions = [];
+  save();
+  res.json({ ok: true, removed });
+});
+
 router.post('/clock-in', (req, res) => {
   const person = personOf(req.user);
   const existing = openFor(person);

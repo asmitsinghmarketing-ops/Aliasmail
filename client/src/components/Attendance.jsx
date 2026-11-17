@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { attendanceChanged } from '../attendance.js';
 import Avatar from './Avatar.jsx';
+import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { PanelSkeleton } from './Loading.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
@@ -38,6 +39,7 @@ export default function Attendance({ user, onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [now, setNow] = useState(() => new Date());
 
   const load = (quiet = false) => {
@@ -63,6 +65,27 @@ export default function Attendance({ user, onClose }) {
       setError(err.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function clearAttendance() {
+    const confirmed = await ask({
+      title: 'Clear all attendance?',
+      message: 'This permanently removes every attendance record and clocks everyone out. This cannot be undone.',
+      confirmLabel: 'Clear attendance',
+      danger: true,
+    });
+    if (!confirmed) return;
+    setClearing(true);
+    setError('');
+    try {
+      await api('/attendance', { method: 'DELETE' });
+      attendanceChanged();
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -134,7 +157,10 @@ export default function Attendance({ user, onClose }) {
             )}
 
             <section className="attendance-panel attendance-history">
-              <header><div><h2>{data.isAdmin ? 'Recent attendance' : 'My recent attendance'}</h2><p>Clock-in and clock-out records are retained for attendance reporting.</p></div></header>
+              <header>
+                <div><h2>{data.isAdmin ? 'Recent attendance' : 'My recent attendance'}</h2><p>Clock-in and clock-out records are retained for attendance reporting.</p></div>
+                {data.isAdmin && <button type="button" className="btn btn-danger attendance-clear" disabled={clearing || !data.sessions.length} onClick={clearAttendance}><Icon name="trash" size={17} />{clearing ? 'Clearing…' : 'Clear attendance'}</button>}
+              </header>
               <div className="attendance-table-wrap">
                 <table>
                   <thead><tr>{data.isAdmin && <th>Person</th>}<th>Date</th><th>Clock in</th><th>Clock out</th><th>Duration</th><th>State</th></tr></thead>

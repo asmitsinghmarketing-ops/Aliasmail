@@ -76,6 +76,14 @@ test('people clock themselves in and out; only the admin sees team attendance', 
   assert.equal(done.data.status, 'clocked-out');
   assert.ok(done.data.clockOutAt);
   assert.equal((await john('POST', '/attendance/heartbeat', { active: true })).status, 409);
+
+  assert.equal((await john('DELETE', '/attendance')).status, 403);
+  const cleared = await admin('DELETE', '/attendance');
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.data.removed, 1);
+  const afterClear = await admin('GET', '/attendance');
+  assert.equal(afterClear.data.sessions.length, 0);
+  assert.equal(afterClear.data.team.find((person) => person.address === 'john@example.com').status, 'clocked-out');
 });
 
 test('a missing heartbeat changes a clocked-in laptop to offline', () => {
