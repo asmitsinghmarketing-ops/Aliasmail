@@ -2,10 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import {
-  canShareScreen, chooseDevice, clearNotice, hangUp, inviteToCall,
+  admitGuest, canShareScreen, chooseDevice, clearNotice, hangUp, inviteToCall, meetingCode, meetingLink, retryMicrophone,
   setRecording, toggleCamera, toggleHand, toggleMute, toggleScreen,
 } from '../calls.js';
 import { createCallRecorder, downloadRecording, recordingSupported } from '../callRecording.js';
+import { createRecordingUpload } from '../recordingUpload.js';
 import { onlineNow } from '../live.js';
 import { ask } from './Dialog.jsx';
 import Avatar from './Avatar.jsx';
@@ -110,7 +111,72 @@ function ControlButton({ icon, label, on, danger, recording, disabled, onClick, 
 
 /* ---------------------------------- side panels ---------------------------------- */
 
+/** The meeting link, made on first use, with a Copy button. */
+function ShareLink({ state, intro }) {
+  const [code, setCode] = useState(state.call.code);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { if (state.call.code) setCode(state.call.code); }, [state.call.code]);
+  const link = code ? meetingLink(code) : '';
+  async function make() {
+    setBusy(true);
+    setError('');
+    try {
+      setCode(await meetingCode());
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError('Couldn’t copy. Select the link and copy it yourself.');
+    }
+  }
+  return (
+    <div className="call-share">
+      {intro && <p className="call-panel-note">{intro}</p>}
+      {code ? (
+        <div className="call-share-link">
+          <input readOnly value={link} aria-label="Meeting link" onFocus={(event) => event.target.select()} />
+          <button type="button" className="btn btn-primary" onClick={copy}><Icon name={copied ? 'check' : 'copy'} size={17} />{copied ? 'Copied' : 'Copy'}</button>
+        </div>
+      ) : (
+        <button type="button" className="btn btn-outline call-share-make" disabled={busy} onClick={make}><Icon name="link" size={17} />{busy ? 'Making a link…' : 'Get a meeting link'}</button>
+      )}
+      {error && <p className="call-panel-error">{error}</p>}
+    </div>
+  );
+}
+
 function PeoplePanel({ state }) {
+  if (state.guest) {
+    return (
+      <>
+        <h3>In this call ({state.call.peers.length})</h3>
+        <ul className="call-people">
+          {state.call.peers.map((peer) => (
+            <li key={peer.id}>
+              <Avatar person={peer} size="sm" />
+              <span>{peer.name}{peer.id === state.me ? ' (you)' : ''}</span>
+              {peer.hand && <Icon name="hand" size={17} />}
+              <Icon name={peer.muted ? 'micOff' : 'mic'} size={17} />
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  }
+  return <TeamPeoplePanel state={state} />;
+}
+
+function TeamPeoplePanel({ state }) {
   const [team, setTeam] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => { api('/mail/team').then(setTeam).catch((err) => setError(err.message)); }, []);
@@ -126,13 +192,15 @@ function PeoplePanel({ state }) {
         {state.call.peers.map((peer) => (
           <li key={peer.id}>
             <Avatar person={peer} size="sm" />
-            <span>{peer.name}{peer.id === state.me ? ' (you)' : ''}</span>
+            <span>{peer.name}{peer.id === state.me ? ' (you)' : ''}{peer.guest ? <small>Guest</small> : null}</span>
             {peer.hand && <Icon name="hand" size={17} />}
             <Icon name={peer.muted ? 'micOff' : 'mic'} size={17} />
           </li>
         ))}
       </ul>
-      <h3>Add someone</h3>
+      <h3>Invite with a link</h3>
+      <ShareLink state={state} intro="Anyone with the link can ask to join. Teammates come straight in; you let others in." />
+      <h3>Add someone from your team</h3>
       {error && <p className="call-panel-error">{error}</p>}
       {!team && !error && <p className="call-panel-note">Getting your team…</p>}
       {team && !others.length && <p className="call-panel-note">Everyone on your team is here.</p>}
@@ -151,8 +219,82 @@ function PeoplePanel({ state }) {
   );
 }
 
+const AudioContextClass = () => window.AudioContext || window.webkitAudioContext;
+
+/**
+ * How loud the microphone is, 0–1. Measured on a copy of the microphone that stays on, so the
+ * meter works while muted too (muting only silences what the others receive).
+ */
+function useMicLevel(stream) {
+  const [level, setLevel] = useState(0);
+  useEffect(() => {
+    const Context = AudioContextClass();
+    const track = stream?.getAudioTracks()[0]?.clone();
+    if (!Context || !track) {
+      setLevel(0);
+      return undefined;
+    }
+    track.enabled = true;
+    const context = new Context();
+    context.resume().catch(() => {});
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    context.createMediaStreamSource(new MediaStream([track])).connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    const timer = setInterval(() => {
+      analyser.getByteTimeDomainData(samples);
+      let peak = 0;
+      for (const value of samples) peak = Math.max(peak, Math.abs(value - 128));
+      setLevel(Math.min(1, peak / 48));
+    }, 80);
+    return () => {
+      clearInterval(timer);
+      track.stop();
+      context.close().catch(() => {});
+    };
+  }, [stream]);
+  return level;
+}
+
+/** A short three-note chime through the chosen speaker, so people can check they hear the call. */
+async function playTestSound(sinkId) {
+  const Context = AudioContextClass();
+  if (!Context) throw new Error('This browser can’t play a test sound.');
+  const context = new Context();
+  const output = context.createMediaStreamDestination();
+  const element = new Audio();
+  element.srcObject = output.stream;
+  try {
+    if (sinkId && element.setSinkId) await element.setSinkId(sinkId);
+    await context.resume();
+    await element.play();
+  } catch (err) {
+    context.close().catch(() => {});
+    throw new Error(err?.name === 'NotFoundError' ? 'That speaker isn’t connected any more. Choose another one.' : 'Couldn’t play through that speaker.');
+  }
+  const start = context.currentTime + 0.05;
+  [[660, 0], [880, 0.2], [1320, 0.4]].forEach(([frequency, at]) => {
+    const tone = context.createOscillator();
+    const envelope = context.createGain();
+    tone.frequency.value = frequency;
+    envelope.gain.setValueAtTime(0.0001, start + at);
+    envelope.gain.exponentialRampToValueAtTime(0.3, start + at + 0.02);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, start + at + 0.38);
+    tone.connect(envelope).connect(output);
+    tone.start(start + at);
+    tone.stop(start + at + 0.4);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  element.pause();
+  element.srcObject = null;
+  context.close().catch(() => {});
+}
+
 function DevicesPanel({ state }) {
   const [devices, setDevices] = useState([]);
+  const [testing, setTesting] = useState(false);
+  const [testError, setTestError] = useState('');
+  const level = useMicLevel(state.localAudio);
   useEffect(() => {
     const load = () => navigator.mediaDevices?.enumerateDevices().then(setDevices).catch(() => {});
     load();
@@ -161,22 +303,56 @@ function DevicesPanel({ state }) {
   }, []);
   const speakerChoice = 'setSinkId' in HTMLMediaElement.prototype;
   const picker = (kind, label, value) => {
-    const options = devices.filter((device) => device.kind === kind);
+    const options = devices.filter((device) => device.kind === kind && device.deviceId);
+    const known = options.some((device) => device.deviceId === value);
     return (
       <label className="call-device">
         <span>{label}</span>
-        <select value={value || ''} disabled={!options.length} onChange={(event) => chooseDevice(kind, event.target.value)}>
-          {!value && <option value="">Default</option>}
-          {options.map((device, i) => <option key={device.deviceId || i} value={device.deviceId}>{device.label || `${label} ${i + 1}`}</option>)}
+        <select value={known ? value : ''} disabled={!options.length} onChange={(event) => chooseDevice(kind, event.target.value)}>
+          {!known && <option value="">Default</option>}
+          {options.map((device, i) => <option key={device.deviceId} value={device.deviceId}>{device.label || `${label} ${i + 1}`}</option>)}
         </select>
       </label>
     );
   };
+  async function testSpeaker() {
+    setTesting(true);
+    setTestError('');
+    try {
+      await playTestSound(state.speakerDevice);
+    } catch (err) {
+      setTestError(err.message);
+    } finally {
+      setTesting(false);
+    }
+  }
+  const micNote = !state.micAvailable
+    ? null
+    : state.muted ? 'You’re muted, so others can’t hear you. The bar still shows your microphone working.' : 'Say something: the bar should move.';
   return (
     <>
       <h3>Devices</h3>
       {picker('audioinput', 'Microphone', state.micDevice)}
-      {speakerChoice && picker('audiooutput', 'Speaker', state.speakerDevice)}
+      {state.micAvailable ? (
+        <>
+          <div className="call-meter" role="meter" aria-label="Microphone level" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(level * 100)}>
+            {Array.from({ length: 12 }, (_, i) => <span key={i} className={level * 12 > i ? 'lit' : ''} />)}
+          </div>
+          <p className="call-panel-note">{micNote}</p>
+        </>
+      ) : (
+        <p className="call-panel-note">
+          No microphone is on.{' '}
+          <button type="button" className="call-link" onClick={retryMicrophone}>Try again</button>
+        </p>
+      )}
+      {speakerChoice
+        ? picker('audiooutput', 'Speaker', state.speakerDevice)
+        : <p className="call-panel-note">This browser plays calls through your computer’s current speaker. Change it in your sound settings.</p>}
+      <button type="button" className="btn btn-outline call-test-sound" disabled={testing} onClick={testSpeaker}>
+        <Icon name="volume" size={18} /> {testing ? 'Playing…' : 'Play test sound'}
+      </button>
+      {testError && <p className="call-panel-error">{testError}</p>}
       {picker('videoinput', 'Camera', state.cameraDevice)}
     </>
   );
@@ -184,56 +360,154 @@ function DevicesPanel({ state }) {
 
 /* ---------------------------------- the room ---------------------------------- */
 
+/**
+ * Stop a recording and keep it: sent to Nextspace, or, if that failed, downloaded here so nothing
+ * is lost. Returns { saved } or { error }.
+ */
+async function saveRecording({ rec, upload }) {
+  const blob = await rec.stop();
+  try {
+    return { saved: await upload.finish(Date.now() - rec.startedAt.getTime()) };
+  } catch (err) {
+    downloadRecording(blob, rec.startedAt);
+    return { error: `${err.message} It was downloaded to this computer instead.` };
+  }
+}
+
+/** Two quiet notes, like a knock on the door, when someone asks to join. */
+function knock() {
+  const Context = AudioContextClass();
+  if (!Context) return;
+  try {
+    const context = new Context();
+    const start = context.currentTime + 0.02;
+    [[740, 0], [988, 0.16]].forEach(([frequency, at]) => {
+      const tone = context.createOscillator();
+      const envelope = context.createGain();
+      tone.frequency.value = frequency;
+      envelope.gain.setValueAtTime(0.0001, start + at);
+      envelope.gain.exponentialRampToValueAtTime(0.12, start + at + 0.02);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, start + at + 0.3);
+      tone.connect(envelope).connect(context.destination);
+      tone.start(start + at);
+      tone.stop(start + at + 0.32);
+    });
+    setTimeout(() => context.close().catch(() => {}), 800);
+  } catch {
+    // no sound; the card still shows
+  }
+}
+
+/** People waiting outside, each with Admit and Deny. */
+function Lobby({ lobby }) {
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState('');
+  if (!lobby.length) return null;
+  const answer = async (guest, allow) => {
+    setBusy(guest.id);
+    setError('');
+    try {
+      await admitGuest(guest.id, allow);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="call-lobby" role="region" aria-label="Waiting to join" aria-live="polite">
+      {lobby.map((guest) => (
+        <div className="call-lobby-item" key={guest.id}>
+          <Avatar person={{ name: guest.name, address: `guest:${guest.id}` }} size="sm" />
+          <span className="call-lobby-who"><strong>{guest.name}</strong><small>wants to join this call</small></span>
+          <button type="button" className="btn btn-outline" disabled={busy === guest.id} onClick={() => answer(guest, false)}>Deny</button>
+          <button type="button" className="btn btn-primary" disabled={busy === guest.id} onClick={() => answer(guest, true)}>Admit</button>
+        </div>
+      ))}
+      {error && <p className="call-panel-error">{error}</p>}
+    </div>
+  );
+}
+
 export default function CallRoom({ state }) {
   const [minimized, setMinimized] = useState(false);
   const [panel, setPanel] = useState(null); // 'people' | 'devices'
   const [recordError, setRecordError] = useState('');
-  const [recordSaved, setRecordSaved] = useState(false);
+  const [recordStatus, setRecordStatus] = useState(null); // null | 'saving' | 'saved'
   const [recordingStartedAt, setRecordingStartedAt] = useState(null);
-  const recorder = useRef(null);
+  const recorder = useRef(null); // { rec, upload } while recording
   const duration = useDuration(state.startedAt);
   const { call, me, peers } = state;
+  const lobby = state.guest ? [] : call.lobby || [];
 
   // Keep a running recording in step with people joining/leaving and camera/screen changes.
-  useEffect(() => { recorder.current?.sync(state); }, [state]);
+  useEffect(() => { recorder.current?.rec.sync(state); }, [state]);
 
+  // Leaving while recording: what was recorded is still saved.
   useEffect(() => () => {
     const active = recorder.current;
     recorder.current = null;
     if (active) {
       setRecording(false);
-      active.stop().then((blob) => downloadRecording(blob, active.startedAt));
+      void saveRecording(active);
     }
   }, []);
 
+  // "Recording saved" goes away by itself.
+  useEffect(() => {
+    if (recordStatus !== 'saved') return undefined;
+    const timer = setTimeout(() => setRecordStatus(null), 7000);
+    return () => clearTimeout(timer);
+  }, [recordStatus]);
+
+  // A soft knock when someone new is waiting to be let in.
+  const lobbyKey = lobby.map((guest) => guest.id).join();
+  const lobbySeen = useRef(new Set());
+  useEffect(() => {
+    const fresh = lobby.filter((guest) => !lobbySeen.current.has(guest.id));
+    lobby.forEach((guest) => lobbySeen.current.add(guest.id));
+    if (fresh.length) knock();
+  }, [lobbyKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function stopRecording(reason = '') {
+    const active = recorder.current;
+    if (!active) return;
+    recorder.current = null;
+    setRecordingStartedAt(null);
+    setRecording(false);
+    setRecordStatus('saving');
+    const result = await saveRecording(active);
+    setRecordStatus(result.saved ? 'saved' : null);
+    const problem = result.error || (result.saved ? '' : 'Nothing was recorded.');
+    setRecordError([reason, problem].filter(Boolean).join(' '));
+  }
+
   async function toggleRecording() {
     setRecordError('');
-    setRecordSaved(false);
-    if (recorder.current) {
-      const active = recorder.current;
-      recorder.current = null;
-      setRecordingStartedAt(null);
-      setRecording(false);
-      const blob = await active.stop();
-      downloadRecording(blob, active.startedAt);
-      setRecordSaved(true);
-      return;
-    }
+    setRecordStatus(null);
+    if (recorder.current) return stopRecording();
     const allowed = await ask({
       title: 'Record this call?',
-      message: 'Everyone in the call will see that recording is on. The recording stays on this computer and downloads when you stop or leave. Make sure everyone agrees before recording.',
+      message: 'Everyone in the call will see that recording is on. The recording is saved in Nextspace, where everyone from your team who was in the call can watch it, and copied to your Google Drive if you have connected it. Make sure everyone agrees before recording.',
       confirmLabel: 'Start recording',
     });
     if (!allowed) return;
     try {
-      recorder.current = await createCallRecorder(state);
-      setRecordingStartedAt(recorder.current.startedAt.getTime());
+      const upload = createRecordingUpload({
+        callId: call.id,
+        peerId: me,
+        onFail: (err) => setRecordError(`${err.message} Keep recording: it will download to this computer when you stop.`),
+      });
+      const rec = await createCallRecorder(state, { onError: (message) => stopRecording(message), onChunk: (chunk) => upload.add(chunk) });
+      recorder.current = { rec, upload };
+      setRecordingStartedAt(rec.startedAt.getTime());
       setRecording(true);
     } catch (err) {
       setRecordingStartedAt(null);
       setRecording(false);
       setRecordError(err.message);
     }
+    return undefined;
   }
 
   const voices = useMemo(() => [
@@ -252,8 +526,12 @@ export default function CallRoom({ state }) {
   const tiles = [
     { key: me, name: `${myName} (you)`, address: call.peers.find((peer) => peer.id === me)?.address, stream: state.localCamera, videoOn: state.cameraOn, muted: state.muted || !state.micAvailable, hand: state.hand, speaking: speaker === me, mirrored: true },
     ...peers.map((peer) => ({
-      key: peer.id, name: peer.name, address: peer.address, stream: peer.cameraStream, videoOn: peer.camera, muted: peer.muted, hand: peer.hand, speaking: speaker === peer.id,
-      status: ['connected', 'new'].includes(peer.connection) ? null : peer.connection === 'connecting' ? 'Connecting…' : 'Reconnecting…',
+      // Their picture only once connected; until then a black box looks like a broken camera.
+      key: peer.id, name: peer.name, address: peer.address, stream: peer.cameraStream, videoOn: peer.camera && peer.connection === 'connected', muted: peer.muted, hand: peer.hand, speaking: speaker === peer.id,
+      status: peer.connection === 'connected' ? null
+        : peer.stuck ? 'Can’t connect'
+          : peer.connection === 'new' ? 'Connecting…'
+            : peer.connection === 'connecting' ? 'Connecting…' : 'Reconnecting…',
     })),
     ...ringing.map((invite) => ({ key: invite.address, name: invite.name, address: invite.address, status: 'Ringing…' })),
   ];
@@ -263,9 +541,15 @@ export default function CallRoom({ state }) {
   const recordingPeers = call.peers.filter((peer) => peer.recording);
   const recordingActive = state.recording || recordingPeers.length > 0;
   const recordingDuration = useDuration(recordingStartedAt);
+  const otherRecorders = recordingPeers.filter((peer) => peer.id !== me).map((peer) => peer.name);
   const recordingText = state.recording
     ? 'You are recording this call'
-    : recordingPeers.length ? `${recordingPeers.map((peer) => peer.id === me ? 'You' : peer.name).join(', ')} ${recordingPeers.length === 1 ? 'is' : 'are'} recording this call` : '';
+    : otherRecorders.length ? `${otherRecorders.join(', ')} ${otherRecorders.length === 1 ? 'is' : 'are'} recording this call` : 'This call is being recorded';
+  const micLabel = !state.micAvailable ? 'Turn on microphone' : state.muted ? 'Unmute' : 'Mute';
+  // Two people: the other person fills the screen and you sit in a corner, like a phone call.
+  const solo = !presenter && peers.length === 1 && !ringing.length;
+  // A meeting nobody has joined yet: show its link where it can't be missed.
+  const alone = !state.guest && Boolean(call.code) && !peers.length && !ringing.length;
 
   if (minimized) {
     const shown = presenter
@@ -279,10 +563,15 @@ export default function CallRoom({ state }) {
           <span className="call-mini-expand"><Icon name="expand" size={18} /></span>
         </button>
         <div className="call-mini-bar">
-          {recordingActive && <span className="call-mini-recording" title={recordingText}><span /> REC {state.recording && recordingDuration ? recordingDuration : ''}</span>}
           <span className="call-mini-time">{duration || 'Calling…'}</span>
-          <button type="button" className={`call-mini-btn ${state.muted ? 'on' : ''}`} aria-label={state.muted ? 'Unmute' : 'Mute'} title={state.muted ? 'Unmute' : 'Mute'} disabled={!state.micAvailable} onClick={toggleMute}>
-            <Icon name={state.muted ? 'micOff' : 'mic'} size={20} />
+          {recordingActive && <span className="call-mini-recording" role="status" title={recordingText}><span /> REC{state.recording && recordingDuration ? ` ${recordingDuration}` : ''}</span>}
+          {lobby.length > 0 && (
+            <button type="button" className="call-mini-lobby" onClick={() => setMinimized(false)}>
+              {lobby.length} waiting
+            </button>
+          )}
+          <button type="button" className={`call-mini-btn ${state.muted || !state.micAvailable ? 'on' : ''}`} aria-label={micLabel} title={micLabel} onClick={toggleMute}>
+            <Icon name={state.muted || !state.micAvailable ? 'micOff' : 'mic'} size={20} />
           </button>
           <button type="button" className="call-mini-btn danger" aria-label="Leave call" title="Leave call" onClick={hangUp}><Icon name="callEnd" size={20} /></button>
         </div>
@@ -299,7 +588,15 @@ export default function CallRoom({ state }) {
           <strong>{title}</strong>
           <span>{duration || (call.video ? 'Video call' : 'Voice call')}</span>
         </div>
-        <button type="button" className="call-head-btn" aria-label="Keep working (make the call small)" title="Keep working (make the call small)" onClick={() => setMinimized(true)}><Icon name="minimize" /></button>
+        {recordingActive && (
+          <div className={`call-rec ${state.recording ? 'mine' : ''}`} role="status" aria-label={recordingText} title={recordingText}>
+            <span className="call-rec-dot" aria-hidden="true" />
+            <span className="call-rec-label">{state.recording ? 'REC' : otherRecorders.length ? `${otherRecorders[0]} is recording` : 'Recording'}</span>
+            {state.recording && <time>{recordingDuration || '00:00'}</time>}
+            {state.recording && <button type="button" onClick={toggleRecording}>Stop</button>}
+          </div>
+        )}
+        {!state.guest && <button type="button" className="call-head-btn" aria-label="Keep working (make the call small)" title="Keep working (make the call small)" onClick={() => setMinimized(true)}><Icon name="minimize" /></button>}
       </header>
 
       {state.notice && (
@@ -309,19 +606,31 @@ export default function CallRoom({ state }) {
         </div>
       )}
 
-      {recordingActive && (
-        <div className="call-recording-banner" role="status">
-          <span className="call-recording-dot" />
-          <span className="call-recording-copy"><strong>Recording</strong><small>{recordingText}</small></span>
-          {state.recording && <time>{recordingDuration || '00:00'}</time>}
-          {state.recording && <button type="button" onClick={toggleRecording}>Stop &amp; save</button>}
-        </div>
-      )}
       {recordError && <div className="call-notice" role="alert"><span>{recordError}</span><button type="button" aria-label="Dismiss" onClick={() => setRecordError('')}><Icon name="close" size={18} /></button></div>}
-      {recordSaved && <div className="call-recording-saved" role="status"><Icon name="checkCircle" size={18} /><span><strong>Recording saved</strong><small>Find it in your Downloads folder.</small></span><button type="button" aria-label="Dismiss" onClick={() => setRecordSaved(false)}><Icon name="close" size={16} /></button></div>}
 
       <div className="call-room-body">
-        {presenter ? (
+        {recordStatus && (
+          <div className="call-recording-saved" role="status">
+            <Icon name={recordStatus === 'saved' ? 'checkCircle' : 'refresh'} size={18} />
+            {recordStatus === 'saved'
+              ? <span><strong>Recording saved</strong><small>Everyone from your team in this call can watch it in Recordings.</small></span>
+              : <span><strong>Saving the recording…</strong><small>Keep this window open for a moment.</small></span>}
+            {recordStatus === 'saved' && <button type="button" aria-label="Dismiss" onClick={() => setRecordStatus(null)}><Icon name="close" size={16} /></button>}
+          </div>
+        )}
+        <Lobby lobby={lobby} />
+        {alone && (
+          <div className="call-share-card">
+            <strong>Your meeting is ready</strong>
+            <ShareLink state={state} intro="Share this link with anyone you want in the meeting. You'll be asked before guests come in." />
+          </div>
+        )}
+        {solo ? (
+          <div className="call-grid count-1 call-solo">
+            {tiles.slice(1).map(({ key, ...tile }) => <Tile key={key} {...tile} />)}
+            <div className="call-pip">{tiles.slice(0, 1).map(({ key, ...tile }) => <Tile key={key} {...tile} />)}</div>
+          </div>
+        ) : presenter ? (
           <div className="call-stage">
             <div className="call-screen">
               <Video stream={presenter.screenStream} />
@@ -348,12 +657,12 @@ export default function CallRoom({ state }) {
       </div>
 
       <footer className="call-controls">
-        <ControlButton icon={state.muted || !state.micAvailable ? 'micOff' : 'mic'} label={state.muted ? 'Unmute' : 'Mute'} on={state.muted || !state.micAvailable} disabled={!state.micAvailable} onClick={toggleMute} />
+        <ControlButton icon={state.muted || !state.micAvailable ? 'micOff' : 'mic'} label={state.micAvailable ? micLabel : 'Mic off'} on={state.muted || !state.micAvailable} onClick={toggleMute} />
         <ControlButton icon={state.cameraOn ? 'videocam' : 'videocamOff'} label={state.cameraOn ? 'Camera off' : 'Camera on'} on={!state.cameraOn} onClick={toggleCamera} />
         {canShareScreen() && <ControlButton icon="screenShare" label={state.sharing ? 'Stop sharing' : 'Share screen'} on={state.sharing} onClick={toggleScreen} />}
-        {recordingSupported() && <ControlButton icon="record" label={state.recording ? 'Stop & save' : 'Record'} on={state.recording} recording={state.recording} onClick={toggleRecording} />}
+        {recordingSupported() && !state.guest && <ControlButton icon="record" label={state.recording ? 'Stop recording' : 'Record'} on={state.recording} recording={state.recording} onClick={toggleRecording} />}
         <ControlButton icon="hand" label={state.hand ? 'Lower hand' : 'Raise hand'} on={state.hand} onClick={toggleHand} />
-        <ControlButton icon="personAdd" label="People" on={panel === 'people'} badge={peers.filter((peer) => peer.hand).length} onClick={() => setPanel(panel === 'people' ? null : 'people')} />
+        <ControlButton icon="personAdd" label={state.guest ? 'People' : 'People & link'} on={panel === 'people'} badge={peers.filter((peer) => peer.hand).length} onClick={() => setPanel(panel === 'people' ? null : 'people')} />
         <ControlButton icon="settings" label="Devices" on={panel === 'devices'} onClick={() => setPanel(panel === 'devices' ? null : 'devices')} />
         <ControlButton icon="callEnd" label="Leave" danger onClick={hangUp} />
       </footer>

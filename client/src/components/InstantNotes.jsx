@@ -3,7 +3,7 @@
 // sent by email.
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
-import { startCall } from '../calls.js';
+import { startCall, startMeeting } from '../calls.js';
 import { formatDate, formatSize } from '../format.js';
 import { notify, onlineNow, request, subscribe } from '../live.js';
 import Avatar from './Avatar.jsx';
@@ -298,10 +298,15 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
             </div>
           </>
         ) : (
-          <div className="notes-who">
-            <strong>Instant notes</strong>
-            <span className="muted small">Private notes to your team, delivered instantly. Never sent by email.</span>
-          </div>
+          <>
+            <div className="notes-who">
+              <strong>Instant notes</strong>
+              <span className="muted small">Private notes to your team, delivered instantly. Never sent by email.</span>
+            </div>
+            <button type="button" className="icon-btn notes-call" aria-label="New meeting with a link" title="New meeting with a link to share" onClick={() => startMeeting({ video: true }).catch((err) => setError(err.message))}>
+              <Icon name="videocam" />
+            </button>
+          </>
         )}
         <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
           <Icon name="close" />

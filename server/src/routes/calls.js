@@ -1,15 +1,21 @@
 // Team calls inside Nextspace. Audio, video and shared screens travel directly between the people
 // in a call (WebRTC); this route only rings people, keeps track of who is in the call and passes
 // their connection details to each other. It never receives any audio or video.
+//
+// A call can also get a meeting link (/join/<code>). Teammates who open it join straight in;
+// anyone else types their name and waits in a lobby until someone in the call lets them in
+// (guestRouter below, which needs no account: a guest proves who they are with the private
+// token they got when they knocked).
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import config from '../config.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth, safeEqual } from '../auth.js';
 import { HttpError } from '../errors.js';
 import { personOf, teammates } from '../team.js';
 import { callEvents } from '../mail-events.js';
 import { createNotification } from '../notifications.js';
 import { notify } from '../push.js';
+import { clientIp, limiter, randomToken, sha256 } from '../security.js';
 
 const router = Router();
 router.use(requireAuth());
@@ -20,25 +26,40 @@ const RING_MS = 60_000;
 const PEER_TIMEOUT_MS = 45_000; // Windows check in every 15 seconds; a closed laptop drops out after this.
 const KEEP_ENDED_MS = 5 * 60_000;
 const MAX_SIGNAL_BYTES = 64 * 1024;
+const MAX_LOBBY = 20; // people waiting to be let in at once
+const LOBBY_MS = 10 * 60_000; // nobody answered: the guest is told and has to knock again
+const LOBBY_GONE_MS = 45_000; // a waiting guest who closed the page
+const GUEST = 'guest:';
+const CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
 
 const calls = new Map();
+const codes = new Map(); // meeting code -> call id
 
+const isGuest = (address) => String(address).startsWith(GUEST);
 const person = (address) => teammates().find((member) => member.address === address);
 const nameOf = (address) => person(address)?.name || address;
+const nameIn = (call, address) => (isGuest(address) ? call.guests.get(address.slice(GUEST.length))?.name || 'Guest' : nameOf(address));
 
-const publicCall = (call) => ({
+/**
+ * What windows are told about a call. Guests see the people in it by name only: not the team's
+ * addresses, who else was rung, or who else is waiting outside.
+ */
+const publicCall = (call, { forGuest = false } = {}) => ({
   id: call.id,
-  from: call.from,
+  from: forGuest ? '' : call.from,
   fromName: call.fromName,
   video: call.video,
   status: call.status,
   reason: call.reason || null,
   createdAt: call.createdAt,
   expiresAt: call.expiresAt,
-  invited: [...call.invited].map(([address, invite]) => ({ address, name: nameOf(address), status: invite.status })),
+  code: call.code || null,
+  invited: forGuest ? [] : [...call.invited].map(([address, invite]) => ({ address, name: nameOf(address), status: invite.status })),
   peers: [...call.peers].map(([id, peer]) => ({
-    id, address: peer.address, name: nameOf(peer.address), muted: peer.muted, camera: peer.camera, sharing: peer.sharing, hand: peer.hand, recording: peer.recording,
+    id, address: forGuest && !isGuest(peer.address) ? '' : peer.address, name: nameIn(call, peer.address), guest: isGuest(peer.address),
+    muted: peer.muted, camera: peer.camera, sharing: peer.sharing, hand: peer.hand, recording: peer.recording,
   })),
+  lobby: forGuest ? [] : [...call.guests.values()].filter((guest) => guest.status === 'waiting').map((guest) => ({ id: guest.id, name: guest.name, since: guest.since })),
 });
 
 /** How browsers reach each other: STUN finds a public address; TURN relays where that isn't enough. */
@@ -59,7 +80,10 @@ export function iceServersFor(who, settings = config.calls, now = Date.now()) {
 /** Tell everyone in the call how it stands now. Windows work out what changed from this. */
 function tell(call) {
   const view = publicCall(call);
-  for (const address of new Set([...call.peers.values()].map((peer) => peer.address))) callEvents.emit('room', address, view);
+  const guestView = publicCall(call, { forGuest: true });
+  for (const address of new Set([...call.peers.values()].map((peer) => peer.address))) {
+    callEvents.emit('room', address, isGuest(address) ? guestView : view);
+  }
 }
 
 function endCall(call, reason) {
@@ -75,12 +99,22 @@ function endCall(call, reason) {
     }
   }
   tell(call);
+  for (const guest of call.guests.values()) callEvents.emit('lobby', GUEST + guest.id, { status: 'ended' });
+  call.guests.clear();
   call.peers.clear();
+  if (call.code) codes.delete(call.code);
 }
+
+const members = (call) => [...call.peers.values()].filter((peer) => !isGuest(peer.address));
 
 /** After someone joins, leaves or doesn't answer: does the call carry on? */
 function settle(call) {
   if (call.status === 'ended') return;
+  // A meeting with a link stays open for whoever comes, as long as a teammate is there to let them in.
+  if (call.code) {
+    if (!members(call).length) return endCall(call, call.connected ? 'ended' : 'cancelled');
+    return tell(call);
+  }
   const ringing = [...call.invited.values()].some((invite) => invite.status === 'ringing');
   const invites = [...call.invited.values()];
   if (!call.peers.size) return endCall(call, call.connected ? 'ended' : 'cancelled');
@@ -117,11 +151,39 @@ function addPeer(call, address) {
   return id;
 }
 
-function people(value, me) {
-  const list = (Array.isArray(value) ? value : [value]).map((address) => String(address || '').trim().toLowerCase());
+function people(value, me, { allowNone = false } = {}) {
+  const list = (Array.isArray(value) ? value : value === undefined || value === '' ? [] : [value]).map((address) => String(address || '').trim().toLowerCase());
   const unique = [...new Set(list)];
+  if (!unique.length && allowNone) return [];
   if (!unique.length || unique.some((address) => !address || address === me || !person(address))) throw new HttpError(400, 'Choose another active teammate');
   return unique;
+}
+
+/** A meeting code like "kdw-qmzp-tra": easy to read out, and too many to guess. */
+function newCode() {
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  for (;;) {
+    const bytes = crypto.randomBytes(10);
+    const raw = [...bytes].map((b) => letters[b % 26]).join('');
+    const code = `${raw.slice(0, 3)}-${raw.slice(3, 7)}-${raw.slice(7)}`;
+    if (!codes.has(code)) return code;
+  }
+}
+
+function giveLink(call) {
+  if (!call.code) {
+    call.code = newCode();
+    codes.set(call.code, call.id);
+  }
+  return call.code;
+}
+
+/** An open meeting by its code. Ended or unknown codes look the same. */
+function byCode(code) {
+  const value = String(code || '').toLowerCase();
+  const call = CODE.test(value) ? calls.get(codes.get(value)) : null;
+  if (!call || call.status === 'ended') throw new HttpError(404, 'This meeting has ended or the link is wrong');
+  return call;
 }
 
 /** The call, if this person has anything to do with it. Others are told it doesn't exist. */
@@ -142,7 +204,25 @@ function peerFor(req) {
   return { call, me, peerId, peer };
 }
 
-// Windows that vanished without saying goodbye, and calls that ended a while ago.
+/** For recordings: the call, if `address` is in it with this window. */
+export function callWithPeer(callId, address, peerId) {
+  const call = calls.get(String(callId || ''));
+  const peer = call?.peers.get(String(peerId || ''));
+  if (!call || call.status === 'ended' || !peer || peer.address !== address) throw new HttpError(404, 'You are not in this call');
+  return call;
+}
+
+/** Teammates in a call right now (guests have no account to watch a recording with). */
+export const teamIn = (call) => [...new Set(members(call).map((peer) => peer.address))];
+/** Everyone in a call right now, by name (guests included). */
+export const namesIn = (call) => [...new Set([...call.peers.values()].map((peer) => nameIn(call, peer.address)))];
+/** A call still going on, or null. */
+export const liveCall = (id) => {
+  const call = calls.get(String(id || ''));
+  return call && call.status !== 'ended' ? call : null;
+};
+
+// Windows that vanished without saying goodbye, guests nobody let in, and calls that ended a while ago.
 setInterval(() => {
   const now = Date.now();
   for (const [id, call] of calls) {
@@ -157,23 +237,80 @@ setInterval(() => {
         changed = true;
       }
     }
+    for (const [guestId, guest] of call.guests) {
+      const waitedTooLong = guest.status === 'waiting' && (now - guest.since > LOBBY_MS || (!guest.streams && now - guest.lastSeen > LOBBY_GONE_MS));
+      const droppedOut = guest.status === 'admitted' && !call.peers.has(guest.peerId);
+      if (waitedTooLong || droppedOut) {
+        if (waitedTooLong) callEvents.emit('lobby', GUEST + guestId, { status: 'expired' });
+        call.guests.delete(guestId);
+        changed = true;
+      }
+    }
     if (changed) settle(call);
   }
 }, 15_000).unref?.();
 
+/** Muted, camera on, sharing, hand raised, recording. */
+function updateState(call, peer, body, { canRecord = true } = {}) {
+  let changed = false;
+  for (const key of ['muted', 'camera', 'sharing', 'hand', ...(canRecord ? ['recording'] : [])]) {
+    if (typeof body?.[key] === 'boolean' && peer[key] !== body[key]) {
+      peer[key] = body[key];
+      changed = true;
+    }
+  }
+  if (changed) tell(call);
+}
+
+/** Connection details for one other window in the same call, passed on without being read. */
+function relay(call, from, body) {
+  const to = call.peers.get(String(body?.to || ''));
+  if (!to) throw new HttpError(404, 'They have left the call');
+  const data = body?.data;
+  if (!data || typeof data !== 'object' || JSON.stringify(data).length > MAX_SIGNAL_BYTES) throw new HttpError(400, 'Invalid call data');
+  callEvents.emit('signal', to.address, { id: call.id, from, to: String(body.to), data });
+}
+
+function joinAsMember(call, me, res) {
+  if (call.status === 'ended') throw new HttpError(409, 'This call has already ended');
+  if (call.peers.size >= MAX_PEOPLE) throw new HttpError(409, `This call is full (${MAX_PEOPLE} people)`);
+  const invite = call.invited.get(me);
+  if (invite) {
+    clearTimeout(invite.timer);
+    invite.status = 'joined';
+  } else if (call.from !== me) {
+    call.invited.set(me, { status: 'joined', timer: null }); // came in with the meeting link
+  }
+  const peerId = addPeer(call, me);
+  call.status = 'active';
+  call.connected = true;
+  // Stops it ringing in this person's other windows and devices.
+  callEvents.emit('ended', me, { id: call.id, status: 'accepted' });
+  tell(call);
+  res.json({ call: publicCall(call), peerId, iceServers: iceServersFor(me) });
+}
+
+// `meeting: true` starts a meeting with a link, which may ring nobody yet.
 router.post('/', (req, res) => {
   const from = personOf(req.user);
-  const to = people(req.body?.to, from);
+  const meeting = Boolean(req.body?.meeting);
+  const to = people(req.body?.to, from, { allowNone: meeting });
   if (to.length + 1 > MAX_PEOPLE) throw new HttpError(400, `A call can have up to ${MAX_PEOPLE} people`);
   const call = {
-    id: crypto.randomUUID(), from, fromName: nameOf(from), video: Boolean(req.body?.video), status: 'ringing', reason: null,
+    id: crypto.randomUUID(), from, fromName: nameOf(from), video: Boolean(req.body?.video), status: to.length ? 'ringing' : 'active', reason: null,
     createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + RING_MS).toISOString(),
-    invited: new Map(), peers: new Map(), connected: false,
+    invited: new Map(), peers: new Map(), guests: new Map(), connected: false, code: null,
   };
   calls.set(call.id, call);
+  if (meeting) giveLink(call);
   const peerId = addPeer(call, from);
   ring(call, to);
   res.status(201).json({ call: publicCall(call), peerId, iceServers: iceServersFor(from) });
+});
+
+/** A teammate opening a meeting link: straight in, no lobby. */
+router.post('/code/:code/join', (req, res) => {
+  joinAsMember(byCode(req.params.code), personOf(req.user), res);
 });
 
 router.get('/:id', (req, res) => {
@@ -183,20 +320,7 @@ router.get('/:id', (req, res) => {
 
 router.post('/:id/join', (req, res) => {
   const { call, me } = callFor(req);
-  if (call.status === 'ended') throw new HttpError(409, 'This call has already ended');
-  if (call.peers.size >= MAX_PEOPLE) throw new HttpError(409, `This call is full (${MAX_PEOPLE} people)`);
-  const invite = call.invited.get(me);
-  if (invite) {
-    clearTimeout(invite.timer);
-    invite.status = 'joined';
-  }
-  const peerId = addPeer(call, me);
-  call.status = 'active';
-  call.connected = true;
-  // Stops it ringing in this person's other windows and devices.
-  callEvents.emit('ended', me, { id: call.id, status: 'accepted' });
-  tell(call);
-  res.json({ call: publicCall(call), peerId, iceServers: iceServersFor(me) });
+  joinAsMember(call, me, res);
 });
 
 router.post('/:id/respond', (req, res) => {
@@ -229,29 +353,160 @@ router.post('/:id/invite', (req, res) => {
   res.json(publicCall(call));
 });
 
-/** Muted, camera on, sharing, hand raised. Also the regular "still here" from each window. */
-router.post('/:id/state', (req, res) => {
-  const { call, peer } = peerFor(req);
-  let changed = false;
-  for (const key of ['muted', 'camera', 'sharing', 'hand', 'recording']) {
-    if (typeof req.body?.[key] === 'boolean' && peer[key] !== req.body[key]) {
-      peer[key] = req.body[key];
-      changed = true;
-    }
+/** A link anyone can open. Teammates join at once; others wait to be let in. */
+router.post('/:id/link', (req, res) => {
+  const { call } = peerFor(req);
+  if (call.status === 'ended') throw new HttpError(409, 'This call has already ended');
+  const fresh = !call.code;
+  giveLink(call);
+  if (fresh) tell(call);
+  res.json({ code: call.code, call: publicCall(call) });
+});
+
+/** Let someone waiting outside in, or turn them away. Anyone on the team who is in the call can. */
+router.post('/:id/admit', (req, res) => {
+  const { call } = peerFor(req);
+  const guest = call.guests.get(String(req.body?.guestId || ''));
+  if (!guest || guest.status !== 'waiting') throw new HttpError(409, 'They are no longer waiting');
+  const address = GUEST + guest.id;
+  if (req.body?.allow) {
+    if (call.peers.size >= MAX_PEOPLE) throw new HttpError(409, `This call is full (${MAX_PEOPLE} people)`);
+    guest.status = 'admitted';
+    guest.peerId = addPeer(call, address);
+    call.status = 'active';
+    call.connected = true;
+    callEvents.emit('lobby', address, admitted(call, guest));
+  } else {
+    call.guests.delete(guest.id);
+    callEvents.emit('lobby', address, { status: 'denied' });
   }
-  if (changed) tell(call);
+  tell(call);
   res.json(publicCall(call));
 });
 
-/** Connection details for one other window in the same call, passed on without being read. */
+/** Muted, camera on, sharing, hand raised. Also the regular "still here" from each window. */
+router.post('/:id/state', (req, res) => {
+  const { call, peer } = peerFor(req);
+  updateState(call, peer, req.body);
+  res.json(publicCall(call));
+});
+
 router.post('/:id/signal', (req, res) => {
   const { call, peerId } = peerFor(req);
-  const to = call.peers.get(String(req.body?.to || ''));
-  if (!to) throw new HttpError(404, 'They have left the call');
-  const data = req.body?.data;
-  if (!data || typeof data !== 'object' || JSON.stringify(data).length > MAX_SIGNAL_BYTES) throw new HttpError(400, 'Invalid call data');
-  callEvents.emit('signal', to.address, { id: call.id, from: peerId, to: String(req.body.to), data });
+  relay(call, peerId, req.body);
   res.status(204).end();
 });
 
 export default router;
+
+/* ---------------------------------- guests (no account) ---------------------------------- */
+
+export const guestRouter = Router();
+// Knocks from one address; enough for an office behind one IP, not for flooding a lobby.
+const knocks = limiter('meeting-knock', { max: 30, windowMs: 10 * 60_000, lockMs: 10 * 60_000 });
+
+const admitted = (call, guest) => ({
+  status: 'admitted', call: publicCall(call, { forGuest: true }), peerId: guest.peerId, iceServers: iceServersFor(GUEST + guest.id),
+});
+
+/** The guest behind a request: their id and the token they were given when they knocked. */
+function guestFor(req) {
+  const call = byCode(req.params.code);
+  const guest = call.guests.get(String(req.get('X-Guest-Id') || req.query.guest || ''));
+  const token = String(req.get('X-Guest-Token') || req.query.token || '');
+  if (!guest || !token || !safeEqual(sha256(token), guest.tokenHash)) throw new HttpError(404, 'You are not in this meeting');
+  guest.lastSeen = Date.now();
+  return { call, guest, address: GUEST + guest.id };
+}
+
+function guestPeer(req) {
+  const { call, guest } = guestFor(req);
+  const peer = guest.peerId && call.peers.get(guest.peerId);
+  if (!peer) throw new HttpError(404, 'You are not in this meeting');
+  peer.lastSeen = Date.now();
+  return { call, peer, peerId: guest.peerId };
+}
+
+/** What the join page shows before knocking. Nothing about who is in it. */
+guestRouter.get('/:code', (req, res) => {
+  const call = byCode(req.params.code);
+  res.json({ code: call.code, hostName: call.fromName, video: call.video });
+});
+
+guestRouter.post('/:code/knock', (req, res) => {
+  const ip = clientIp(req);
+  knocks.check(ip);
+  knocks.fail(ip);
+  const call = byCode(req.params.code);
+  const name = String(req.body?.name || '').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (!name) throw new HttpError(400, 'Enter your name');
+  if ([...call.guests.values()].filter((guest) => guest.status === 'waiting').length >= MAX_LOBBY) throw new HttpError(429, 'Too many people are waiting to join. Try again in a minute.');
+  const id = crypto.randomUUID();
+  const token = randomToken();
+  call.guests.set(id, { id, name, tokenHash: sha256(token), status: 'waiting', since: Date.now(), lastSeen: Date.now(), streams: 0, peerId: null });
+  tell(call);
+  res.status(201).json({ guestId: id, token });
+});
+
+/**
+ * The guest's own event stream: whether they've been let in, then the call itself. (EventSource
+ * can't send headers, so the token comes in the query; it is only good for this one meeting.)
+ */
+guestRouter.get('/:code/events', (req, res) => {
+  const { call, guest, address } = guestFor(req);
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store, no-transform', 'X-Accel-Buffering': 'no' });
+  res.flushHeaders();
+  res.socket?.setNoDelay(true);
+  const pad = `:${' '.repeat(2048)}\n\n`; // pushes each event through proxies that hold small writes
+  const write = (message) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(message)}\n\n${pad}`); };
+  res.write(`retry: 3000\n\n${pad}`);
+  const listeners = {
+    room: (to, view) => to === address && write({ type: 'call-room', call: view }),
+    signal: (to, signal) => to === address && write({ type: 'call-signal', ...signal }),
+    lobby: (to, payload) => {
+      if (to !== address) return;
+      write({ type: 'lobby', ...payload });
+      if (['denied', 'expired', 'ended'].includes(payload.status)) res.end();
+    },
+  };
+  for (const [name, listener] of Object.entries(listeners)) callEvents.on(name, listener);
+  guest.streams += 1;
+  // Where things stand now, also after the stream reconnects.
+  if (guest.status === 'admitted') write({ type: 'lobby', ...admitted(call, guest) });
+  else write({ type: 'lobby', status: 'waiting' });
+  const heartbeat = setInterval(() => res.write(': keepalive\n\n'), 15_000);
+  const cleanup = () => {
+    for (const [name, listener] of Object.entries(listeners)) callEvents.off(name, listener);
+    clearInterval(heartbeat);
+    guest.streams = Math.max(0, guest.streams - 1);
+    guest.lastSeen = Date.now();
+  };
+  res.on('close', cleanup);
+});
+
+guestRouter.post('/:code/state', (req, res) => {
+  const { call, peer } = guestPeer(req);
+  updateState(call, peer, req.body, { canRecord: false });
+  res.json(publicCall(call, { forGuest: true }));
+});
+
+guestRouter.post('/:code/signal', (req, res) => {
+  const { call, peerId } = guestPeer(req);
+  relay(call, peerId, req.body);
+  res.status(204).end();
+});
+
+/** Leaving the call, or giving up waiting. */
+guestRouter.post('/:code/leave', (req, res) => {
+  let found;
+  try {
+    found = guestFor(req);
+  } catch {
+    return res.json({ ok: true }); // already gone, or the meeting ended
+  }
+  const { call, guest } = found;
+  if (guest.peerId) call.peers.delete(guest.peerId);
+  call.guests.delete(guest.id);
+  settle(call);
+  res.json({ ok: true });
+});

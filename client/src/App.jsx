@@ -14,7 +14,12 @@ const Tasks = lazyPage(() => import('./components/Tasks.jsx'));
 const CallCenter = lazyPage(() => import('./components/CallCenter.jsx'));
 const Automations = lazyPage(() => import('./components/Automations.jsx'));
 const Attendance = lazyPage(() => import('./components/Attendance.jsx'));
+const Recordings = lazyPage(() => import('./components/Recordings.jsx'));
+const JoinMeeting = lazyPage(() => import('./components/JoinMeeting.jsx'));
 const InstallPage = lazyPage(() => import('./components/InstallPage.jsx'));
+
+// A meeting link: /join/abc-defg-hij
+const joinCodeOf = () => /^\/join\/([a-z]{3}-[a-z]{4}-[a-z]{3})\/?$/i.exec(window.location.pathname)?.[1]?.toLowerCase() || null;
 
 // Start on the mailbox's code straight away, while the sign-in check runs, so one doesn't wait for
 // the other. The sign-in page doesn't depend on it and shows as soon as the check answers.
@@ -23,7 +28,19 @@ if (!isInstallPage()) Mailbox.preload();
 const OWNER_COLOR = '#e8590c';
 
 export default function App() {
+  const [joinCode, setJoinCode] = useState(joinCodeOf);
   if (isInstallPage()) return <Suspense fallback={null}><InstallPage /></Suspense>;
+  // A teammate who joined from the link carries on in the app, with the call on screen.
+  if (joinCode) {
+    return (
+      <>
+        <Suspense fallback={null}>
+          <JoinMeeting code={joinCode} onJoinedAsMember={() => { window.history.replaceState(null, '', '/'); setJoinCode(null); }} />
+        </Suspense>
+        <DialogHost />
+      </>
+    );
+  }
   return (
     <>
       <Screen />
@@ -96,6 +113,7 @@ function Screen() {
       Tasks.preload();
       Automations.preload();
       Attendance.preload();
+      Recordings.preload();
       if (isAdmin) Admin.preload();
     });
   }, [signedIn, isAdmin]);
@@ -151,6 +169,8 @@ function Screen() {
         <Automations onClose={() => setWorkspace('mail')} />
       ) : workspace === 'attendance' ? (
         <Attendance user={user} onClose={() => setWorkspace('mail')} />
+      ) : workspace === 'recordings' ? (
+        <Recordings onClose={() => setWorkspace('mail')} />
       ) : (
         <Mailbox
             key={sharedBox ? `shared:${sharedBox.address}` : 'own'}
@@ -166,6 +186,7 @@ function Screen() {
             onOpenTasks={() => setWorkspace('tasks')}
             onOpenAutomations={() => setWorkspace('automations')}
             onOpenAttendance={() => setWorkspace('attendance')}
+            onOpenRecordings={() => setWorkspace('recordings')}
           />
       )}
     </Suspense>

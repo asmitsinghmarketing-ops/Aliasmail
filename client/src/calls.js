@@ -11,6 +11,8 @@ import { subscribe as subscribeLive } from './live.js';
 const SLOTS = ['audio', 'camera', 'screen'];
 const CHECK_IN_MS = 15_000;
 const RECONNECT_AFTER_MS = 5_000;
+// Still not connected after this long: it's not going to work by itself, so say why.
+const STUCK_AFTER_MS = 20_000;
 const ENDED_NOTICE_MS = 3_000;
 
 const IDLE = {
@@ -23,6 +25,7 @@ const IDLE = {
   sharing: false,
   hand: false,
   recording: false,
+  guest: false, // joined with a meeting link, without an account
   micAvailable: true,
   localCamera: null,
   localScreen: null,
@@ -47,6 +50,7 @@ export const watchCall = (fn) => {
 };
 
 let connections = new Map(); // other window's id -> its connection
+let transport = null; // how this window talks to the server about the call (memberTransport / guestTransport)
 let iceServers = [];
 let mic = null;
 let camera = null;
@@ -67,21 +71,43 @@ const mediaError = (err, what) => {
   return `Couldn’t use the ${what}.`;
 };
 
-const micOptions = (deviceId) => ({ echoCancellation: true, noiseSuppression: true, autoGainControl: true, ...(deviceId && { deviceId: { exact: deviceId } }) });
-const cameraOptions = (deviceId) => ({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24, max: 30 }, ...(deviceId && { deviceId: { exact: deviceId } }) });
+// `exact` when picked during a call (fail loudly if it's gone); `ideal` for a remembered choice
+// (that device if it's still there, otherwise the default one).
+const deviceConstraint = (deviceId, exact) => deviceId && { deviceId: exact ? { exact: deviceId } : { ideal: deviceId } };
+const micOptions = (deviceId, exact = true) => ({ echoCancellation: true, noiseSuppression: true, autoGainControl: true, ...deviceConstraint(deviceId, exact) });
+const cameraOptions = (deviceId, exact = true) => ({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24, max: 30 }, ...deviceConstraint(deviceId, exact) });
+
+/* The microphone, speaker and camera picked last time, kept on this computer for the next call. */
+const DEVICES_KEY = 'aliasmail:call-devices';
+function savedDevices() {
+  try {
+    return JSON.parse(localStorage.getItem(DEVICES_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+function saveDevice(kind, deviceId) {
+  try {
+    localStorage.setItem(DEVICES_KEY, JSON.stringify({ ...savedDevices(), [kind]: deviceId }));
+  } catch {
+    // Private windows can refuse storage; the choice then lasts for this call only.
+  }
+}
+const deviceOf = (track) => track?.getSettings?.().deviceId || '';
 
 /** Microphone and (if asked) camera. A missing camera or microphone doesn't stop anyone joining. */
 async function openDevices(video) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('Calls need a secure (https) connection and a modern browser.');
+  const saved = savedDevices();
   const notices = [];
   try {
-    mic = (await navigator.mediaDevices.getUserMedia({ audio: micOptions() })).getAudioTracks()[0];
+    useMic((await navigator.mediaDevices.getUserMedia({ audio: micOptions(saved.audioinput, false) })).getAudioTracks()[0]);
   } catch (err) {
     notices.push(`${mediaError(err, 'microphone')} You can still listen.`);
   }
   if (video) {
     try {
-      camera = (await navigator.mediaDevices.getUserMedia({ video: cameraOptions() })).getVideoTracks()[0];
+      useCamera((await navigator.mediaDevices.getUserMedia({ video: cameraOptions(saved.videoinput, false) })).getVideoTracks()[0]);
     } catch (err) {
       notices.push(mediaError(err, 'camera'));
     }
@@ -89,11 +115,51 @@ async function openDevices(video) {
   return notices.join(' ');
 }
 
+/**
+ * Start using a microphone track. If it stops by itself (headset unplugged, USB mic removed, the
+ * browser revoking access), switch to the default microphone instead of going silent.
+ */
+function useMic(track) {
+  mic = track;
+  track.onended = async () => {
+    if (mic !== track || state.phase !== 'in-call') return;
+    try {
+      const next = (await navigator.mediaDevices.getUserMedia({ audio: micOptions() })).getAudioTracks()[0];
+      if (mic !== track || state.phase !== 'in-call') return next.stop();
+      next.enabled = !state.muted;
+      useMic(next);
+      setChannel('audio', next);
+      set({ micDevice: deviceOf(next), notice: `Your microphone was disconnected. Now using ${next.label || 'the default microphone'}.` });
+    } catch (err) {
+      mic = null;
+      setChannel('audio', null);
+      set({ notice: `Your microphone was disconnected. ${mediaError(err, 'microphone')}` });
+    }
+    publishLocal();
+    sendState();
+  };
+}
+
+/** Start using a camera track. If the camera goes away, turn the camera off and say so. */
+function useCamera(track) {
+  camera = track;
+  track.onended = () => {
+    if (camera !== track || state.phase !== 'in-call') return;
+    camera = null;
+    setChannel('camera', null);
+    set({ notice: 'Your camera was disconnected, so it has been turned off.' });
+    publishLocal();
+    sendState();
+  };
+}
+
 const streamOf = (track) => (track ? new MediaStream([track]) : null);
 
 function publishLocal() {
   set({
     micAvailable: Boolean(mic),
+    micDevice: deviceOf(mic) || state.micDevice,
+    cameraDevice: deviceOf(camera) || state.cameraDevice,
     localAudio: streamOf(mic),
     localCamera: streamOf(camera),
     localScreen: streamOf(screen),
@@ -109,11 +175,44 @@ function stopDevices() {
 
 /* ---------------------------------- talking to the server ---------------------------------- */
 
-const path = (suffix = '') => `/calls/${state.call.id}${suffix}`;
+/** Teammates: signed-in requests under /calls/<id>, and the app's live connection. */
+const memberTransport = (callId) => ({
+  guest: false,
+  post: (suffix, body) => api(`/calls/${callId}${suffix}`, { method: 'POST', body }),
+  refresh: () => api(`/calls/${callId}`),
+  subscribe: subscribeLive,
+  // Closing the tab: an ordinary request wouldn't finish in time, and a beacon can't carry the
+  // header the server requires.
+  leaveNow: (body) => fetch(`/api/calls/${callId}/leave`, {
+    method: 'POST', keepalive: true, credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' }, body: JSON.stringify(body),
+  }),
+});
+
+/**
+ * Guests (meeting link, no account): requests under /meet/<code> that carry the private token they
+ * got when they knocked, and their own event stream (`subscribe`, from the join page).
+ */
+export function guestTransport({ code, guestId, token, subscribe }) {
+  const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail', 'X-Guest-Id': guestId, 'X-Guest-Token': token };
+  const url = (suffix) => `/api/meet/${encodeURIComponent(code)}${suffix}`;
+  return {
+    guest: true,
+    async post(suffix, body) {
+      const res = await fetch(url(suffix), { method: 'POST', headers, credentials: 'same-origin', body: JSON.stringify(body || {}) });
+      const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
+      if (!res.ok) throw new Error(data?.error || 'Something went wrong. Try again.');
+      return data;
+    },
+    refresh: null, // the guest's event stream sends where things stand each time it reconnects
+    subscribe,
+    leaveNow: (body) => fetch(url('/leave'), { method: 'POST', keepalive: true, credentials: 'same-origin', headers, body: JSON.stringify(body) }),
+  };
+}
 
 function sendState() {
   if (state.phase !== 'in-call') return;
-  api(path('/state'), { method: 'POST', body: { peerId: state.me, muted: state.muted, camera: state.cameraOn, sharing: state.sharing, hand: state.hand, recording: state.recording } })
+  transport.post('/state', { peerId: state.me, muted: state.muted, camera: state.cameraOn, sharing: state.sharing, hand: state.hand, recording: state.recording })
     .then(applyCall)
     .catch(() => {}); // The next check-in tries again.
 }
@@ -123,7 +222,7 @@ function sendState() {
 function send(connection, data) {
   // One at a time, so the other side gets them in order.
   connection.sending = connection.sending
-    .then(() => api(path('/signal'), { method: 'POST', body: { peerId: state.me, to: connection.id, data } }))
+    .then(() => transport.post('/signal', { peerId: state.me, to: connection.id, data }))
     .catch(() => {});
 }
 
@@ -152,10 +251,19 @@ function setChannel(slot, track) {
   }
 }
 
+const RESEND_OFFER_MS = 8_000;
+
 async function offer(connection, options) {
   const { pc } = connection;
   await pc.setLocalDescription(await pc.createOffer(options));
   send(connection, { description: pc.localDescription });
+  // No answer yet: the other window may not have been listening when it arrived. Ask again.
+  clearTimeout(connection.offerTimer);
+  connection.offerTimer = setTimeout(function again() {
+    if (connections.get(connection.id) !== connection || pc.signalingState !== 'have-local-offer') return;
+    send(connection, { description: pc.localDescription });
+    connection.offerTimer = setTimeout(again, RESEND_OFFER_MS);
+  }, RESEND_OFFER_MS);
 }
 
 function recover(connection) {
@@ -169,9 +277,14 @@ function connect(id) {
   const pc = new RTCPeerConnection({ iceServers });
   const connection = {
     id, pc, initiator: state.me > id, media: {}, waiting: [], outgoing: [], outgoingTimer: null, retryTimer: null,
-    work: Promise.resolve(), sending: Promise.resolve(),
+    work: Promise.resolve(), sending: Promise.resolve(), since: Date.now(), stuckTimer: null, warned: false,
   };
   connections.set(id, connection);
+  const watchStuck = () => {
+    clearTimeout(connection.stuckTimer);
+    connection.stuckTimer = setTimeout(publishPeers, STUCK_AFTER_MS - (Date.now() - connection.since) + 50);
+  };
+  watchStuck();
   pc.onicecandidate = ({ candidate }) => candidate && queueCandidate(connection, candidate);
   pc.ontrack = ({ track, transceiver }) => {
     const slot = SLOTS[pc.getTransceivers().indexOf(transceiver)];
@@ -181,6 +294,13 @@ function connect(id) {
   };
   pc.onconnectionstatechange = () => {
     clearTimeout(connection.retryTimer);
+    if (pc.connectionState === 'connected') {
+      connection.since = null;
+      clearTimeout(connection.stuckTimer);
+    } else if (!connection.since) {
+      connection.since = Date.now();
+      watchStuck();
+    }
     if (pc.connectionState === 'failed') recover(connection);
     else if (pc.connectionState === 'disconnected') connection.retryTimer = setTimeout(() => recover(connection), RECONNECT_AFTER_MS);
     publishPeers();
@@ -200,6 +320,8 @@ function disconnect(id) {
   if (!connection) return;
   clearTimeout(connection.retryTimer);
   clearTimeout(connection.outgoingTimer);
+  clearTimeout(connection.stuckTimer);
+  clearTimeout(connection.offerTimer);
   connection.pc.close();
   connections.delete(id);
 }
@@ -228,17 +350,29 @@ async function handleSignal(connection, data) {
 
 function publishPeers() {
   if (!state.call) return;
+  const stuckNames = [];
   const peers = state.call.peers.filter((peer) => peer.id !== state.me).map((peer) => {
     const connection = connections.get(peer.id);
+    const stuck = Boolean(connection?.since && Date.now() - connection.since >= STUCK_AFTER_MS);
+    if (stuck && !connection.warned) {
+      connection.warned = true;
+      stuckNames.push(peer.name);
+    }
     return {
       ...peer,
       connection: connection?.pc.connectionState || 'new',
+      stuck,
       audio: connection?.media.audio || null,
       cameraStream: connection?.media.camera || null,
       screenStream: connection?.media.screen || null,
     };
   });
-  set({ peers });
+  set({
+    peers,
+    ...(stuckNames.length && {
+      notice: `Can’t connect to ${stuckNames.join(', ')}. A network (often office Wi-Fi, a mobile hotspot or a VPN) is blocking a direct connection. Try another network, or ask your administrator to set up a call relay (TURN).`,
+    }),
+  });
 }
 
 /* ---------------------------------- the call as a whole ---------------------------------- */
@@ -259,6 +393,7 @@ function tearDown() {
   [...connections.keys()].forEach(disconnect);
   connections = new Map();
   stopDevices();
+  transport = null;
 }
 
 function finish(reason) {
@@ -287,22 +422,24 @@ function onLive(message) {
     connection.work = connection.work.then(() => handleSignal(connection, message.data)).catch(() => {});
   } else if (message.type === 'open' && state.call) {
     // Back online after a dropped connection: catch up on anything missed meanwhile.
-    api(path()).then(applyCall).catch(() => {});
+    transport?.refresh?.().then(applyCall).catch(() => {});
   }
 }
 
-function enter({ call, peerId, iceServers: servers }, notice) {
+function enter({ call, peerId, iceServers: servers }, notice, via) {
   iceServers = servers;
+  transport = via || memberTransport(call.id);
   clearTimeout(endedTimer);
-  set({ phase: 'in-call', call, me: peerId, notice, muted: false, hand: false, recording: false, startedAt: null });
+  const saved = savedDevices();
+  set({ phase: 'in-call', call, me: peerId, notice, muted: false, hand: false, recording: false, guest: transport.guest, startedAt: null, speakerDevice: saved.audiooutput, cameraDevice: saved.videoinput });
   publishLocal();
-  stopLive = subscribeLive(onLive);
+  stopLive = transport.subscribe(onLive);
   checkIn = setInterval(sendState, CHECK_IN_MS);
   applyCall(call);
   sendState();
 }
 
-async function begin(video, request) {
+async function begin(video, request, via) {
   if (state.phase === 'in-call' || state.phase === 'joining') await hangUp();
   clearTimeout(endedTimer);
   const mine = ++attempt;
@@ -312,10 +449,10 @@ async function begin(video, request) {
     if (mine !== attempt) return;
     const joined = await request();
     if (mine !== attempt) {
-      api(`/calls/${joined.call.id}/leave`, { method: 'POST', body: { peerId: joined.peerId } }).catch(() => {});
+      (via || memberTransport(joined.call.id)).post('/leave', { peerId: joined.peerId }).catch(() => {});
       return;
     }
-    enter(joined, notice);
+    enter(joined, notice, via);
   } catch (err) {
     if (mine !== attempt) return;
     tearDown();
@@ -330,18 +467,58 @@ export const startCall = ({ to, video = false }) => begin(video, () => api('/cal
 /** Answer a ringing call. */
 export const joinCall = (id, { video = false } = {}) => begin(video, () => api(`/calls/${id}/join`, { method: 'POST', body: {} }));
 
+/** A meeting with a link to share, before anyone else is in it. */
+export const startMeeting = ({ video = true } = {}) => begin(video, () => api('/calls', { method: 'POST', body: { to: [], video, meeting: true } }));
+
+/** A teammate opening a meeting link: straight in. */
+export const joinByCode = (code, { video = true } = {}) => begin(video, () => api(`/calls/code/${encodeURIComponent(code)}/join`, { method: 'POST', body: {} }));
+
+/** A guest who has just been let in (`admitted` is what the server sent them). */
+export const joinAsGuest = (admitted, via, { video = true } = {}) => begin(video, async () => admitted, via);
+
 export async function hangUp() {
-  const { call, me, phase } = state;
+  const { me, phase } = state;
+  const via = transport;
   tearDown();
   set(IDLE);
-  if (phase === 'in-call') await api(`/calls/${call.id}/leave`, { method: 'POST', body: { peerId: me } }).catch(() => {});
+  if (phase === 'in-call' && via) await via.post('/leave', { peerId: me }).catch(() => {});
 }
 
+/** The meeting link for this call (made the first time it's asked for). Returns the code. */
+export async function meetingCode() {
+  if (state.call?.code) return state.call.code;
+  const { code, call } = await transport.post('/link', { peerId: state.me });
+  applyCall(call);
+  return code;
+}
+
+export const meetingLink = (code) => `${window.location.origin}/join/${code}`;
+
+/** Let someone waiting outside in, or not. */
+export const admitGuest = (guestId, allow) => transport.post('/admit', { peerId: state.me, guestId, allow }).then(applyCall);
+
 export function toggleMute() {
-  if (!mic) return;
+  if (!mic) return retryMicrophone();
   mic.enabled = state.muted;
   set({ muted: !state.muted });
   sendState();
+  return undefined;
+}
+
+/** No microphone yet (blocked, missing or busy when joining): ask for it again. */
+export async function retryMicrophone() {
+  if (mic || state.phase !== 'in-call') return;
+  try {
+    const next = (await navigator.mediaDevices.getUserMedia({ audio: micOptions(state.micDevice || savedDevices().audioinput, false) })).getAudioTracks()[0];
+    if (mic || state.phase !== 'in-call') return next.stop();
+    useMic(next);
+    setChannel('audio', next);
+    set({ muted: false, notice: '' });
+    publishLocal();
+    sendState();
+  } catch (err) {
+    set({ notice: mediaError(err, 'microphone') });
+  }
 }
 
 export async function toggleCamera() {
@@ -351,7 +528,7 @@ export async function toggleCamera() {
     setChannel('camera', null);
   } else {
     try {
-      camera = (await navigator.mediaDevices.getUserMedia({ video: cameraOptions(state.cameraDevice) })).getVideoTracks()[0];
+      useCamera((await navigator.mediaDevices.getUserMedia({ video: cameraOptions(state.cameraDevice, false) })).getVideoTracks()[0]);
       setChannel('camera', camera);
     } catch (err) {
       set({ notice: mediaError(err, 'camera') });
@@ -403,7 +580,7 @@ export function setRecording(recording) {
 
 export const clearNotice = () => set({ notice: '' });
 
-export const inviteToCall = (to) => api(path('/invite'), { method: 'POST', body: { peerId: state.me, to } }).then(applyCall);
+export const inviteToCall = (to) => transport.post('/invite', { peerId: state.me, to }).then(applyCall);
 
 /** Change microphone or camera during a call. */
 export async function chooseDevice(kind, deviceId) {
@@ -411,38 +588,35 @@ export async function chooseDevice(kind, deviceId) {
     if (kind === 'audioinput') {
       const next = (await navigator.mediaDevices.getUserMedia({ audio: micOptions(deviceId) })).getAudioTracks()[0];
       next.enabled = !state.muted;
-      mic?.stop();
-      mic = next;
+      const previous = mic;
+      useMic(next); // First, so stopping the old one isn't taken for a disconnected microphone.
+      previous?.stop();
       setChannel('audio', next);
       set({ micDevice: deviceId });
     } else if (kind === 'videoinput') {
       set({ cameraDevice: deviceId });
       if (camera) {
         const next = (await navigator.mediaDevices.getUserMedia({ video: cameraOptions(deviceId) })).getVideoTracks()[0];
-        camera.stop();
-        camera = next;
+        const previous = camera;
+        useCamera(next);
+        previous.stop();
         setChannel('camera', next);
       }
     } else {
       set({ speakerDevice: deviceId });
     }
+    saveDevice(kind, deviceId);
     publishLocal();
+    sendState();
   } catch (err) {
     set({ notice: mediaError(err, kind === 'audioinput' ? 'microphone' : 'camera') });
   }
 }
 
-// Closing the tab: say goodbye so others don't wait for the timeout. An ordinary request wouldn't
-// finish in time, and a beacon can't carry the header the server requires.
+// Closing the tab: say goodbye so others don't wait for the timeout.
 window.addEventListener('pagehide', () => {
-  if (state.phase !== 'in-call') return;
-  fetch(`/api${path('/leave')}`, {
-    method: 'POST',
-    keepalive: true,
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' },
-    body: JSON.stringify({ peerId: state.me }),
-  }).catch(() => {});
+  if (state.phase !== 'in-call' || !transport) return;
+  transport.leaveNow({ peerId: state.me }).catch(() => {});
 });
 
 window.addEventListener(LOGOUT_EVENT, () => {

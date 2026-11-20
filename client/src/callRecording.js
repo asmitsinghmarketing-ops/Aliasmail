@@ -1,5 +1,6 @@
-// Records an Instant Notes call on this computer. Media still travels peer-to-peer; the browser
-// mixes what this person can hear and see into one file, which is downloaded and never uploaded.
+// Records an Instant Notes call in this browser. Media still travels peer-to-peer; the browser
+// mixes what this person can hear and see into one video, which recordingUpload.js keeps in
+// Nextspace (downloaded here only if saving it there fails).
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -33,8 +34,39 @@ export function downloadRecording(blob, startedAt = new Date()) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-/** A live recorder. `sync` adds newly joined people and follows camera/screen changes. */
-export async function createCallRecorder(initialState) {
+/** Calls `tick` FPS times a second, also while the tab is in the background. Returns a stop function. */
+function startClock(tick) {
+  try {
+    const worker = new Worker(new URL('./recordingClock.js', import.meta.url));
+    worker.onmessage = tick;
+    worker.postMessage(Math.round(1000 / FPS));
+    return () => worker.terminate();
+  } catch {
+    const timer = setInterval(tick, Math.round(1000 / FPS));
+    return () => clearInterval(timer);
+  }
+}
+
+/** Draws a label on a dark pill. The font is set before measuring, so the pill fits the text. */
+function label(context, text, x, y, { size = 15, maxWidth = Infinity } = {}) {
+  context.font = `500 ${size}px sans-serif`;
+  const width = Math.min(maxWidth, context.measureText(text).width + 24);
+  const height = size + 13;
+  context.fillStyle = 'rgba(8, 13, 22, .75)';
+  context.beginPath();
+  context.roundRect ? context.roundRect(x, y, width, height, 8) : context.rect(x, y, width, height);
+  context.fill();
+  context.fillStyle = '#fff';
+  context.textAlign = 'left';
+  context.textBaseline = 'middle';
+  context.fillText(text, x + 12, y + height / 2 + 1, width - 24);
+}
+
+/**
+ * A live recorder. `sync` adds newly joined people and follows camera/screen changes.
+ * `onError` is called if the browser stops the recording by itself (what was recorded is kept).
+ */
+export async function createCallRecorder(initialState, { onError, onChunk } = {}) {
   if (!recordingSupported()) throw new Error('Call recording needs a current version of Chrome or Edge.');
 
   const Audio = window.AudioContext || window.webkitAudioContext;
@@ -48,7 +80,7 @@ export async function createCallRecorder(initialState) {
   canvas.height = HEIGHT;
   const context = canvas.getContext('2d');
   let state = initialState;
-  let frame = null;
+  let stopClock = null;
   let stopped = false;
 
   function syncAudio(next) {
@@ -132,13 +164,8 @@ export async function createCallRecorder(initialState) {
       context.font = `600 ${Math.max(22, Math.min(width, height) * 0.12)}px sans-serif`;
       context.fillText(initials(person.name), x + width / 2, y + height / 2);
     }
-    context.fillStyle = 'rgba(8, 13, 22, .75)';
-    context.fillRect(x + 10, y + height - 38, Math.min(width - 20, context.measureText(person.name).width + 24), 28);
-    context.fillStyle = '#fff';
-    context.textAlign = 'left';
-    context.textBaseline = 'middle';
-    context.font = '500 15px sans-serif';
-    context.fillText(person.name, x + 20, y + height - 24, width - 40);
+    const size = height < 160 ? 12 : 15;
+    label(context, person.name, x + 10, y + height - size - 23, { size, maxWidth: width - 20 });
   }
 
   function render() {
@@ -149,11 +176,7 @@ export async function createCallRecorder(initialState) {
     const members = people(state);
     if (sharing) {
       drawVideo(videoFor(sharing.stream), 0, 0, WIDTH, HEIGHT, true);
-      context.fillStyle = 'rgba(8, 13, 22, .8)';
-      context.fillRect(16, 16, context.measureText(sharing.name).width + 32, 34);
-      context.fillStyle = '#fff';
-      context.font = '500 16px sans-serif';
-      context.fillText(sharing.name, 32, 38);
+      label(context, sharing.name, 16, 16, { size: 16 });
       const thumbW = 210;
       const thumbH = 118;
       members.slice(0, 5).forEach((person, index) => drawPerson(person, WIDTH - thumbW - 16, 16 + index * (thumbH + 10), thumbW, thumbH));
@@ -167,12 +190,13 @@ export async function createCallRecorder(initialState) {
     }
     context.fillStyle = '#e5484d';
     context.beginPath();
-    context.arc(WIDTH - 118, HEIGHT - 28, 7, 0, Math.PI * 2);
+    context.arc(WIDTH - 62, HEIGHT - 28, 7, 0, Math.PI * 2);
     context.fill();
     context.fillStyle = '#fff';
+    context.textAlign = 'left';
+    context.textBaseline = 'middle';
     context.font = '600 14px sans-serif';
-    context.fillText('REC', WIDTH - 102, HEIGHT - 27);
-    frame = requestAnimationFrame(render);
+    context.fillText('REC', WIDTH - 48, HEIGHT - 27);
   }
 
   const output = canvas.captureStream(FPS);
@@ -180,11 +204,16 @@ export async function createCallRecorder(initialState) {
   const type = recordingType();
   const chunks = [];
   const recorder = new MediaRecorder(output, type ? { mimeType: type, videoBitsPerSecond: 2_500_000 } : undefined);
-  recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
+  recorder.ondataavailable = (event) => {
+    if (!event.data.size) return;
+    chunks.push(event.data); // kept here too, so it can still be downloaded if saving fails
+    onChunk?.(event.data);
+  };
+  recorder.onerror = () => onError?.('Recording stopped unexpectedly. What was recorded so far has been saved.');
 
   const cleanup = () => {
     stopped = true;
-    cancelAnimationFrame(frame);
+    stopClock?.();
     audioSources.forEach((source) => source.disconnect());
     videos.forEach((video) => { video.pause(); video.srcObject = null; });
     output.getTracks().forEach((track) => track.stop());
@@ -193,6 +222,7 @@ export async function createCallRecorder(initialState) {
 
   syncAudio(state);
   render();
+  stopClock = startClock(render);
   recorder.start(1000);
 
   return {
@@ -203,12 +233,14 @@ export async function createCallRecorder(initialState) {
     },
     stop() {
       return new Promise((resolve) => {
-        if (recorder.state === 'inactive') return resolve(null);
-        recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: recorder.mimeType || type || 'video/webm' });
+        const finish = () => {
+          const blob = chunks.length ? new Blob(chunks, { type: recorder.mimeType || type || 'video/webm' }) : null;
           cleanup();
           resolve(blob);
         };
+        // Already stopped by the browser (an error): keep what was recorded.
+        if (recorder.state === 'inactive') return finish();
+        recorder.onstop = finish;
         recorder.stop();
       });
     },
