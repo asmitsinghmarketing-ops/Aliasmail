@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import Icon from './Icon.jsx';
 import RecipientField from './RecipientField.jsx';
+import ScheduleMeeting from './ScheduleMeeting.jsx';
 import { createMeeting, meetingWhen } from '../meet.js';
+import { startMeeting } from '../calls.js';
 import { api } from '../api.js';
 
 const DURATIONS = [15, 30, 45, 60, 90, 120];
@@ -17,11 +19,12 @@ function nextSlot() {
 }
 
 /**
- * New meeting: start one now, or schedule one with guests (Google emails them the invitation).
- * onEmail(meeting) opens a draft with the invitation.
+ * New meeting. Nextspace's own meetings first: start one now (with a link to share), or schedule
+ * one on the Meetings calendar. With Google Meet connected (`google`), a Google Meet link too.
+ * onEmail(meeting) opens a draft with a Google invitation; onEmailLink(meeting) one with ours.
  */
-export default function MeetDialog({ onClose, onEmail }) {
-  const [view, setView] = useState('choose'); // choose | schedule | done
+export default function MeetDialog({ me, google = false, onClose, onEmail, onEmailLink, onOpenMeetings }) {
+  const [view, setView] = useState('choose'); // choose | ours-schedule | google | schedule | done
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [meeting, setMeeting] = useState(null);
@@ -76,13 +79,30 @@ export default function MeetDialog({ onClose, onEmail }) {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  async function startNow() {
+    setBusy(true);
+    setError('');
+    try {
+      await startMeeting({ video: true });
+      onClose(); // the call opens, with the link to share
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
+  // Scheduling one of ours: the scheduler is its own dialog.
+  if (view === 'ours-schedule') {
+    return <ScheduleMeeting me={me} onSaved={() => {}} onClose={onClose} onEmail={onEmailLink} onOpenMeetings={onOpenMeetings} />;
+  }
+
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal meet-modal" role="dialog" aria-label="Google Meet" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h2 className="meet-title">
             <span className="meet-badge"><Icon name="videocam" size={20} /></span>
-            {view === 'done' ? (meeting.guests.length ? 'Meeting scheduled' : 'Your meeting is ready') : view === 'schedule' ? 'Schedule a meeting' : 'New meeting'}
+            {view === 'done' ? (meeting.guests.length ? 'Meeting scheduled' : 'Your meeting is ready') : view === 'schedule' ? 'Schedule a Google Meet' : view === 'google' ? 'Google Meet' : 'New meeting'}
           </h2>
           <button className="icon-btn" type="button" onClick={onClose} aria-label="Close">
             <Icon name="close" />
@@ -90,6 +110,34 @@ export default function MeetDialog({ onClose, onEmail }) {
         </div>
 
         {view === 'choose' && (
+          <div className="meet-choices">
+            <button type="button" className="meet-choice" disabled={busy} onClick={startNow}>
+              <Icon name="videocam" size={22} />
+              <span>
+                <strong>{busy ? 'Starting…' : 'Start a meeting now'}</strong>
+                <span className="muted small">Opens the meeting here with a link to share. Teammates join straight in; you let guests in.</span>
+              </span>
+            </button>
+            <button type="button" className="meet-choice" disabled={busy} onClick={() => setView('ours-schedule')}>
+              <Icon name="event" size={22} />
+              <span>
+                <strong>Schedule for later</strong>
+                <span className="muted small">Pick a time and invite teammates. It goes on your Meetings calendar with a link for anyone else.</span>
+              </span>
+            </button>
+            {google && (
+              <button type="button" className="meet-choice meet-choice-google" disabled={busy} onClick={() => setView('google')}>
+                <Icon name="link" size={22} />
+                <span>
+                  <strong>Google Meet link instead</strong>
+                  <span className="muted small">A meeting on Google Meet, added to your Google Calendar</span>
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {view === 'google' && (
           <div className="meet-choices">
             <button type="button" className="meet-choice" disabled={busy} onClick={() => create({ title: 'Instant meeting' })}>
               <Icon name="add" size={22} />
@@ -105,6 +153,7 @@ export default function MeetDialog({ onClose, onEmail }) {
                 <span className="muted small">Pick a time and invite people; it’s added to your Google Calendar</span>
               </span>
             </button>
+            <div className="meet-actions"><button type="button" className="btn btn-outline" onClick={() => setView('choose')}>Back</button></div>
           </div>
         )}
 
@@ -148,7 +197,7 @@ export default function MeetDialog({ onClose, onEmail }) {
               <textarea value={form.description} onChange={set('description')} rows={3} maxLength={4000} placeholder="Agenda, notes (optional)" />
             </label>
             <div className="meet-actions">
-              <button type="button" className="btn btn-outline" onClick={() => setView('choose')}>Back</button>
+              <button type="button" className="btn btn-outline" onClick={() => setView('google')}>Back</button>
               <button className="btn btn-primary" disabled={busy}>{busy ? 'Scheduling…' : form.guests ? 'Schedule and invite' : 'Schedule'}</button>
             </div>
           </form>

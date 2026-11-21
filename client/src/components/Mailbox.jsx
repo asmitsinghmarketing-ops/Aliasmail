@@ -1616,7 +1616,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     { id: 'automations', label: 'Automate', title: 'Automations', icon: 'scheduleSend', onClick: onOpenAutomations, hidden: shared },
     { id: 'assistant', label: 'Assistant', icon: 'sparkle', on: assistantOpen, onClick: () => setAssistantOpen(!assistantOpen), hidden: shared },
     { id: 'notes', label: 'Notes', title: 'Instant notes', icon: 'chat', on: notesOpen, badge: notesUnread, onClick: () => (notesOpen ? setNotesOpen(false) : openNotes()) },
-    { id: 'meet', label: 'Meeting', title: 'New meeting', icon: 'videocam', onClick: () => setModal('meet'), hidden: !meetOn || shared },
+    { id: 'meet', label: 'Meeting', title: 'New meeting', icon: 'videocam', onClick: () => setModal('meet'), hidden: shared },
     { id: 'tour', label: 'Tour', title: 'Take the tour', icon: 'info', pinned: true, onClick: () => startTour(), hidden: shared },
     { id: 'settings', label: 'Settings', icon: 'settings', pinned: true, locked: true, onClick: () => { setSettingsTab('profile'); setModal('settings'); }, hidden: shared },
   ].filter((tab) => !tab.hidden);
@@ -2056,7 +2056,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                     setOpenMsg((m) => ({ ...m, team: view }));
                     setList((l) => ({ ...l, items: l.items.map((i) => (String(i.id) === String(open.id) ? { ...i, assignee: view.assignee, notes: view.notes.length } : i)) }));
                   }}
-                  onMeet={meetOn && !shared ? () => setModal('meet') : null}
+                  onMeet={!shared ? () => setModal('meet') : null}
                 />
               ) : null}
               phoneMore={
@@ -2400,6 +2400,15 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       {modal === 'meet' && (
         <Suspense fallback={<OpeningPill />}>
         <MeetDialog
+          me={account.email}
+          google={meetOn}
+          onOpenMeetings={onOpenRecordings}
+          onEmailLink={(meeting) => {
+            setModal(null);
+            const when = new Date(meeting.startAt).toLocaleString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const text = `You're invited to "${meeting.title}".\n\nWhen: ${when} (${meeting.durationMin} minutes)\nJoin: ${meeting.link}\n${meeting.description ? `\n${meeting.description}\n` : ''}`;
+            setDraft({ to: '', subject: meeting.title, html: htmlFromText(text) + signatureBlock() });
+          }}
           onClose={() => setModal(null)}
           onEmail={(meeting) => {
             setModal(null);

@@ -177,21 +177,28 @@ function ShareLink({ state, intro }) {
   );
 }
 
+/** One person in the call: picture, name, and what they're doing (hand up, muted). */
+function InCall({ peer, me }) {
+  return (
+    <li>
+      <Avatar person={peer} size="sm" />
+      <span className="call-person">
+        <strong>{peer.name}{peer.id === me ? ' (you)' : ''}</strong>
+        {peer.guest && <small>Guest</small>}
+      </span>
+      {peer.hand && <span className="call-person-hand" title="Hand raised"><Icon name="hand" size={16} /></span>}
+      <span className={`call-person-mic ${peer.muted ? 'off' : ''}`} title={peer.muted ? 'Muted' : 'Microphone on'}><Icon name={peer.muted ? 'micOff' : 'mic'} size={17} /></span>
+    </li>
+  );
+}
+
 function PeoplePanel({ state }) {
   if (state.guest) {
     return (
       <>
-        <h3>In this call ({state.call.peers.length})</h3>
-        <ul className="call-people">
-          {state.call.peers.map((peer) => (
-            <li key={peer.id}>
-              <Avatar person={peer} size="sm" />
-              <span>{peer.name}{peer.id === state.me ? ' (you)' : ''}</span>
-              {peer.hand && <Icon name="hand" size={17} />}
-              <Icon name={peer.muted ? 'micOff' : 'mic'} size={17} />
-            </li>
-          ))}
-        </ul>
+        <h2 className="call-panel-title">People</h2>
+        <h3>In the call <span>{state.call.peers.length}</span></h3>
+        <ul className="call-people">{state.call.peers.map((peer) => <InCall key={peer.id} peer={peer} me={state.me} />)}</ul>
       </>
     );
   }
@@ -201,42 +208,85 @@ function PeoplePanel({ state }) {
 function TeamPeoplePanel({ state }) {
   const [team, setTeam] = useState(null);
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [busy, setBusy] = useState(null);
   useEffect(() => { api('/mail/team').then(setTeam).catch((err) => setError(err.message)); }, []);
   const inCall = new Set(state.call.peers.map((peer) => peer.address));
   const ringing = new Set(state.call.invited.filter((invite) => invite.status === 'ringing').map((invite) => invite.address));
   const online = onlineNow();
-  const others = (team || []).filter((person) => !inCall.has(person.address));
+  const query = search.trim().toLowerCase();
+  const others = (team || [])
+    .filter((person) => !inCall.has(person.address))
+    .filter((person) => !query || `${person.name} ${person.address}`.toLowerCase().includes(query))
+    .sort((a, b) => Number(Boolean(online?.has(b.address))) - Number(Boolean(online?.has(a.address))));
+  const lobby = state.call.lobby || [];
   const invite = (address) => inviteToCall([address]).catch((err) => setError(err.message));
+  const answer = async (guest, allow) => {
+    setBusy(guest.id);
+    setError('');
+    try {
+      await admitGuest(guest.id, allow);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
     <>
-      <h3>In this call ({state.call.peers.length})</h3>
-      <ul className="call-people">
-        {state.call.peers.map((peer) => (
-          <li key={peer.id}>
-            <Avatar person={peer} size="sm" />
-            <span>{peer.name}{peer.id === state.me ? ' (you)' : ''}{peer.guest ? <small>Guest</small> : null}</span>
-            {peer.hand && <Icon name="hand" size={17} />}
-            <Icon name={peer.muted ? 'micOff' : 'mic'} size={17} />
-          </li>
-        ))}
-      </ul>
-      <h3>Invite with a link</h3>
-      <ShareLink state={state} intro="Anyone with the link can ask to join. Teammates come straight in; you let others in." />
-      <h3>Add someone from your team</h3>
-      {error && <p className="call-panel-error">{error}</p>}
-      {!team && !error && <p className="call-panel-note">Getting your team…</p>}
-      {team && !others.length && <p className="call-panel-note">Everyone on your team is here.</p>}
-      <ul className="call-people">
-        {others.map((person) => (
-          <li key={person.address}>
-            <Avatar person={person} size="sm" />
-            <span>{person.name || person.address}{online?.has(person.address) ? <small> · online</small> : null}</span>
-            <button type="button" className="btn btn-outline" disabled={ringing.has(person.address)} onClick={() => invite(person.address)}>
-              {ringing.has(person.address) ? 'Ringing…' : 'Call'}
-            </button>
-          </li>
-        ))}
-      </ul>
+      <h2 className="call-panel-title">People</h2>
+
+      <section className="call-panel-section">
+        <h3>Add people</h3>
+        <ShareLink state={state} intro="Send this link to anyone. Teammates come straight in; you let others in." />
+        {(team?.length || 0) > 5 && (
+          <label className="call-people-search">
+            <Icon name="search" size={17} />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search your team" aria-label="Search your team" />
+          </label>
+        )}
+        {error && <p className="call-panel-error">{error}</p>}
+        {!team && !error && <p className="call-panel-note">Getting your team…</p>}
+        {team && !others.length && <p className="call-panel-note">{query ? 'Nobody on your team matches.' : 'Everyone on your team is here.'}</p>}
+        <ul className="call-people">
+          {others.map((person) => (
+            <li key={person.address}>
+              <span className="presence-wrap">
+                <Avatar person={person} size="sm" />
+                {online?.has(person.address) && <span className="presence-dot" title="Online" />}
+              </span>
+              <span className="call-person">
+                <strong>{person.name || person.address}</strong>
+                <small>{online?.has(person.address) ? 'Online now' : person.address}</small>
+              </span>
+              <button type="button" className="call-pill" disabled={ringing.has(person.address)} onClick={() => invite(person.address)}>
+                <Icon name="call" size={15} />{ringing.has(person.address) ? 'Ringing…' : 'Ring'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {lobby.length > 0 && (
+        <section className="call-panel-section">
+          <h3>Waiting to join <span>{lobby.length}</span></h3>
+          <ul className="call-people">
+            {lobby.map((guest) => (
+              <li key={guest.id}>
+                <Avatar person={{ name: guest.name, address: `guest:${guest.id}` }} size="sm" />
+                <span className="call-person"><strong>{guest.name}</strong><small>Guest</small></span>
+                <button type="button" className="call-pill" disabled={busy === guest.id} onClick={() => answer(guest, false)}>Deny</button>
+                <button type="button" className="call-pill primary" disabled={busy === guest.id} onClick={() => answer(guest, true)}>Admit</button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section className="call-panel-section">
+        <h3>In the call <span>{state.call.peers.length}</span></h3>
+        <ul className="call-people">{state.call.peers.map((peer) => <InCall key={peer.id} peer={peer} me={state.me} />)}</ul>
+      </section>
     </>
   );
 }
@@ -353,7 +403,7 @@ function DevicesPanel({ state }) {
     : state.muted ? 'You’re muted, so others can’t hear you. The bar still shows your microphone working.' : 'Say something: the bar should move.';
   return (
     <>
-      <h3>Devices</h3>
+      <h2 className="call-panel-title">Devices</h2>
       {picker('audioinput', 'Microphone', state.micDevice)}
       {state.micAvailable ? (
         <>
@@ -643,7 +693,7 @@ export default function CallRoom({ state }) {
             {recordStatus === 'saved' && <button type="button" aria-label="Dismiss" onClick={() => setRecordStatus(null)}><Icon name="close" size={16} /></button>}
           </div>
         )}
-        <Lobby lobby={lobby} />
+        <Lobby lobby={panel === 'people' ? [] : lobby} />
         {alone && (
           <div className="call-share-card">
             <strong>Your meeting is ready</strong>

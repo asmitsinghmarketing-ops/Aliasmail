@@ -3600,3 +3600,43 @@ a.recording-drive:hover { text-decoration: underline; }
   .meeting-card .recording-info { flex-basis: calc(100% - 80px); }
   .meeting-card .recording-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
 }
+
+/* ---------- call side panel (People, Devices), Meet-style ---------- */
+.call-panel { width: 340px; padding: 18px 18px 20px; border-radius: 12px; background: #2d2e31; color: #e8eaed; }
+.call-panel-close { top: 10px; right: 10px; border-radius: 50%; color: #e8eaed; }
+.call-panel-close:hover { background: rgb(232 234 237 / 10%); }
+.call-panel-title { margin: 2px 44px 14px 0; font-size: 18px; font-weight: 500; }
+.call-panel h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: #e8eaed; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.call-panel h3:not(:first-of-type) { margin-top: 0; }
+.call-panel h3 span { min-width: 20px; padding: 1px 7px; border-radius: 10px; background: #3c4043; font-size: 11px; letter-spacing: 0; text-align: center; }
+.call-panel-section { padding: 14px 0; border-top: 1px solid #3c4043; }
+.call-panel-title + .call-panel-section { padding-top: 0; border-top: 0; }
+.call-panel-note { color: #9aa0a6; }
+.call-people { gap: 0; }
+.call-people li { gap: 12px; min-height: 52px; padding: 4px 6px; margin: 0 -6px; border-radius: 10px; }
+.call-people li:hover { background: rgb(232 234 237 / 5%); }
+.call-people li > .avatar, .call-people li > .presence-wrap { flex: none; }
+.call-people li > .avatar { width: 34px; height: 34px; }
+.call-people li > span:not(.call-person):not(.presence-wrap):not(.avatar) { flex: none; }
+.call-person { flex: 1; min-width: 0; display: grid !important; gap: 1px; overflow-wrap: normal !important; }
+.call-person strong, .call-person small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-person strong { font-size: 14px; font-weight: 500; }
+.call-person small { color: #9aa0a6; font-size: 12px; }
+.call-person-mic { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: #e8eaed; }
+.call-person-mic.off { color: #f28b82; }
+.call-person-hand { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: #f4b740; color: #202124; }
+.call-pill { flex: none; display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 12px; border: 1px solid #5f6368; border-radius: 16px; background: transparent; color: #8ab4f8; font-size: 13px; font-weight: 500; cursor: pointer; }
+.call-pill:hover:not(:disabled) { background: rgb(138 180 248 / 10%); }
+.call-pill:disabled { color: #9aa0a6; cursor: default; }
+.call-pill.primary { border-color: #8ab4f8; background: #8ab4f8; color: #202124; }
+.call-pill.primary:hover:not(:disabled) { background: #aecbfa; }
+.call-people-search { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; padding: 0 12px; border-radius: 8px; background: #3c4043; color: #9aa0a6; }
+.call-people-search input { flex: 1; min-width: 0; height: 38px; border: 0; background: transparent; color: #e8eaed; font: inherit; outline: none; }
+.call-panel .call-share { margin: 0 0 6px; }
+.call-panel .call-share-link input { border-color: #5f6368; background: #202124; }
+.call-panel .call-share-link .btn { border-radius: 18px; }
+.call-panel .presence-dot { border-color: #2d2e31; }
+.call-device select { border-color: #5f6368; background: #202124; }
+@media (max-width: 800px) {
+  .call-panel { width: auto; }
+}

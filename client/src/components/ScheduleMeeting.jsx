@@ -21,7 +21,7 @@ function defaultStart(day) {
   return start;
 }
 
-export default function ScheduleMeeting({ me, day, meeting, onSaved, onClose }) {
+export default function ScheduleMeeting({ me, day, meeting, onSaved, onClose, onEmail, onOpenMeetings }) {
   const start = meeting ? new Date(meeting.startAt) : defaultStart(day);
   const [form, setForm] = useState({
     title: meeting?.title || '',
@@ -106,7 +106,11 @@ export default function ScheduleMeeting({ me, day, meeting, onSaved, onClose }) 
               <button type="button" className="icon-btn" title="Copy link" onClick={copy}><Icon name={copied ? 'check' : 'copy'} size={18} /></button>
             </div>
             {copied && <span className="muted small">Link copied</span>}
-            <div className="meet-actions"><button type="button" className="btn btn-primary" onClick={onClose}>Done</button></div>
+            <div className="meet-actions">
+              {onOpenMeetings && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onOpenMeetings(); }}><Icon name="event" size={18} /> Open Meetings</button>}
+              {onEmail && <button type="button" className="btn btn-outline" onClick={() => onEmail({ ...saved, link: meetingLink(saved.code) })}><Icon name="mail" size={18} /> Send by email</button>}
+              <button type="button" className="btn btn-primary" onClick={onClose}>Done</button>
+            </div>
           </div>
         ) : (
           <form className="meet-form" onSubmit={submit}>
