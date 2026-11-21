@@ -170,7 +170,7 @@ function Screen() {
       ) : workspace === 'attendance' ? (
         <Attendance user={user} onClose={() => setWorkspace('mail')} />
       ) : workspace === 'recordings' ? (
-        <Recordings onClose={() => setWorkspace('mail')} />
+        <Recordings me={user.role === 'admin' ? user.mailbox : user.email} onClose={() => setWorkspace('mail')} />
       ) : (
         <Mailbox
             key={sharedBox ? `shared:${sharedBox.address}` : 'own'}

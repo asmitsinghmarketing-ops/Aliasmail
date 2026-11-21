@@ -4,8 +4,8 @@
 // enough for shared-hosting database limits. Everyone on the team who was in the call can watch
 // it; when the recorder has connected Google Drive, a copy goes to their Drive too.
 //
-// Old recordings are deleted after RECORDING_KEEP_DAYS, and the oldest first once all of them
-// together pass RECORDING_MAX_MB.
+// Recordings are deleted RECORDING_KEEP_DAYS after the meeting (15 by default), and the oldest
+// first once all of them together pass RECORDING_MAX_MB.
 import crypto from 'node:crypto';
 import { once } from 'node:events';
 import express, { Router } from 'express';
@@ -35,6 +35,7 @@ const fileName = (rec) => `call-recording-${rec.startedAt.slice(0, 16).replace(/
 const usedBytes = () => recordings().reduce((sum, rec) => sum + (rec.size || 0), 0);
 
 function titleOf(rec) {
+  if (rec.meetingTitle) return rec.meetingTitle;
   const others = rec.names.filter((name) => name !== nameOf(rec.recorder));
   return others.length ? `Call with ${others.join(', ')}` : `Call recorded by ${nameOf(rec.recorder)}`;
 }
@@ -51,6 +52,8 @@ function view(rec, req) {
     endedAt: rec.endedAt,
     durationMs: rec.durationMs,
     size: rec.size,
+    // Deleted automatically this long after the meeting (RECORDING_KEEP_DAYS).
+    deletesAt: new Date(Date.parse(rec.startedAt) + config.calls.recordingKeepDays * 86_400_000).toISOString(),
     recorder: { address: rec.recorder, name: nameOf(rec.recorder) },
     people: rec.names,
     mine,
@@ -199,7 +202,7 @@ router.post('/', (req, res) => {
   if (!TYPE.test(type)) throw new HttpError(400, 'Unsupported recording format');
   const rec = {
     id: crypto.randomUUID(), callId: call.id, recorder: me, recorderRole: req.user.role, recorderEmail: req.user.email,
-    people: teamIn(call), names: namesIn(call), startedAt: new Date().toISOString(), endedAt: null, durationMs: 0,
+    meetingTitle: call.title || null, people: teamIn(call), names: namesIn(call), startedAt: new Date().toISOString(), endedAt: null, durationMs: 0,
     type, parts: [], size: 0, status: 'recording', touchedAt: Date.now(), drive: null,
   };
   recordings().push(rec);

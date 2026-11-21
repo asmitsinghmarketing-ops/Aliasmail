@@ -20,6 +20,7 @@ import notificationRoutes from './routes/notifications.js';
 import automationRoutes from './routes/automations.js';
 import callRoutes, { guestRouter as meetRoutes } from './routes/calls.js';
 import recordingRoutes from './routes/recordings.js';
+import meetingRoutes from './routes/meetings.js';
 import attendanceRoutes from './routes/attendance.js';
 import { startPush } from './push.js';
 import { startEmailAutomations } from './automations.js';
@@ -153,6 +154,7 @@ app.use('/api/automations', automationRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/meet', meetRoutes); // meeting links: guests without an account
 app.use('/api/recordings', recordingRoutes);
+app.use('/api/meetings', meetingRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));

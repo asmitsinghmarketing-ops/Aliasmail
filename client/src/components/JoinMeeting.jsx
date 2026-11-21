@@ -60,10 +60,10 @@ function Preview({ stream, cameraOn, micOn, name, onCamera, onMic }) {
         : <span className="join-preview-off">{cameraOn ? 'Starting camera…' : 'Camera is off'}</span>}
       {name && <span className="join-preview-name">{name}</span>}
       <div className="join-preview-controls">
-        <button type="button" className={`call-control ${micOn ? '' : 'on'}`} aria-pressed={!micOn} aria-label={micOn ? 'Join muted' : 'Join with microphone on'} title={micOn ? 'Microphone on' : 'You will join muted'} onClick={onMic}>
+        <button type="button" className={`call-control ${micOn ? '' : 'off'}`} aria-pressed={!micOn} aria-label={micOn ? 'Join muted' : 'Join with microphone on'} title={micOn ? 'Microphone on' : 'You will join muted'} onClick={onMic}>
           <Icon name={micOn ? 'mic' : 'micOff'} />
         </button>
-        <button type="button" className={`call-control ${cameraOn ? '' : 'on'}`} aria-pressed={!cameraOn} aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'} title={cameraOn ? 'Camera on' : 'Camera off'} onClick={onCamera}>
+        <button type="button" className={`call-control ${cameraOn ? '' : 'off'}`} aria-pressed={!cameraOn} aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'} title={cameraOn ? 'Camera on' : 'Camera off'} onClick={onCamera}>
           <Icon name={cameraOn ? 'videocam' : 'videocamOff'} />
         </button>
       </div>
@@ -93,14 +93,23 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
   const session = useRef(null); // { guestId, token, source, listeners, joined }
   const preview = useCameraPreview(cameraOn && ['form', 'knocking', 'waiting'].includes(phase));
 
+  const loadMeeting = () => fetch(`/api/meet/${encodeURIComponent(code)}`, { credentials: 'same-origin' })
+    .then((res) => (res.ok ? res.json() : Promise.reject()))
+    .then(setMeeting)
+    .catch(() => setPhase('missing'));
   useEffect(() => {
     hideBoot(); // the loading splash: this page doesn't wait for the mailbox
-    fetch(`/api/meet/${encodeURIComponent(code)}`, { credentials: 'same-origin' })
-      .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then(setMeeting)
-      .catch(() => setPhase('missing'));
+    loadMeeting();
     api('/auth/me', { signInFlow: true }).then(setMe).catch(() => setMe(null));
-  }, [code]);
+  }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A scheduled meeting nobody from the team has opened yet: check again every few seconds.
+  const notStarted = meeting && !meeting.started && !me && phase === 'form';
+  useEffect(() => {
+    if (!notStarted) return undefined;
+    const timer = setInterval(loadMeeting, 8000);
+    return () => clearInterval(timer);
+  }, [notStarted]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Out of the call: say why, and stop listening.
   const wasInCall = useRef(false);
@@ -262,7 +271,14 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
               onMic={() => setMicOn((on) => !on)}
             />
             <section className="join-panel">
-              <h1>{host ? `${host}’s meeting` : 'Meeting'}</h1>
+              <h1>{meeting?.title || (host ? `${host}’s meeting` : 'Meeting')}</h1>
+              {meeting?.title && host && <p className="join-note">Organised by {host}</p>}
+              {meeting && !meeting.started && (
+                <p className="join-starts">
+                  <Icon name="event" size={18} />
+                  {new Date(meeting.startAt).toLocaleString([], { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}
+                </p>
+              )}
               {preview.problem && cameraOn && <p className="join-note">{preview.problem} You can still join without it.</p>}
               {me === undefined || !meeting ? (
                 <p className="join-note">Getting the meeting ready…</p>
@@ -277,9 +293,17 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
                 <div className="join-waiting" role="status"><span className="join-spinner" aria-hidden="true" /><strong>Joining…</strong></div>
               ) : signedIn ? (
                 <>
-                  <p className="join-note">You’re signed in as {myName}, so you can join straight away.</p>
-                  <button type="button" className="btn btn-primary join-go" onClick={joinAsTeammate}>Join now</button>
+                  <p className="join-note">
+                    You’re signed in as {myName}, so you can {meeting.started ? 'join straight away' : 'start the meeting now; guests can ask to join once you’re in'}.
+                  </p>
+                  <button type="button" className="btn btn-primary join-go" onClick={joinAsTeammate}>{meeting.started ? 'Join now' : 'Start meeting'}</button>
                 </>
+              ) : !meeting.started ? (
+                <div className="join-waiting" role="status">
+                  <span className="join-spinner" aria-hidden="true" />
+                  <strong>The meeting hasn’t started yet</strong>
+                  <p>Keep this page open. You can ask to join as soon as someone from the team opens the meeting.</p>
+                </div>
               ) : (
                 <form className="join-form" onSubmit={askToJoin}>
                   <label>

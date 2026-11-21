@@ -1612,7 +1612,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const railTabs = [
     { id: 'tasks', label: 'Tasks', icon: 'checkCircle', onClick: onOpenTasks },
     { id: 'attendance', label: 'Attendance', icon: 'clock', onClick: onOpenAttendance, hidden: shared },
-    { id: 'recordings', label: 'Recordings', title: 'Call recordings', icon: 'record', onClick: onOpenRecordings, hidden: shared || !onOpenRecordings },
+    { id: 'recordings', label: 'Meetings', title: 'Meetings and recordings', icon: 'event', onClick: onOpenRecordings, hidden: shared || !onOpenRecordings },
     { id: 'automations', label: 'Automate', title: 'Automations', icon: 'scheduleSend', onClick: onOpenAutomations, hidden: shared },
     { id: 'assistant', label: 'Assistant', icon: 'sparkle', on: assistantOpen, onClick: () => setAssistantOpen(!assistantOpen), hidden: shared },
     { id: 'notes', label: 'Notes', title: 'Instant notes', icon: 'chat', on: notesOpen, badge: notesUnread, onClick: () => (notesOpen ? setNotesOpen(false) : openNotes()) },

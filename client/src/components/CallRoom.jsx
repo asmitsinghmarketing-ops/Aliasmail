@@ -99,14 +99,36 @@ function Tile({ name, address, stream, videoOn, muted, hand, speaking, status, m
   );
 }
 
-function ControlButton({ icon, label, on, danger, recording, disabled, onClick, badge }) {
+/**
+ * A round call button. `off`: something is switched off (red, like a muted mic); `on`: something
+ * is active (sharing, hand raised, a panel open). The label is the tooltip.
+ */
+function ControlButton({ icon, label, on, off, danger, recording, disabled, onClick, badge, side }) {
+  const pressed = off !== undefined ? off : on;
   return (
-    <button type="button" className={`call-control ${on ? 'on' : ''} ${danger ? 'danger' : ''} ${recording ? 'recording' : ''}`} aria-label={label} aria-pressed={on === undefined ? undefined : on} title={label} disabled={disabled} onClick={onClick}>
+    <button
+      type="button"
+      className={`call-control ${on ? 'on' : ''} ${off ? 'off' : ''} ${danger ? 'danger' : ''} ${recording ? 'recording' : ''} ${side ? 'side' : ''}`}
+      aria-label={label}
+      aria-pressed={pressed === undefined || danger ? undefined : pressed}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+    >
       <Icon name={icon} />
       {badge > 0 && <span className="call-control-badge">{badge}</span>}
-      <span className="call-control-label">{label}</span>
     </button>
   );
+}
+
+/** The time of day, for the corner of the call (like a wall clock in a meeting room). */
+function useClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
+  return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 /* ---------------------------------- side panels ---------------------------------- */
@@ -437,6 +459,7 @@ export default function CallRoom({ state }) {
   const [recordingStartedAt, setRecordingStartedAt] = useState(null);
   const recorder = useRef(null); // { rec, upload } while recording
   const duration = useDuration(state.startedAt);
+  const clock = useClock();
   const { call, me, peers } = state;
   const lobby = state.guest ? [] : call.lobby || [];
 
@@ -518,8 +541,10 @@ export default function CallRoom({ state }) {
 
   const ringing = call.invited.filter((invite) => invite.status === 'ringing');
   const presenter = peers.find((peer) => peer.sharing && peer.screenStream) || null;
-  const title = peers.length
-    ? peers.map((peer) => peer.name).join(', ')
+  const title = call.title
+    ? call.title
+    : peers.length
+      ? peers.map((peer) => peer.name).join(', ')
     : ringing.length ? `Calling ${ringing.map((invite) => invite.name).join(', ')}…` : 'Waiting for others…';
 
   const myName = call.peers.find((peer) => peer.id === me)?.name || 'You';
@@ -657,14 +682,22 @@ export default function CallRoom({ state }) {
       </div>
 
       <footer className="call-controls">
-        <ControlButton icon={state.muted || !state.micAvailable ? 'micOff' : 'mic'} label={state.micAvailable ? micLabel : 'Mic off'} on={state.muted || !state.micAvailable} onClick={toggleMute} />
-        <ControlButton icon={state.cameraOn ? 'videocam' : 'videocamOff'} label={state.cameraOn ? 'Camera off' : 'Camera on'} on={!state.cameraOn} onClick={toggleCamera} />
-        {canShareScreen() && <ControlButton icon="screenShare" label={state.sharing ? 'Stop sharing' : 'Share screen'} on={state.sharing} onClick={toggleScreen} />}
-        {recordingSupported() && !state.guest && <ControlButton icon="record" label={state.recording ? 'Stop recording' : 'Record'} on={state.recording} recording={state.recording} onClick={toggleRecording} />}
-        <ControlButton icon="hand" label={state.hand ? 'Lower hand' : 'Raise hand'} on={state.hand} onClick={toggleHand} />
-        <ControlButton icon="personAdd" label={state.guest ? 'People' : 'People & link'} on={panel === 'people'} badge={peers.filter((peer) => peer.hand).length} onClick={() => setPanel(panel === 'people' ? null : 'people')} />
-        <ControlButton icon="settings" label="Devices" on={panel === 'devices'} onClick={() => setPanel(panel === 'devices' ? null : 'devices')} />
-        <ControlButton icon="callEnd" label="Leave" danger onClick={hangUp} />
+        <div className="call-controls-info" aria-hidden="true">
+          <strong>{clock}</strong>
+          <span>{call.code || (call.video ? 'Video call' : 'Voice call')}</span>
+        </div>
+        <div className="call-controls-main">
+          <ControlButton icon={state.muted || !state.micAvailable ? 'micOff' : 'mic'} label={micLabel} off={state.muted || !state.micAvailable} onClick={toggleMute} />
+          <ControlButton icon={state.cameraOn ? 'videocam' : 'videocamOff'} label={state.cameraOn ? 'Turn camera off' : 'Turn camera on'} off={!state.cameraOn} onClick={toggleCamera} />
+          {canShareScreen() && <ControlButton icon="screenShare" label={state.sharing ? 'Stop sharing' : 'Share screen'} on={state.sharing} onClick={toggleScreen} />}
+          {recordingSupported() && !state.guest && <ControlButton icon="record" label={state.recording ? 'Stop recording' : 'Record'} recording={state.recording} onClick={toggleRecording} />}
+          <ControlButton icon="hand" label={state.hand ? 'Lower hand' : 'Raise hand'} on={state.hand} onClick={toggleHand} />
+          <ControlButton icon="callEnd" label="Leave call" danger onClick={hangUp} />
+        </div>
+        <div className="call-controls-side">
+          <ControlButton side icon="personAdd" label={state.guest ? 'People' : 'People and meeting link'} on={panel === 'people'} badge={peers.filter((peer) => peer.hand).length + lobby.length} onClick={() => setPanel(panel === 'people' ? null : 'people')} />
+          <ControlButton side icon="settings" label="Microphone, speaker and camera" on={panel === 'devices'} onClick={() => setPanel(panel === 'devices' ? null : 'devices')} />
+        </div>
       </footer>
     </div>
   );

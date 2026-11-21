@@ -180,7 +180,7 @@ const config = {
     turnCredential: env('CALL_TURN_CREDENTIAL'),
     turnTtlSeconds: Math.max(600, Number(env('CALL_TURN_TTL_SECONDS', '14400')) || 14400),
     // Call recordings kept in the app (database or data folder): oldest go first past either limit.
-    recordingKeepDays: Math.max(1, Number(env('RECORDING_KEEP_DAYS', '30')) || 30),
+    recordingKeepDays: Math.max(1, Number(env('RECORDING_KEEP_DAYS', '15')) || 15),
     recordingMaxMb: Math.max(100, Number(env('RECORDING_MAX_MB', '5000')) || 5000),
   },
   appUrl: env('APP_URL').replace(/\/$/, ''),

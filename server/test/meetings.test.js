@@ -120,7 +120,7 @@ test('a meeting link: teammates join straight in, guests wait until someone lets
 
   // The join page learns whose meeting it is, nothing more.
   const page = await (await fetch(`${BASE}/api/meet/${code}`)).json();
-  assert.deepEqual(page, { code, hostName: 'john', video: true });
+  assert.deepEqual(page, { code, hostName: 'john', video: true, title: null, started: true });
   assert.equal((await fetch(`${BASE}/api/meet/aaa-bbbb-ccc`)).status, 404);
 
   // A guest knocks: John sees them waiting; they are not in the call yet.
@@ -191,6 +191,54 @@ test('a meeting with a link stays open while its host waits alone', async () => 
   assert.equal((await call('mary', `/calls/${ordinary.call.id}/link`, { peerId: started.peerId })).status, 404);
   await call('john', `/calls/${started.call.id}/leave`, { peerId: started.peerId });
   await call('john', `/calls/${ordinary.call.id}/leave`, { peerId: ordinary.peerId });
+});
+
+test('a scheduled meeting: invitees see it, its link waits for the team, and the first teammate starts it', async () => {
+  const mary = await listen('mary');
+  const startAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
+  const made = await call('john', '/meetings', { title: 'Weekly review', startAt, durationMin: 45, invitees: ['mary@example.com'], description: 'Agenda' });
+  assert.equal(made.status, 201);
+  const meeting = await made.json();
+  assert.match(meeting.code, /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/);
+  assert.deepEqual([meeting.title, meeting.durationMin, meeting.mine, meeting.canEdit, meeting.live], ['Weekly review', 45, true, true, false]);
+  // Mary is told and sees it; Omar, not invited, doesn't.
+  await waitFor(mary.got, (m) => m.type === 'notification' && m.notification.title.includes('Weekly review'));
+  const marys = (await json('mary', '/meetings')).items;
+  assert.deepEqual(marys.map((item) => [item.id, item.mine, item.canEdit]), [[meeting.id, false, false]]);
+  assert.equal((await json('omar', '/meetings')).items.length, 0);
+  assert.equal((await call('mary', `/meetings/${meeting.id}`, undefined, 'DELETE')).status, 403);
+  // Bad times, lengths and invitees are refused.
+  assert.equal((await call('john', '/meetings', { title: 'x', startAt: new Date(Date.now() - 86_400_000).toISOString(), durationMin: 30 })).status, 400);
+  assert.equal((await call('john', '/meetings', { title: 'x', startAt, durationMin: 7 })).status, 400);
+  assert.equal((await call('john', '/meetings', { title: 'x', startAt, durationMin: 30, invitees: ['stranger@else.com'] })).status, 400);
+
+  // Before anyone from the team opens it, a guest sees when it starts and can't knock yet.
+  const page = await (await fetch(`${BASE}/api/meet/${meeting.code}`)).json();
+  assert.deepEqual([page.title, page.started, page.startAt, page.hostName], ['Weekly review', false, startAt, 'john']);
+  assert.equal((await fetch(`${BASE}/api/meet/${meeting.code}/knock`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ name: 'Early' }) })).status, 409);
+
+  // Mary opens the link first: that starts it, under the same code and title.
+  const started = await call('mary', `/calls/code/${meeting.code}/join`, {});
+  assert.equal(started.status, 201);
+  const live = await started.json();
+  assert.deepEqual([live.call.code, live.call.title, live.call.peers.length], [meeting.code, 'Weekly review', 1]);
+  assert.equal((await json('john', '/meetings')).items[0].live, true);
+  const john = await json('john', `/calls/code/${meeting.code}/join`, {});
+  assert.equal(john.call.peers.length, 2);
+  assert.equal((await (await fetch(`${BASE}/api/meet/${meeting.code}`)).json()).started, true);
+
+  // Renaming during the meeting is fine; moving it into the past isn't.
+  const renamed = await call('john', `/meetings/${meeting.id}`, { title: 'Weekly review (moved)' }, 'PATCH');
+  assert.equal((await renamed.json()).title, 'Weekly review (moved)');
+  assert.equal((await call('john', `/meetings/${meeting.id}`, { startAt: new Date(Date.now() - 86_400_000).toISOString() }, 'PATCH')).status, 400);
+
+  // When everyone leaves, the link can start it again later; cancelling it ends that.
+  await call('mary', `/calls/${live.call.id}/leave`, { peerId: live.peerId });
+  await call('john', `/calls/${live.call.id}/leave`, { peerId: john.peerId });
+  assert.equal((await (await fetch(`${BASE}/api/meet/${meeting.code}`)).json()).started, false);
+  assert.equal((await call('john', `/meetings/${meeting.id}`, undefined, 'DELETE')).status, 200);
+  assert.equal((await fetch(`${BASE}/api/meet/${meeting.code}`)).status, 404);
+  assert.equal((await call('mary', `/calls/code/${meeting.code}/join`, {})).status, 404);
 });
 
 test('recordings are kept in pieces, watchable by the people in the call, and deletable by the recorder', async () => {

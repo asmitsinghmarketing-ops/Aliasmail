@@ -16,6 +16,7 @@ import { callEvents } from '../mail-events.js';
 import { createNotification } from '../notifications.js';
 import { notify } from '../push.js';
 import { clientIp, limiter, randomToken, sha256 } from '../security.js';
+import { db } from '../store.js';
 
 const router = Router();
 router.use(requireAuth());
@@ -54,6 +55,7 @@ const publicCall = (call, { forGuest = false } = {}) => ({
   createdAt: call.createdAt,
   expiresAt: call.expiresAt,
   code: call.code || null,
+  title: call.title || null, // a scheduled meeting's name
   invited: forGuest ? [] : [...call.invited].map(([address, invite]) => ({ address, name: nameOf(address), status: invite.status })),
   peers: [...call.peers].map(([id, peer]) => ({
     id, address: forGuest && !isGuest(peer.address) ? '' : peer.address, name: nameIn(call, peer.address), guest: isGuest(peer.address),
@@ -160,30 +162,65 @@ function people(value, me, { allowNone = false } = {}) {
 }
 
 /** A meeting code like "kdw-qmzp-tra": easy to read out, and too many to guess. */
-function newCode() {
+export function newCode() {
   const letters = 'abcdefghijklmnopqrstuvwxyz';
   for (;;) {
     const bytes = crypto.randomBytes(10);
     const raw = [...bytes].map((b) => letters[b % 26]).join('');
     const code = `${raw.slice(0, 3)}-${raw.slice(3, 7)}-${raw.slice(7)}`;
-    if (!codes.has(code)) return code;
+    if (!codes.has(code) && !db().meetings.some((meeting) => meeting.code === code)) return code;
   }
 }
 
-function giveLink(call) {
+function giveLink(call, code) {
   if (!call.code) {
-    call.code = newCode();
+    call.code = code || newCode();
     codes.set(call.code, call.id);
   }
   return call.code;
 }
 
-/** An open meeting by its code. Ended or unknown codes look the same. */
-function byCode(code) {
+const LINK_AFTER_END_MS = 12 * 60 * 60_000; // a scheduled meeting's link keeps working this long after it was due to end
+
+/** A scheduled meeting whose link still works, by its code; null if none. */
+export function scheduledByCode(code) {
+  const value = String(code || '').toLowerCase();
+  if (!CODE.test(value)) return null;
+  const meeting = db().meetings.find((item) => item.code === value);
+  if (!meeting) return null;
+  const end = Date.parse(meeting.startAt) + meeting.durationMin * 60_000;
+  return Date.now() > end + LINK_AFTER_END_MS ? null : meeting;
+}
+
+/** A call going on now under this meeting code, or null. */
+function liveByCode(code) {
   const value = String(code || '').toLowerCase();
   const call = CODE.test(value) ? calls.get(codes.get(value)) : null;
-  if (!call || call.status === 'ended') throw new HttpError(404, 'This meeting has ended or the link is wrong');
+  return call && call.status !== 'ended' ? call : null;
+}
+
+/** Is a scheduled meeting going on right now? (For the calendar's Join button.) */
+export const isLive = (code) => Boolean(liveByCode(code));
+
+/** An open meeting by its code. Ended or unknown codes look the same. */
+function byCode(code) {
+  const call = liveByCode(code);
+  if (!call) throw new HttpError(404, 'This meeting has ended or the link is wrong');
   return call;
+}
+
+/** A new call with this person in it. `code` + `title` start a scheduled meeting. */
+function createCall(from, { to = [], video = false, meeting = false, code = null, title = null }) {
+  const call = {
+    id: crypto.randomUUID(), from, fromName: nameOf(from), video: Boolean(video), status: to.length ? 'ringing' : 'active', reason: null,
+    createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + RING_MS).toISOString(),
+    invited: new Map(), peers: new Map(), guests: new Map(), connected: false, code: null, title,
+  };
+  calls.set(call.id, call);
+  if (meeting) giveLink(call, code);
+  const peerId = addPeer(call, from);
+  ring(call, to);
+  return { call, peerId };
 }
 
 /** The call, if this person has anything to do with it. Others are told it doesn't exist. */
@@ -296,21 +333,22 @@ router.post('/', (req, res) => {
   const meeting = Boolean(req.body?.meeting);
   const to = people(req.body?.to, from, { allowNone: meeting });
   if (to.length + 1 > MAX_PEOPLE) throw new HttpError(400, `A call can have up to ${MAX_PEOPLE} people`);
-  const call = {
-    id: crypto.randomUUID(), from, fromName: nameOf(from), video: Boolean(req.body?.video), status: to.length ? 'ringing' : 'active', reason: null,
-    createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + RING_MS).toISOString(),
-    invited: new Map(), peers: new Map(), guests: new Map(), connected: false, code: null,
-  };
-  calls.set(call.id, call);
-  if (meeting) giveLink(call);
-  const peerId = addPeer(call, from);
-  ring(call, to);
+  const { call, peerId } = createCall(from, { to, video: req.body?.video, meeting });
   res.status(201).json({ call: publicCall(call), peerId, iceServers: iceServersFor(from) });
 });
 
-/** A teammate opening a meeting link: straight in, no lobby. */
+/**
+ * A teammate opening a meeting link: straight in, no lobby. For a scheduled meeting nobody has
+ * opened yet, this starts it.
+ */
 router.post('/code/:code/join', (req, res) => {
-  joinAsMember(byCode(req.params.code), personOf(req.user), res);
+  const me = personOf(req.user);
+  const live = liveByCode(req.params.code);
+  if (live) return joinAsMember(live, me, res);
+  const scheduled = scheduledByCode(req.params.code);
+  if (!scheduled) throw new HttpError(404, 'This meeting has ended or the link is wrong');
+  const { call, peerId } = createCall(me, { video: true, meeting: true, code: scheduled.code, title: scheduled.title });
+  return res.status(201).json({ call: publicCall(call), peerId, iceServers: iceServersFor(me) });
 });
 
 router.get('/:id', (req, res) => {
@@ -427,16 +465,23 @@ function guestPeer(req) {
   return { call, peer, peerId: guest.peerId };
 }
 
-/** What the join page shows before knocking. Nothing about who is in it. */
+/**
+ * What the join page shows before knocking. Nothing about who is in it. A scheduled meeting that
+ * nobody from the team has opened yet says so (`started: false`), with when it's due.
+ */
 guestRouter.get('/:code', (req, res) => {
-  const call = byCode(req.params.code);
-  res.json({ code: call.code, hostName: call.fromName, video: call.video });
+  const call = liveByCode(req.params.code);
+  if (call) return res.json({ code: call.code, hostName: call.fromName, video: call.video, title: call.title, started: true });
+  const scheduled = scheduledByCode(req.params.code);
+  if (!scheduled) throw new HttpError(404, 'This meeting has ended or the link is wrong');
+  return res.json({ code: scheduled.code, hostName: nameOf(scheduled.host), video: true, title: scheduled.title, started: false, startAt: scheduled.startAt });
 });
 
 guestRouter.post('/:code/knock', (req, res) => {
   const ip = clientIp(req);
   knocks.check(ip);
   knocks.fail(ip);
+  if (!liveByCode(req.params.code) && scheduledByCode(req.params.code)) throw new HttpError(409, 'This meeting hasn’t started yet. You can ask to join once someone from the team opens it.');
   const call = byCode(req.params.code);
   const name = String(req.body?.name || '').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
   if (!name) throw new HttpError(400, 'Enter your name');

@@ -26,6 +26,7 @@ const empty = () => ({
   tasks: { projects: [], items: [], activity: [] }, // shared team projects and tasks (routes/tasks.js)
   automations: { items: [], runs: [] }, // user-built, AI-planned allowlisted workflows
   attendance: { sessions: [] }, // clock-ins plus last browser heartbeat while a person is working
+  meetings: [], // scheduled meetings with a link (routes/meetings.js)
   recordings: [], // call recordings: details here, the video itself in pieces in app_files (routes/recordings.js)
   assistant: { chats: [], usage: {}, limits: { monthlyUsd: 50, perPersonUsd: 20 } }, // the Assistant (assistant.js)
   sync: { lastSyncAt: null, lastError: null },
