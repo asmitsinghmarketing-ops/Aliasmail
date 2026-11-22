@@ -33,22 +33,43 @@ async function unlockCallAudio() {
   } catch { /* desktop notification remains the fallback */ }
 }
 
+// Soft marimba-like notes: a quick attack, then the overtones fade faster than the note itself.
+const C5 = 523.25, E5 = 659.25, G5 = 783.99, C6 = 1046.5, G4 = 392, E4 = 329.63;
+const RINGTONES = {
+  // Someone is calling you: a rising chime, twice, then a pause.
+  incoming: {
+    seconds: 3.2,
+    notes: [[0, C5], [0.13, E5], [0.26, G5], [0.39, C6], [0.9, C5], [1.03, E5], [1.16, G5], [1.29, C6]],
+  },
+  // You are calling: a calm two-note tone while it rings at the other end.
+  waiting: { seconds: 3.5, notes: [[0, G4], [0.32, E4]] },
+};
+
+function chime(t, frequency) {
+  if (t < 0) return 0;
+  const attack = Math.min(1, t / 0.006);
+  const phase = 2 * Math.PI * frequency * t;
+  return attack * (
+    Math.sin(phase) * Math.exp(-t / 0.42)
+    + 0.3 * Math.sin(phase * 4) * Math.exp(-t / 0.09) // the bright "tock" at the start
+    + 0.12 * Math.sin(phase * 2) * Math.exp(-t / 0.2)
+  );
+}
+
 // `level`: quieter for the sound a caller hears while waiting.
-function startRingtone(level = 0.14) {
+function startRingtone(level = 0.14, kind = 'incoming') {
   try {
     const context = contextForCall();
     if (!context) return null;
     if (context.state === 'suspended') void context.resume().catch(() => {});
-    const seconds = 2;
-    const buffer = context.createBuffer(1, context.sampleRate * seconds, context.sampleRate);
+    const { seconds, notes } = RINGTONES[kind];
+    const buffer = context.createBuffer(1, Math.round(context.sampleRate * seconds), context.sampleRate);
     const samples = buffer.getChannelData(0);
     for (let i = 0; i < samples.length; i++) {
       const t = i / context.sampleRate;
-      const tone = t < 0.24 ? { start: 0, frequency: 660 } : t >= 0.32 && t < 0.56 ? { start: 0.32, frequency: 880 } : null;
-      if (!tone) continue;
-      const local = t - tone.start;
-      const envelope = Math.min(1, local / 0.025, (0.24 - local) / 0.035);
-      samples[i] = Math.sin(2 * Math.PI * tone.frequency * local) * Math.max(0, envelope) * level;
+      let sum = 0;
+      for (const [start, frequency] of notes) if (t >= start && t - start < 2) sum += chime(t - start, frequency);
+      samples[i] = sum * level;
     }
     const source = context.createBufferSource();
     source.buffer = buffer;
@@ -172,7 +193,7 @@ export default function CallCenter() {
   const waiting = room.phase === 'in-call' && !room.peers.length && room.call.invited.some((invite) => invite.status === 'ringing');
   useEffect(() => {
     if (!waiting) return undefined;
-    const ringtone = startRingtone(0.05);
+    const ringtone = startRingtone(0.07, 'waiting');
     return () => ringtone?.stop();
   }, [waiting]);
 
