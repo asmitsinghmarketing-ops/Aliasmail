@@ -24,6 +24,7 @@ router.use(requireAuth());
 
 const MAX_PART = 6 * 1024 * 1024; // one piece; browsers send about 2 MB
 const STALE_MS = 15 * 60_000; // no new piece for this long: the recording window closed or crashed
+const CALL_OVER_GRACE_MS = 60_000; // after the call ends, time for the recorder's last pieces to arrive
 const DRIVE_CHUNK = 8 * 1024 * 1024; // a multiple of 256 KB, as Drive's resumable upload requires
 const TYPE = /^video\/(webm|mp4)(;[\w=.,\s-]*)?$/i;
 
@@ -178,11 +179,23 @@ async function copyToDrive(rec) {
   if (recordings().includes(rec)) save();
 }
 
-// Recordings whose window closed mid-way are finished with what arrived; old ones are deleted.
+/**
+ * Recordings whose window closed mid-way are finished with what arrived: soon after the call is
+ * over (everyone left), or after a long silence while it carries on.
+ */
+export function finishAbandoned(now = Date.now()) {
+  for (const rec of recordings()) {
+    if (rec.status !== 'recording') continue;
+    const quiet = now - rec.touchedAt;
+    if (quiet > STALE_MS || (quiet > CALL_OVER_GRACE_MS && !liveCall(rec.callId))) finish(rec);
+  }
+}
+
+// Clean up every minute; old recordings are deleted too.
 setInterval(() => {
-  for (const rec of recordings()) if (rec.status === 'recording' && Date.now() - rec.touchedAt > STALE_MS) finish(rec);
+  finishAbandoned();
   prune().catch((err) => console.warn('[recordings] clean-up failed:', describeError(err)));
-}, 5 * 60_000).unref?.();
+}, 60_000).unref?.();
 
 router.get('/', (req, res) => {
   const me = personOf(req.user);

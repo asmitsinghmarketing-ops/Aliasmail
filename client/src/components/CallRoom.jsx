@@ -290,6 +290,7 @@ function TeamPeoplePanel({ state }) {
   );
 }
 
+const ALONE_STOP_MS = 15_000; // recording with nobody left: stop and save after this
 const AudioContextClass = () => window.AudioContext || window.webkitAudioContext;
 
 /**
@@ -525,6 +526,25 @@ export default function CallRoom({ state }) {
       void saveRecording(active);
     }
   }, []);
+
+  // Everyone else left while recording: stop and save, after a moment in case someone is just rejoining.
+  const nobodyElse = peers.length === 0;
+  const hadCompany = useRef(false);
+  useEffect(() => {
+    if (!state.recording) {
+      hadCompany.current = false;
+      return undefined;
+    }
+    if (!nobodyElse) {
+      hadCompany.current = true;
+      return undefined;
+    }
+    if (!hadCompany.current) return undefined;
+    const timer = setTimeout(() => {
+      if (recorder.current) void stopRecording();
+    }, ALONE_STOP_MS);
+    return () => clearTimeout(timer);
+  }, [nobodyElse, state.recording]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Escape closes the record confirmation.
   useEffect(() => {
