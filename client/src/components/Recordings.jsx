@@ -108,6 +108,13 @@ function MeetingCard({ meeting, onJoin, onEdit, onCancel }) {
   );
 }
 
+/** Under a calendar day: a dot each for up to 3 things, then one dot and how many. */
+function DayMarks({ kind, count }) {
+  if (!count) return null;
+  if (count > 3) return <span className={`recordings-mark-count ${kind}`}><i className={kind} />{count}</span>;
+  return Array.from({ length: count }, (_, n) => <i key={n} className={kind} />);
+}
+
 export default function Recordings({ me, onClose }) {
   const [data, setData] = useState(null); // recordings: { items, keepDays }
   const [meetings, setMeetings] = useState(null);
@@ -260,8 +267,8 @@ export default function Recordings({ me, onClose }) {
                         <span>{date.getDate()}</span>
                         {(meetingCount > 0 || recordingCount > 0) && (
                           <span className="recordings-marks" aria-hidden="true">
-                            {meetingCount > 0 && <i className="meeting" />}
-                            {recordingCount > 0 && <i className="recording" />}
+                            <DayMarks kind="meeting" count={meetingCount} />
+                            <DayMarks kind="recording" count={recordingCount} />
                           </span>
                         )}
                       </button>

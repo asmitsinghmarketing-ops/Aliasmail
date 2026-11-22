@@ -3592,8 +3592,13 @@ a.recording-drive:hover { text-decoration: underline; }
 .recordings-day.has { background: none; }
 .recordings-day.has:hover { background: #eef2f8; }
 .recordings-day.selected, .recordings-day.selected:hover { background: var(--brand); }
-.recordings-marks { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); display: flex; gap: 3px; }
-.recordings-marks i, .recordings-legend i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
+.recordings-marks { position: absolute; bottom: 12%; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 3px; line-height: 1; pointer-events: none; }
+.recordings-marks i, .recordings-legend i { position: static; display: inline-block; flex: none; width: 6px; min-width: 0; height: 6px; padding: 0; border-radius: 50%; }
+.recordings-day.has > span:first-child { transform: translateY(-3px); }
+.recordings-mark-count { display: inline-flex; align-items: center; gap: 2px; font-size: 9px; font-weight: 700; }
+.recordings-mark-count.meeting { color: var(--brand); }
+.recordings-mark-count.recording { color: #d92d20; }
+.recordings-day.selected .recordings-mark-count { color: #fff; }
 .recordings-marks i.meeting, .recordings-legend i.meeting { background: var(--brand); }
 .recordings-marks i.recording, .recordings-legend i.recording { background: #d92d20; }
 .recordings-day.selected .recordings-marks i { background: #fff; }
