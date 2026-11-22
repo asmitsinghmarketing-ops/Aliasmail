@@ -231,6 +231,7 @@ export async function createCallRecorder(initialState, { onError, onChunk } = {}
 
   return {
     startedAt: new Date(),
+    type: recorder.mimeType || type || 'video/webm',
     sync(next) {
       state = next;
       syncAudio(next);

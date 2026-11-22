@@ -624,6 +624,12 @@ export default function CallRoom({ state }) {
         onFail: (err) => setRecordError(`${err.message} Keep recording: it will download to this computer when you stop.`),
       });
       const rec = await createCallRecorder(state, { onError: (message) => stopRecording(message), onChunk: (chunk) => upload.add(chunk) });
+      try {
+        await upload.start(rec.type);
+      } catch (err) {
+        await rec.stop();
+        throw err;
+      }
       recorder.current = { rec, upload };
       setRecordingStartedAt(rec.startedAt.getTime());
       setRecording(true);

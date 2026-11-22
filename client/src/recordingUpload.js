@@ -74,6 +74,14 @@ export function createRecordingUpload({ callId, peerId, onFail }) {
   }
 
   return {
+    /**
+     * Register the recording with Nextspace right away, while this window is surely still in the
+     * call: the server only accepts new recordings from people in a call that's going on.
+     */
+    start(recordedType) {
+      if (recordedType) type = recordedType;
+      return create();
+    },
     /** A piece from MediaRecorder (about a second of video). */
     add(chunk) {
       if (failed || !chunk?.size) return;
