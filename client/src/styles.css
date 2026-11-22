@@ -3525,6 +3525,33 @@ a.recording-drive:hover { text-decoration: underline; }
   .call-control.danger { width: 50px; }
 }
 
+/* ---------- call screen motion: things ease in instead of snapping (off with reduced motion) ---------- */
+@keyframes call-room-in { from { opacity: 0; transform: scale(0.985); } }
+@keyframes call-tile-in { from { opacity: 0; transform: scale(0.96); } }
+@keyframes call-panel-in { from { opacity: 0; transform: translateX(16px); } }
+@keyframes call-drop-in { from { opacity: 0; transform: translateY(-6px); } }
+/* For pieces centred with translateX(-50%): keep the centring while they move in. */
+@keyframes call-center-down { from { opacity: 0; transform: translate(-50%, -6px); } }
+@keyframes call-center-up { from { opacity: 0; transform: translate(-50%, 8px) scale(0.98); } }
+
+.call-room { animation: call-room-in 0.24s var(--ease-out); }
+.call-tile { animation: call-tile-in 0.3s var(--ease-out) both; transition: outline-color 0.2s ease-out, box-shadow 0.2s ease-out; }
+.call-grid > .call-tile:nth-child(2) { animation-delay: 40ms; }
+.call-grid > .call-tile:nth-child(3) { animation-delay: 80ms; }
+.call-grid > .call-tile:nth-child(n + 4) { animation-delay: 110ms; }
+.call-tile video, .call-screen video, .call-tile-avatar { animation: fade-in 0.35s var(--ease-out); }
+.call-tile-hand { animation: chip-in 0.18s var(--ease-out); }
+.call-tile-status { animation: fade-in 0.2s var(--ease-out); }
+.call-pip { animation: call-tile-in 0.3s var(--ease-out); }
+.call-screen { animation: call-tile-in 0.3s var(--ease-out); }
+.call-panel { animation: call-panel-in 0.22s var(--ease-out); }
+.call-notice, .call-rec { animation: call-drop-in 0.22s var(--ease-out); }
+.call-sharing-note, .call-recording-saved { animation: call-center-down 0.22s var(--ease-out); }
+.call-record-confirm, .call-share-card { animation: call-center-up 0.22s var(--ease-out); }
+.call-control { transition: background-color 0.15s ease-out, color 0.15s ease-out, border-radius 0.2s ease-out, width 0.2s ease-out, transform 0.12s ease-out; }
+.call-control:active:not(:disabled) { transform: scale(0.93); }
+.call-control-badge { animation: chip-in 0.18s var(--ease-out); }
+
 /* ---------- recordings calendar ---------- */
 .recordings-layout { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 360px minmax(0, 1fr); align-items: start; gap: 20px; }
 .recordings-calendar { position: sticky; top: 0; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 2px 10px rgb(25 35 50 / 4%); }
