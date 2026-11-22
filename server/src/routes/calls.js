@@ -9,6 +9,7 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import config from '../config.js';
+import { cloudflareTurnEnabled, cloudflareTurnServers } from '../cloudflare-turn.js';
 import { requireAuth, safeEqual } from '../auth.js';
 import { HttpError } from '../errors.js';
 import { personOf, teammates } from '../team.js';
@@ -68,7 +69,9 @@ const publicCall = (call, { forGuest = false } = {}) => ({
 export function iceServersFor(who, settings = config.calls, now = Date.now()) {
   const servers = [];
   if (settings.stunUrls.length) servers.push({ urls: settings.stunUrls });
-  if (settings.turnUrls.length && settings.turnSecret) {
+  if (cloudflareTurnEnabled(settings)) {
+    servers.push(...cloudflareTurnServers(now));
+  } else if (settings.turnUrls.length && settings.turnSecret) {
     // Short-lived sign-in for a coturn server (use-auth-secret), so nothing lasting reaches browsers.
     const username = `${Math.floor(now / 1000) + settings.turnTtlSeconds}:${who}`;
     const credential = crypto.createHmac('sha1', settings.turnSecret).update(username).digest('base64');

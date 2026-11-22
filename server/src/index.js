@@ -19,6 +19,7 @@ import tasksRoutes from './routes/tasks.js';
 import notificationRoutes from './routes/notifications.js';
 import automationRoutes from './routes/automations.js';
 import callRoutes, { guestRouter as meetRoutes } from './routes/calls.js';
+import { cloudflareTurnEnabled, startCloudflareTurn } from './cloudflare-turn.js';
 import recordingRoutes from './routes/recordings.js';
 import meetingRoutes from './routes/meetings.js';
 import attendanceRoutes from './routes/attendance.js';
@@ -185,6 +186,7 @@ attachLive(server);
 // Notifications for new mail and instant notes.
 startPush();
 startEmailAutomations();
+startCloudflareTurn();
 checkDeployment();
 
 if (config.configured) {
@@ -224,7 +226,7 @@ function checkDeployment() {
   if (process.env.NODE_ENV === 'production') {
     if (!config.cookieSecure) warn('NODE_ENV=production but COOKIE_SECURE is not true. Serve over HTTPS and set COOKIE_SECURE=true.');
     if (!config.trustProxy) console.warn('[security] TRUST_PROXY is not set: client IPs are taken from a proxy on this machine only. If sign-in activity shows 127.0.0.1 or a private address for everyone, set TRUST_PROXY=true.');
-    if (!config.calls.turnUrls.length) console.warn('[calls] No TURN relay is set (CALL_TURN_URLS). Calls between people on office Wi-Fi, mobile hotspots or VPNs will stay on "Connecting…". Set CALL_TURN_URLS with CALL_TURN_USERNAME and CALL_TURN_CREDENTIAL (or CALL_TURN_SECRET for coturn).');
+    if (!config.calls.turnUrls.length && !cloudflareTurnEnabled()) console.warn('[calls] No TURN relay is set. Calls between people on office Wi-Fi, mobile hotspots or VPNs will stay on "Connecting…". Set CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN (Cloudflare Realtime TURN), or CALL_TURN_URLS with CALL_TURN_USERNAME and CALL_TURN_CREDENTIAL (or CALL_TURN_SECRET for coturn).');
   }
   if (config.forceHttps && !config.trustProxy) warn('FORCE_HTTPS=true without TRUST_PROXY=true can redirect forever behind a proxy.');
   if (config.admin.password && config.admin.password.length < 12) warn('ADMIN_PASSWORD is shorter than 12 characters. Use a long, unique password.');
