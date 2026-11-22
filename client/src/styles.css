@@ -3076,6 +3076,13 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .call-rec button:hover { background: rgb(255 255 255 / 24%); }
 .call-rec-dot, .call-mini-recording > span { flex: none; width: 9px; height: 9px; border-radius: 50%; background: #ff4d55; box-shadow: 0 0 0 3px rgb(255 77 85 / 22%); animation: call-record-pulse 1.5s ease-in-out infinite; }
 .call-recording-saved { position: absolute; z-index: 5; top: 10px; left: 50%; transform: translateX(-50%); min-width: 250px; max-width: calc(100% - 32px); display: flex; align-items: center; gap: 10px; padding: 10px 11px; border: 1px solid rgb(255 255 255 / 12%); border-radius: 11px; background: rgb(18 24 35 / 97%); color: #fff; font-size: 12px; box-shadow: 0 12px 36px rgb(0 0 0 / 38%); animation: fade-in 0.15s var(--ease-out); }
+.call-record-confirm { position: absolute; z-index: 6; bottom: 12px; left: 50%; transform: translateX(-50%); width: 340px; max-width: calc(100% - 32px); display: grid; gap: 8px; padding: 14px; border: 1px solid rgb(255 255 255 / 12%); border-radius: 12px; background: rgb(18 24 35 / 97%); color: #fff; box-shadow: 0 12px 36px rgb(0 0 0 / 38%); animation: fade-in 0.15s var(--ease-out); }
+.call-record-confirm strong { font-size: 14px; font-weight: 600; }
+.call-record-confirm p { margin: 0; color: #aeb6c5; font-size: 12px; line-height: 1.5; }
+.call-record-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.call-record-confirm-actions button { height: 32px; padding: 0 14px; border: 0; border-radius: 8px; background: #ea4335; color: #fff; font-size: 13px; font-weight: 500; }
+.call-record-confirm-actions button:hover { filter: brightness(1.1); }
+.call-record-confirm-actions button.ghost { background: #2e3646; }
 .call-recording-saved > svg { flex: none; color: #4ade80; }
 .call-recording-saved > span { flex: 1; display: grid; }
 .call-recording-saved small { color: #aeb6c5; }

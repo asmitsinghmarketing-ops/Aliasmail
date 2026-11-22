@@ -8,7 +8,6 @@ import {
 import { createCallRecorder, downloadRecording, recordingSupported } from '../callRecording.js';
 import { createRecordingUpload } from '../recordingUpload.js';
 import { onlineNow } from '../live.js';
-import { ask } from './Dialog.jsx';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 
@@ -505,6 +504,7 @@ export default function CallRoom({ state }) {
   const [minimized, setMinimized] = useState(false);
   const [panel, setPanel] = useState(null); // 'people' | 'devices'
   const [recordError, setRecordError] = useState('');
+  const [confirmRecord, setConfirmRecord] = useState(false);
   const [recordStatus, setRecordStatus] = useState(null); // null | 'saving' | 'saved'
   const [recordingStartedAt, setRecordingStartedAt] = useState(null);
   const recorder = useRef(null); // { rec, upload } while recording
@@ -525,6 +525,14 @@ export default function CallRoom({ state }) {
       void saveRecording(active);
     }
   }, []);
+
+  // Escape closes the record confirmation.
+  useEffect(() => {
+    if (!confirmRecord) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setConfirmRecord(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [confirmRecord]);
 
   // "Recording saved" goes away by itself.
   useEffect(() => {
@@ -555,16 +563,17 @@ export default function CallRoom({ state }) {
     setRecordError([reason, problem].filter(Boolean).join(' '));
   }
 
-  async function toggleRecording() {
+  function toggleRecording() {
     setRecordError('');
     setRecordStatus(null);
     if (recorder.current) return stopRecording();
-    const allowed = await ask({
-      title: 'Record this call?',
-      message: 'Everyone in the call will see that recording is on. The recording is saved in Nextspace, where everyone from your team who was in the call can watch it, and copied to your Google Drive if you have connected it. Make sure everyone agrees before recording.',
-      confirmLabel: 'Start recording',
-    });
-    if (!allowed) return;
+    // Asked inside the call: the app-wide dialog would open behind the call room.
+    setConfirmRecord((open) => !open);
+    return undefined;
+  }
+
+  async function startRecording() {
+    setConfirmRecord(false);
     try {
       const upload = createRecordingUpload({
         callId: call.id,
@@ -691,6 +700,16 @@ export default function CallRoom({ state }) {
               ? <span><strong>Recording saved</strong><small>Everyone from your team in this call can watch it in Recordings.</small></span>
               : <span><strong>Saving the recording…</strong><small>Keep this window open for a moment.</small></span>}
             {recordStatus === 'saved' && <button type="button" aria-label="Dismiss" onClick={() => setRecordStatus(null)}><Icon name="close" size={16} /></button>}
+          </div>
+        )}
+        {confirmRecord && !state.recording && (
+          <div className="call-record-confirm" role="alertdialog" aria-labelledby="call-record-confirm-title">
+            <strong id="call-record-confirm-title">Record this call?</strong>
+            <p>Everyone in the call will see that recording is on. It’s saved in Nextspace for your team members in the call, and copied to your Google Drive if connected. Make sure everyone agrees.</p>
+            <div className="call-record-confirm-actions">
+              <button type="button" className="ghost" onClick={() => setConfirmRecord(false)}>Cancel</button>
+              <button type="button" autoFocus onClick={startRecording}>Start recording</button>
+            </div>
           </div>
         )}
         <Lobby lobby={panel === 'people' ? [] : lobby} />
