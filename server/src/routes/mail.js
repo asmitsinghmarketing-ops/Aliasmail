@@ -16,7 +16,7 @@ import { audit } from '../audit.js';
 const passwordChecks = limiter('password-change', { max: 5, windowMs: 15 * 60e3, lockMs: 15 * 60e3 });
 import { requireAuth } from '../auth.js';
 import { attachmentLink, deleteFromServer, fetchParsed, noteSend, sendPart, warmAttachments, forwardableAttachment, moveMessages, prefetch, setServerSeen, startAttachmentUpload, syncInbox } from '../mailbox.js';
-import { deliver, queueInOutbox, runScheduled } from '../outbox.js';
+import { asAddresses, deliver, queueInOutbox, runScheduled } from '../outbox.js';
 import { bodyOf, byDateDesc, matchesQuery, paginate, toUidList } from '../util.js';
 import { HttpError, describeError } from '../errors.js';
 import { callEvents, announceChange, mailEvents, noteEvents, notificationEvents } from '../mail-events.js';
@@ -154,7 +154,6 @@ const via = (m, me) => (m.to.some((a) => a.address === me) ? 'to' : m.cc.some((a
 
 const toSnippet = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
 const parseList = (value) => (Array.isArray(value) ? value : String(value ?? '').split(/[,;]/)).map(normalize).filter(Boolean);
-const asAddresses = (list) => list.map((address) => ({ name: '', address }));
 
 const summary = (m, me) => {
   const s = stateOf(m, me);

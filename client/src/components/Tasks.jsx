@@ -1,3 +1,4 @@
+import { initials } from '../format.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Avatar from './Avatar.jsx';
@@ -19,7 +20,6 @@ const EMPTY = { title: '', description: '', projectId: '', status: 'todo', prior
 
 const today = () => new Date().toISOString().slice(0, 10);
 const overdue = (task) => task.dueDate && task.status !== 'done' && task.dueDate < today();
-const initials = (value) => String(value || '?').split(/\s+|@/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
 const dateLabel = (value) => {
   if (!value) return '';
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', ...(value.slice(0, 4) !== String(new Date().getFullYear()) && { year: 'numeric' }) }).format(new Date(`${value}T12:00:00`));

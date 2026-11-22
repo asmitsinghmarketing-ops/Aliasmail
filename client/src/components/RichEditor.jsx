@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { Popover } from './Menus.jsx';
+import { escapeHtml } from '../format.js';
 import { linkWordBeforeCaret } from '../linkify.js';
 
 const KEEP = new Set([
@@ -66,7 +67,7 @@ export function sanitizeHtml(html) {
   return out.innerHTML;
 }
 
-export const escapeHtml = (text) => text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+export { escapeHtml }; // kept here for existing imports; it lives in format.js
 
 /** Plain text (a signature, a quoted reply) as editor HTML. */
 export const htmlFromText = (text = '') => escapeHtml(text).replace(/\r?\n/g, '<br>');

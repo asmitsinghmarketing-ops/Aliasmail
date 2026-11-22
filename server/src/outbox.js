@@ -5,7 +5,7 @@ import { accountOf } from './aliases.js';
 import { sendMail } from './mailbox.js';
 import { shareWithRecipients } from './google-drive.js';
 
-const asAddresses = (list) => list.map((address) => ({ name: '', address }));
+export const asAddresses = (list) => list.map((address) => ({ name: '', address }));
 
 /** Send `mail` (to/cc/bcc as address arrays, base64 attachments) from `address` and log it. */
 export async function deliver(address, mail, timing = {}) {

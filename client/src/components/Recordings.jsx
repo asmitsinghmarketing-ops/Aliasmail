@@ -2,9 +2,10 @@
 // meetings and with recordings are marked; picking a day lists them: join or copy the link of a
 // meeting, play or download a recording. Recordings are deleted automatically a set number of days
 // after the meeting (15 by default).
+import { localDate } from '../format.js';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { joinByCode, meetingLink } from '../calls.js';
+import { joinByCode, meetingLink, startMeeting } from '../calls.js';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { PanelSkeleton } from './Loading.jsx';
@@ -23,9 +24,8 @@ function size(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-const pad = (n) => String(n).padStart(2, '0');
-/** A local calendar day, as "2026-11-21". */
-const dayKey = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+const MEETING_CODE = /[a-z]{3}-[a-z]{4}-[a-z]{3}/;
+const dayKey = localDate; // "2026-11-21"
 const fromKey = (key) => {
   const [y, m, d] = key.split('-').map(Number);
   return new Date(y, m - 1, d);
@@ -201,6 +201,28 @@ export default function Recordings({ me, onClose }) {
 
   const join = (meeting) => joinByCode(meeting.code, { video: true }).then(load).catch((err) => setError(err.message));
 
+  // Start one now, or join with a code (or a whole meeting link) someone sent.
+  const [code, setCode] = useState('');
+  const [starting, setStarting] = useState(false);
+  const run = async (action) => {
+    setError('');
+    setStarting(true);
+    try {
+      await action();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setStarting(false);
+    }
+  };
+  const startNow = () => run(() => startMeeting({ video: true }));
+  const joinWithCode = (event) => {
+    event.preventDefault();
+    const found = MEETING_CODE.exec(code.trim().toLowerCase());
+    if (!found) return setError('Enter a meeting code like abc-defg-hij, or paste the meeting link.');
+    return run(() => joinByCode(found[0], { video: true }).then(() => setCode('')));
+  };
+
   const saved = (meeting) => {
     setMeetings((current) => [...(current || []).filter((other) => other.id !== meeting.id), meeting]);
     const date = new Date(meeting.startAt);
@@ -229,17 +251,23 @@ export default function Recordings({ me, onClose }) {
         <button type="button" className="icon-btn tasks-back" onClick={onClose} title="Back to mailbox" aria-label="Back to mailbox"><Icon name="back" /></button>
         <button className="tasks-brand" type="button" onClick={onClose} title="Back to mail"><Logo /><Wordmark /></button>
         <span className="tasks-divider" />
-        <strong>Meetings</strong>
+        <strong>Meet</strong>
         <span className="grow" />
-        <button type="button" className="btn btn-primary" onClick={() => setEditing('new')}><Icon name="add" size={18} /> Schedule meeting</button>
+        <button type="button" className="btn btn-outline" onClick={() => setEditing('new')}><Icon name="event" size={18} /> Schedule</button>
+        <button type="button" className="btn btn-primary" disabled={starting} onClick={startNow}><Icon name="videocam" size={18} /> Start now</button>
       </header>
 
       <main className="attendance-main">
         <div className="attendance-heading">
           <div>
-            <h1>Meetings</h1>
-            <p>Upcoming meetings and recorded calls. {data ? `Recordings are deleted automatically ${data.keepDays} days after the meeting, so download anything you want to keep.` : ''}</p>
+            <h1>Meet</h1>
+            <p>Start or join a meeting, plan one ahead, and watch recorded calls. {data ? `Recordings are deleted automatically ${data.keepDays} days after the meeting, so download anything you want to keep.` : ''}</p>
           </div>
+          <form className="meet-join" onSubmit={joinWithCode}>
+            <Icon name="keyboard" size={18} />
+            <input type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Enter a code or link" aria-label="Meeting code or link" autoComplete="off" spellCheck={false} />
+            <button type="submit" className="btn btn-outline" disabled={starting || !code.trim()}>Join</button>
+          </form>
         </div>
         {error && <div className="alert"><span>{error}</span><button className="link" onClick={() => setError('')}>Dismiss</button></div>}
         {!data || !meetings ? <PanelSkeleton /> : (

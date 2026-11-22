@@ -1,5 +1,7 @@
 // Google's own Drive file picker. Picking a file grants AliasMail access to just that file
 // (drive.file scope), which is how files can then be shared with an email's recipients.
+import { escapeHtml } from './format.js';
+
 let loading = null;
 
 function loadPicker() {
@@ -22,7 +24,6 @@ function loadPicker() {
 const safeUrl = (file) =>
   /^https:\/\/(docs|drive)\.google\.com\//.test(file.url || '') ? file.url : `https://drive.google.com/open?id=${encodeURIComponent(file.id)}`;
 
-const escapeHtml = (text) => String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 /** The message body with links to the picked Drive files added at the end (like Gmail's Drive chips). */
 export function withDriveLinks({ html, text }, files = []) {

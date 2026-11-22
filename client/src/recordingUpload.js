@@ -3,11 +3,11 @@
 // the last few seconds. If saving fails for good, `failed` says why and the caller keeps the
 // recording on this computer instead.
 import { api } from './api.js';
+import { wait } from './format.js';
 
 const PART_BYTES = 2 * 1024 * 1024; // small enough for shared-hosting database limits
 const FLUSH_MS = 10_000;
 const RETRIES = [1000, 3000, 8000];
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function createRecordingUpload({ callId, peerId, onFail }) {
   let id = null;

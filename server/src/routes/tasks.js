@@ -4,7 +4,7 @@ import { Router } from 'express';
 import { requireAuth } from '../auth.js';
 import { db, save } from '../store.js';
 import { HttpError } from '../errors.js';
-import { personOf, teammates } from '../team.js';
+import { nameOf, personOf, teammates } from '../team.js';
 import { createNotification } from '../notifications.js';
 
 const router = Router();
@@ -59,11 +59,6 @@ function assignee(value) {
   const address = String(value).trim().toLowerCase();
   if (!teammates().some((person) => person.address === address)) throw new HttpError(400, 'Assignee is not an active teammate');
   return address;
-}
-
-function nameOf(address) {
-  const person = teammates().find((member) => member.address === address);
-  return person?.name || address;
 }
 
 function notifyAssignment(item, actor) {

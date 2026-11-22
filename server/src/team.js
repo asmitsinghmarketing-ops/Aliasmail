@@ -14,3 +14,8 @@ export function teammates() {
 
 /** The signed-in person's own address: their alias, or the main mailbox for the admin. */
 export const personOf = (user) => (user.role === 'admin' ? config.mailbox : user.email);
+
+/** The active teammate with this address, if any. */
+export const teammate = (address) => teammates().find((member) => member.address === address);
+/** A teammate's name, or the address when there's no name (or no such teammate). */
+export const nameOf = (address) => teammate(address)?.name || address;

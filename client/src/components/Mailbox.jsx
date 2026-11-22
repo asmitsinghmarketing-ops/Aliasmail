@@ -1612,11 +1612,11 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const railTabs = [
     { id: 'tasks', label: 'Tasks', icon: 'checkCircle', onClick: onOpenTasks },
     { id: 'attendance', label: 'Attendance', icon: 'clock', onClick: onOpenAttendance, hidden: shared },
-    { id: 'recordings', label: 'Meetings', title: 'Meetings and recordings', icon: 'event', onClick: onOpenRecordings, hidden: shared || !onOpenRecordings },
+    // Meet: start or join a meeting, the calendar of scheduled ones, and recordings, all in one place.
+    { id: 'recordings', label: 'Meet', title: 'Meet: start, join and schedule meetings, and recordings', icon: 'videocam', onClick: onOpenRecordings, hidden: shared || !onOpenRecordings },
     { id: 'automations', label: 'Automate', title: 'Automations', icon: 'scheduleSend', onClick: onOpenAutomations, hidden: shared },
     { id: 'assistant', label: 'Assistant', icon: 'sparkle', on: assistantOpen, onClick: () => setAssistantOpen(!assistantOpen), hidden: shared },
     { id: 'notes', label: 'Notes', title: 'Instant notes', icon: 'chat', on: notesOpen, badge: notesUnread, onClick: () => (notesOpen ? setNotesOpen(false) : openNotes()) },
-    { id: 'meet', label: 'Meeting', title: 'New meeting', icon: 'videocam', onClick: () => setModal('meet'), hidden: shared },
     { id: 'tour', label: 'Tour', title: 'Take the tour', icon: 'info', pinned: true, onClick: () => startTour(), hidden: shared },
     { id: 'settings', label: 'Settings', icon: 'settings', pinned: true, locked: true, onClick: () => { setSettingsTab('profile'); setModal('settings'); }, hidden: shared },
   ].filter((tab) => !tab.hidden);

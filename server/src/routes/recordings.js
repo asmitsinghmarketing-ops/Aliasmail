@@ -14,7 +14,7 @@ import { requireAuth } from '../auth.js';
 import { HttpError, describeError } from '../errors.js';
 import { db, save } from '../store.js';
 import { persistence } from '../persist.js';
-import { personOf, teammates } from '../team.js';
+import { nameOf, personOf } from '../team.js';
 import { driveTokenFor } from '../google-drive.js';
 import { createNotification } from '../notifications.js';
 import { callWithPeer, liveCall, namesIn, teamIn } from './calls.js';
@@ -30,7 +30,6 @@ const TYPE = /^video\/(webm|mp4)(;[\w=.,\s-]*)?$/i;
 
 const partId = (id, n) => `rec_${id}_${n}`;
 const recordings = () => db().recordings;
-const nameOf = (address) => teammates().find((member) => member.address === address)?.name || address;
 const baseType = (rec) => rec.type.split(';')[0];
 const fileName = (rec) => `call-recording-${rec.startedAt.slice(0, 16).replace(/[:T]/g, '-')}.${baseType(rec).endsWith('mp4') ? 'mp4' : 'webm'}`;
 const usedBytes = () => recordings().reduce((sum, rec) => sum + (rec.size || 0), 0);
@@ -119,7 +118,7 @@ function finish(rec, durationMs) {
   rec.durationMs = Number.isFinite(durationMs) && durationMs > 0 ? Math.min(durationMs, measured + 60_000) : measured;
   save();
   for (const address of rec.people) {
-    if (address !== rec.recorder) createNotification({ to: address, type: 'recording', title: `${nameOf(rec.recorder)} recorded a call`, body: `${titleOf(rec)}. Watch it in Recordings.`, actor: rec.recorder });
+    if (address !== rec.recorder) createNotification({ to: address, type: 'recording', title: `${nameOf(rec.recorder)} recorded a call`, body: `${titleOf(rec)}. Watch it in Meet.`, actor: rec.recorder });
   }
   void copyToDrive(rec);
 }

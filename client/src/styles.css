@@ -3015,6 +3015,7 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .call-tile.speaking { outline-color: #5b8def; }
 .call-tile video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
 .call-tile video.mirrored { transform: scaleX(-1); }
+.call-tile video.fit { object-fit: contain; background: #202124; }
 .call-tile-avatar .avatar { width: 88px; height: 88px; font-size: 34px; }
 .call-tile-name {
   position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px); display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px;
@@ -3618,6 +3619,11 @@ a.recording-drive:hover { text-decoration: underline; }
 .recordings-day-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
 .recordings-day-head h2 { margin: 2px 0; }
 .recordings-day-head .btn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; }
+.meet-join { flex: none; display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 4px 0 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--muted); }
+.meet-join:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent); }
+.meet-join input { width: 220px; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: none; color: var(--text); font: inherit; }
+.meet-join .btn { min-height: 34px; }
+@media (max-width: 800px) { .attendance-heading:has(.meet-join) { flex-wrap: wrap; } .meet-join { width: 100%; } .meet-join input { flex: 1; width: auto; } }
 .recordings-section { margin: 14px 0 8px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .meeting-card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--border); border-left: 4px solid var(--brand); border-radius: 14px; background: var(--surface); box-shadow: 0 2px 10px rgb(25 35 50 / 4%); }
 .meeting-card.live { border-left-color: #1f9d55; }

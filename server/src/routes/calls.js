@@ -12,7 +12,7 @@ import config from '../config.js';
 import { cloudflareTurnEnabled, cloudflareTurnServers } from '../cloudflare-turn.js';
 import { requireAuth, safeEqual } from '../auth.js';
 import { HttpError } from '../errors.js';
-import { personOf, teammates } from '../team.js';
+import { nameOf, personOf, teammate } from '../team.js';
 import { callEvents } from '../mail-events.js';
 import { createNotification } from '../notifications.js';
 import { notify } from '../push.js';
@@ -38,8 +38,6 @@ const calls = new Map();
 const codes = new Map(); // meeting code -> call id
 
 const isGuest = (address) => String(address).startsWith(GUEST);
-const person = (address) => teammates().find((member) => member.address === address);
-const nameOf = (address) => person(address)?.name || address;
 const nameIn = (call, address) => (isGuest(address) ? call.guests.get(address.slice(GUEST.length))?.name || 'Guest' : nameOf(address));
 
 /**
@@ -160,7 +158,7 @@ function people(value, me, { allowNone = false } = {}) {
   const list = (Array.isArray(value) ? value : value === undefined || value === '' ? [] : [value]).map((address) => String(address || '').trim().toLowerCase());
   const unique = [...new Set(list)];
   if (!unique.length && allowNone) return [];
-  if (!unique.length || unique.some((address) => !address || address === me || !person(address))) throw new HttpError(400, 'Choose another active teammate');
+  if (!unique.length || unique.some((address) => !address || address === me || !teammate(address))) throw new HttpError(400, 'Choose another active teammate');
   return unique;
 }
 

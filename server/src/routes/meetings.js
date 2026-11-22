@@ -10,7 +10,7 @@ import config from '../config.js';
 import { requireAuth } from '../auth.js';
 import { HttpError, describeError } from '../errors.js';
 import { db, save } from '../store.js';
-import { personOf, teammates } from '../team.js';
+import { nameOf, personOf, teammate } from '../team.js';
 import { createNotification } from '../notifications.js';
 import { notify } from '../push.js';
 import { isLive, MAX_PEOPLE, newCode } from './calls.js';
@@ -23,8 +23,6 @@ const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
 const MAX_AHEAD_MS = 366 * 86_400_000;
 
 const meetings = () => db().meetings;
-const person = (address) => teammates().find((member) => member.address === address);
-const nameOf = (address) => person(address)?.name || address;
 const endOf = (meeting) => Date.parse(meeting.startAt) + meeting.durationMin * 60_000;
 const isAdmin = (req) => req.user.role === 'admin';
 const involves = (meeting, me) => meeting.host === me || meeting.invitees.includes(me);
@@ -58,7 +56,7 @@ function details(body, me, { timeChanged = true } = {}) {
   if (!DURATIONS.includes(durationMin)) throw new HttpError(400, 'Choose how long the meeting is');
   const list = Array.isArray(body?.invitees) ? body.invitees : [];
   const invitees = [...new Set(list.map((address) => String(address || '').trim().toLowerCase()))].filter((address) => address && address !== me);
-  if (invitees.some((address) => !person(address))) throw new HttpError(400, 'Invite people from your team (send the link to anyone else)');
+  if (invitees.some((address) => !teammate(address))) throw new HttpError(400, 'Invite people from your team (send the link to anyone else)');
   if (invitees.length + 1 > MAX_PEOPLE) throw new HttpError(400, `A meeting can have up to ${MAX_PEOPLE} people`);
   const description = String(body?.description || '').trim().slice(0, 2000);
   return { title, startAt: new Date(start).toISOString(), durationMin, invitees, description };
@@ -123,7 +121,7 @@ router.post('/', (req, res) => {
   const meeting = { id: crypto.randomUUID(), code: newCode(), host: me, createdAt: new Date().toISOString(), remindedAt: null, ...details(req.body, me) };
   meetings().push(meeting);
   save();
-  tell(meeting.invitees, meeting, `${nameOf(me)} invited you to “${meeting.title}”`, 'See the time and join from Meetings.');
+  tell(meeting.invitees, meeting, `${nameOf(me)} invited you to “${meeting.title}”`, 'See the time and join from Meet.');
   res.status(201).json(view(meeting, req));
 });
 
@@ -137,7 +135,7 @@ router.patch('/:id', (req, res) => {
   save();
   const added = meeting.invitees.filter((address) => !before.has(address));
   const kept = meeting.invitees.filter((address) => before.has(address));
-  if (added.length) tell(added, meeting, `${nameOf(meeting.host)} invited you to “${meeting.title}”`, 'See the time and join from Meetings.');
+  if (added.length) tell(added, meeting, `${nameOf(meeting.host)} invited you to “${meeting.title}”`, 'See the time and join from Meet.');
   if (kept.length && meeting.startAt !== moved) tell(kept, meeting, `“${meeting.title}” has a new time`, 'See the new time in Meetings.');
   res.json(view(meeting, req));
 });

@@ -46,7 +46,7 @@ function stepsFor({ phone, isAdmin }) {
     { target: '[data-tour="automations"]', title: 'Automations', text: 'Describe a job in your own words and AI works out the steps. It can run when you ask, or when an email arrives.' },
     { target: '[data-tour="assistant"]', title: 'Assistant', text: 'Ask AI to find mail, summarise it or draft a reply. It checks with you before sending anything.' },
     { target: '[data-tour="notes"]', title: 'Notes and calls', text: 'Message your team instantly, and start voice or video calls from any conversation. A red number means you have unread notes.' },
-    { target: '[data-tour="meet"]', title: 'Meetings', text: 'Set up a Google Meet and invite people.' },
+    { target: '[data-tour="recordings"]', title: 'Meet', text: 'Start or join a meeting, schedule one on the calendar, and watch recordings.' },
     { target: '.notification-bell', title: 'Notifications', text: 'Tasks given to you, missed calls and other updates collect here.' },
     ...(isAdmin ? [{ target: '[data-tour="admin"]', title: 'Admin console', text: 'As the administrator, this is where you add people, set up shared mailboxes and roles, and see how mail is running.' }] : []),
     { target: '[data-tour="settings"]', title: 'Settings', text: 'Your name, photo and signature, plus notifications and two-step sign-in. It’s worth turning on notifications, so you don’t miss mail or calls.' },

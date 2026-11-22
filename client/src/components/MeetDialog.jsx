@@ -1,3 +1,4 @@
+import { localDate, localTime } from '../format.js';
 import { useEffect, useState } from 'react';
 import Icon from './Icon.jsx';
 import RecipientField from './RecipientField.jsx';
@@ -7,9 +8,6 @@ import { startMeeting } from '../calls.js';
 import { api } from '../api.js';
 
 const DURATIONS = [15, 30, 45, 60, 90, 120];
-const pad = (n) => String(n).padStart(2, '0');
-const localDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const localTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
 // The next half hour from now, as the default start of a scheduled meeting.
 function nextSlot() {
@@ -20,7 +18,7 @@ function nextSlot() {
 
 /**
  * New meeting. Nextspace's own meetings first: start one now (with a link to share), or schedule
- * one on the Meetings calendar. With Google Meet connected (`google`), a Google Meet link too.
+ * one on the Meet calendar. With Google Meet connected (`google`), a Google Meet link too.
  * onEmail(meeting) opens a draft with a Google invitation; onEmailLink(meeting) one with ours.
  */
 export default function MeetDialog({ me, google = false, onClose, onEmail, onEmailLink, onOpenMeetings }) {
@@ -122,7 +120,7 @@ export default function MeetDialog({ me, google = false, onClose, onEmail, onEma
               <Icon name="event" size={22} />
               <span>
                 <strong>Schedule for later</strong>
-                <span className="muted small">Pick a time and invite teammates. It goes on your Meetings calendar with a link for anyone else.</span>
+                <span className="muted small">Pick a time and invite teammates. It goes on your Meet calendar with a link for anyone else.</span>
               </span>
             </button>
             {google && (

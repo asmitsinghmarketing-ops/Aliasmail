@@ -11,12 +11,35 @@ import { onlineNow } from '../live.js';
 import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 
+/** Filling the box would crop too much (a phone's tall picture in a wide tile): show it whole. */
+const shapesDiffer = (videoRatio, boxRatio) => Math.max(videoRatio / boxRatio, boxRatio / videoRatio) > 1.4;
+
 function Video({ stream, muted = true, className }) {
   const element = useRef(null);
+  const [fit, setFit] = useState(false);
   useEffect(() => {
     if (element.current && element.current.srcObject !== stream) element.current.srcObject = stream;
   }, [stream]);
-  return <video ref={element} className={className} autoPlay playsInline muted={muted} />;
+  // Phones turn sideways and windows resize: check again whenever either shape changes.
+  useEffect(() => {
+    const video = element.current;
+    if (!video) return undefined;
+    const check = () => {
+      if (!video.videoWidth || !video.videoHeight || !video.clientWidth || !video.clientHeight) return;
+      setFit(shapesDiffer(video.videoWidth / video.videoHeight, video.clientWidth / video.clientHeight));
+    };
+    video.addEventListener('loadedmetadata', check);
+    video.addEventListener('resize', check);
+    const observer = window.ResizeObserver ? new ResizeObserver(check) : null;
+    observer?.observe(video);
+    check();
+    return () => {
+      video.removeEventListener('loadedmetadata', check);
+      video.removeEventListener('resize', check);
+      observer?.disconnect();
+    };
+  }, []);
+  return <video ref={element} className={[className, fit && 'fit'].filter(Boolean).join(' ')} autoPlay playsInline muted={muted} />;
 }
 
 /** Plays one person's voice. Kept apart from the pictures so it carries on when they aren't shown. */
@@ -717,7 +740,7 @@ export default function CallRoom({ state }) {
           <div className="call-recording-saved" role="status">
             <Icon name={recordStatus === 'saved' ? 'checkCircle' : 'refresh'} size={18} />
             {recordStatus === 'saved'
-              ? <span><strong>Recording saved</strong><small>Everyone from your team in this call can watch it in Recordings.</small></span>
+              ? <span><strong>Recording saved</strong><small>Everyone from your team in this call can watch it in Meet.</small></span>
               : <span><strong>Saving the recording…</strong><small>Keep this window open for a moment.</small></span>}
             {recordStatus === 'saved' && <button type="button" aria-label="Dismiss" onClick={() => setRecordStatus(null)}><Icon name="close" size={16} /></button>}
           </div>

@@ -32,7 +32,7 @@ export function setActiveMailbox(address) {
 // changes (send, delete, ...) never retry, because the first attempt may have gone through.
 const RETRY_DELAYS = [600, 2000];
 const RETRY_STATUS = new Set([502, 503, 504]);
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+import { wait } from './format.js';
 
 async function request(path, { method = 'GET', body, signInFlow = false, headers: extraHeaders = {} } = {}) {
   const headers = { 'X-Requested-With': 'AliasMail', ...extraHeaders };

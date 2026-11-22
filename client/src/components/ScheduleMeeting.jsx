@@ -1,14 +1,12 @@
 // Schedule a meeting ahead (or change one): title, date, time, length, teammates to invite, a note.
 // Afterwards it shows the meeting link to send anyone else.
+import { localDate, localTime } from '../format.js';
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { meetingLink } from '../calls.js';
 import Icon from './Icon.jsx';
 
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
-const pad = (n) => String(n).padStart(2, '0');
-const localDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const localTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const durationLabel = (m) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`);
 
 /** The next half hour, on `day` if that's later than now. */
@@ -107,7 +105,7 @@ export default function ScheduleMeeting({ me, day, meeting, onSaved, onClose, on
             </div>
             {copied && <span className="muted small">Link copied</span>}
             <div className="meet-actions">
-              {onOpenMeetings && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onOpenMeetings(); }}><Icon name="event" size={18} /> Open Meetings</button>}
+              {onOpenMeetings && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onOpenMeetings(); }}><Icon name="event" size={18} /> Open Meet</button>}
               {onEmail && <button type="button" className="btn btn-outline" onClick={() => onEmail({ ...saved, link: meetingLink(saved.code) })}><Icon name="mail" size={18} /> Send by email</button>}
               <button type="button" className="btn btn-primary" onClick={onClose}>Done</button>
             </div>

@@ -38,3 +38,16 @@ export const timeAgo = (iso) => {
 
 /** "me" for the signed-in alias, otherwise the person's name or address. */
 export const personLabel = (person, me) => (person?.address === me ? 'me' : displayName(person));
+
+/** Two digits: 7 → "07". */
+export const pad2 = (n) => String(Math.floor(Math.abs(n))).padStart(2, '0');
+/** A local calendar day, as "2026-11-21" (what <input type="date"> uses). */
+export const localDate = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+/** A local time of day, as "09:30" (what <input type="time"> uses). */
+export const localTime = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+/** Up to two initials from a name or address: "Asha Rao" → "AR". */
+export const initials = (value) => String(value || '?').split(/\s+|@/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+/** Text made safe to put inside HTML. */
+export const escapeHtml = (text) => String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+/** A promise that resolves after `ms` milliseconds. */
+export const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

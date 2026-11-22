@@ -18,7 +18,7 @@ import { avatarUrl } from '../avatars.js';
 import { HttpError } from '../errors.js';
 import { clientIp, cookieOptions, hashBackupCode, limiter, newBackupCodes, newTotpSecret, otpauthUrl, readCookie, seal, unseal, verifyTotp } from '../security.js';
 import { CALENDAR_SCOPE, CHAT_SCOPE, DRIVE_SCOPE, authorizationUrl, chatEnabled, driveEnabled, exchangeCode, googleEnabled, meetEnabled, newAttempt, revokeToken } from '../google-auth.js';
-import { chatAccess, driveAccess, meetAccess } from '../google-drive.js';
+import { chatAccess, driveAccess, holderOf, meetAccess } from '../google-drive.js';
 import {
   SESSION_COOKIE,
   currentSession,
@@ -64,7 +64,6 @@ function checkLimit(req, check, account) {
 /* ---------------------------------- helpers ---------------------------------- */
 
 /** Where an account's 2-step settings live: the alias record, or `owner` for the admin. */
-const holderOf = (role, email) => (role === 'admin' ? db().owner : findAlias(email));
 const mfaEnabled = (holder) => Boolean(holder?.mfa?.enabled);
 
 /** Group mailboxes this account can switch to, for the mailbox switcher. */

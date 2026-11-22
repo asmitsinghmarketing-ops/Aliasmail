@@ -2,6 +2,8 @@
 // mixes what this person can hear and see into one video, which recordingUpload.js keeps in
 // Nextspace (downloaded here only if saving it there fails).
 
+import { initials } from './format.js';
+
 const WIDTH = 1280;
 const HEIGHT = 720;
 const FPS = 24;
@@ -19,7 +21,6 @@ function recordingType() {
   ].find((type) => MediaRecorder.isTypeSupported(type)) || '';
 }
 
-const initials = (name) => String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
 
 /** Download a completed recording without keeping it in application or server storage. */
 export function downloadRecording(blob, startedAt = new Date()) {
@@ -131,6 +132,9 @@ export async function createCallRecorder(initialState, { onError, onChunk } = {}
 
   function drawVideo(video, x, y, width, height, contain = false, mirrored = false) {
     if (!video || video.readyState < 2 || !video.videoWidth) return false;
+    // A phone's tall picture in a wide tile would be cropped to a sliver of face: show it whole.
+    const ratio = (video.videoWidth / video.videoHeight) / (width / height);
+    if (Math.max(ratio, 1 / ratio) > 1.4) contain = true;
     const scale = contain
       ? Math.min(width / video.videoWidth, height / video.videoHeight)
       : Math.max(width / video.videoWidth, height / video.videoHeight);

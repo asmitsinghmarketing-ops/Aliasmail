@@ -4,7 +4,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { ask as confirmDialog } from './Dialog.jsx';
-import { formatDate } from '../format.js';
+import { formatDate, localDate, localTime, pad2 } from '../format.js';
 import Icon from './Icon.jsx';
 
 const POLL_MS = 300; // keep progress feeling live without holding a proxy connection open
@@ -24,8 +24,7 @@ function localNow() {
   const d = new Date();
   const pretty = d.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const offset = -d.getTimezoneOffset();
-  const pad = (n) => String(Math.floor(Math.abs(n))).padStart(2, '0');
-  const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}${offset >= 0 ? '+' : '-'}${pad(offset / 60)}:${pad(offset % 60)}`;
+  const iso = `${localDate(d)}T${localTime(d)}${offset >= 0 ? '+' : '-'}${pad2(offset / 60)}:${pad2(offset % 60)}`;
   return `${pretty} (${iso})`;
 }
 
