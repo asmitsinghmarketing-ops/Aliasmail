@@ -3428,10 +3428,28 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .join-ending h1 { margin: 0; font-size: 26px; }
 .join-ending p { margin: 0 0 6px; color: var(--muted); }
 .join-ending .btn { min-width: 200px; justify-content: center; text-decoration: none; }
+/* Safari lets a mirrored (transformed) video spill past rounded corners: clip it on its own layer. */
+.join-preview, .call-tile { isolation: isolate; }
+.join-preview video, .call-tile video { border-radius: inherit; }
 @media (max-width: 800px) {
-  .join-main { flex-direction: column; align-items: stretch; gap: 20px; padding: 8px 16px 32px; }
-  .join-preview { width: 100%; }
-  .join-panel { width: 100%; }
+  /* Phones lock the body's scrolling for the mailbox; the join page scrolls on its own. */
+  .join-page { height: 100%; height: 100dvh; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  .join-brand { padding: 12px 16px; }
+  .join-main { flex: none; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 18px; padding: 4px 16px 28px; }
+  .join-preview { width: 100%; aspect-ratio: 3 / 4; max-height: 52dvh; border-radius: 24px; }
+  .join-preview-name { left: 12px; top: 12px; border-radius: 10px; }
+  .join-preview-controls { bottom: 16px; gap: 16px; }
+  .join-preview-controls .call-control { width: 54px; height: 54px; }
+  .join-panel { width: 100%; gap: 12px; padding: 18px 16px; border-radius: 20px; background: var(--surface); box-shadow: 0 4px 18px rgb(15 22 36 / 8%); }
+  .join-panel h1 { font-size: 22px; line-height: 1.25; overflow-wrap: anywhere; }
+  .join-form input { height: 50px; border-radius: 14px; font-size: 16px; } /* 16px stops iOS zooming in */
+  .join-go, .join-waiting .btn { width: 100%; min-height: 50px; border-radius: 14px; justify-content: center; }
+  .join-waiting { justify-items: center; text-align: center; }
+  .join-starts { justify-content: center; }
+  .join-ending { max-width: none; padding: 24px 16px; border-radius: 20px; background: var(--surface); box-shadow: 0 4px 18px rgb(15 22 36 / 8%); }
+  .join-ending .btn { width: 100%; min-height: 50px; border-radius: 14px; }
+  .call-tile { border-radius: 16px; }
+  .call-pip, .call-pip .call-tile { border-radius: 14px; }
   .call-lobby { right: 8px; left: 8px; width: auto; }
   .call-share-card { bottom: 12px; }
 }
