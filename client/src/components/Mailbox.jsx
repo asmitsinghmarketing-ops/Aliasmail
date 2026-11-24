@@ -17,6 +17,7 @@ import NotifyPrompt from './NotifyPrompt.jsx';
 import { subscribe } from '../live.js';
 import { useRowSwipe } from '../rowSwipe.js';
 import { meetingText } from '../meet.js';
+import { meetingLink } from '../calls.js';
 import Pager from './Pager.jsx';
 import NotificationCenter from './NotificationCenter.jsx';
 import { arrange } from '../tabLayout.js';
@@ -442,7 +443,7 @@ function RailTab({ tab }) {
   );
 }
 
-export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin, onOpenTasks, onOpenAutomations, onOpenAttendance, onOpenRecordings }) {
+export default function Mailbox({ user, account = user, mailboxes = [], shared = null, onSwitchMailbox, onRefreshMailboxes, onLogout, onUserChange, onOpenAdmin, onOpenTasks, onOpenAutomations, onOpenAttendance, onOpenRecordings, onAssistantWake }) {
   const [folder, setFolder] = useState('inbox');
   const [team, setTeam] = useState([]); // who can own a conversation
   // Instant notes: the panel, its unread badge, and the latest note pushed over the live connection.
@@ -1195,8 +1196,21 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
       setDraft(draftFields);
     },
     createMeeting: async (card) => {
-      const meeting = await api('/mail/meet', { method: 'POST', body: card.data });
-      return meeting.link || '';
+      if (card.data.provider !== 'nextspace') {
+        const meeting = await api('/mail/meet', { method: 'POST', body: card.data });
+        return meeting.link || '';
+      }
+      const meeting = await api('/meetings', {
+        method: 'POST',
+        body: {
+          title: card.data.title,
+          startAt: card.data.start,
+          durationMin: card.data.minutes,
+          invitees: card.data.guests,
+          description: card.data.description,
+        },
+      });
+      return meetingLink(meeting.code);
     },
     sendNote: async (card) => {
       await api('/notes', { method: 'POST', body: { to: card.data.to, text: card.data.text, files: [] } });
@@ -1615,7 +1629,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     // Meet: start or join a meeting, the calendar of scheduled ones, and recordings, all in one place.
     { id: 'recordings', label: 'Meet', title: 'Meet: start, join and schedule meetings, and recordings', icon: 'videocam', onClick: onOpenRecordings, hidden: shared || !onOpenRecordings },
     { id: 'automations', label: 'Automate', title: 'Automations', icon: 'scheduleSend', onClick: onOpenAutomations, hidden: shared },
-    { id: 'assistant', label: 'Assistant', icon: 'sparkle', on: assistantOpen, onClick: () => setAssistantOpen(!assistantOpen), hidden: shared },
+    { id: 'assistant', label: 'Nex', icon: 'sparkle', on: assistantOpen, onClick: () => setAssistantOpen(!assistantOpen), hidden: shared },
     { id: 'notes', label: 'Notes', title: 'Instant notes', icon: 'chat', on: notesOpen, badge: notesUnread, onClick: () => (notesOpen ? setNotesOpen(false) : openNotes()) },
     { id: 'tour', label: 'Tour', title: 'Take the tour', icon: 'info', pinned: true, onClick: () => startTour(), hidden: shared },
     { id: 'settings', label: 'Settings', icon: 'settings', pinned: true, locked: true, onClick: () => { setSettingsTab('profile'); setModal('settings'); }, hidden: shared },
@@ -2377,11 +2391,16 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
         </Suspense>
       )}
 
-      {assistantOpen && !shared && (
-        <Suspense fallback={<OpeningPill />}>
+      {!shared && (
+        <Suspense fallback={assistantOpen ? <OpeningPill /> : null}>
         <Assistant
+          open={assistantOpen}
           status={assistantStatus}
           onClose={() => setAssistantOpen(false)}
+          onWake={() => {
+            setAssistantOpen(true);
+            onAssistantWake?.();
+          }}
           actions={assistantActions}
         />
         </Suspense>

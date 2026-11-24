@@ -10,12 +10,18 @@ import Icon from './Icon.jsx';
 const POLL_MS = 300; // keep progress feeling live without holding a proxy connection open
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const ACCEPTED_IMAGES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const WAKE_KEY = 'nextspace:nex-wake-word';
+
+function rememberedWakeWord() {
+  try { return localStorage.getItem(WAKE_KEY) === 'on'; }
+  catch { return false; }
+}
 
 const SUGGESTIONS = [
   { text: 'Summarise my unread mail', icon: 'inbox' },
   { text: 'What needs a reply from me today?', icon: 'reply' },
   { text: 'Draft a polite follow-up to the last email I sent', icon: 'edit' },
-  { text: 'Schedule a 30-minute Google Meet tomorrow at 11 with ', icon: 'videocam', meet: true, fill: true },
+  { text: 'Arrange a 30-minute meeting tomorrow at 11 with ', icon: 'videocam', meet: true, fill: true },
   { text: 'Send my team a note: ', icon: 'chat', fill: true },
 ];
 
@@ -66,6 +72,19 @@ async function prepareImage(file) {
   }
   if (!data || Math.ceil(data.length * 0.75) > MAX_IMAGE_BYTES) throw new Error('The image is still larger than 4 MB after resizing. Choose a smaller image.');
   return { name: file.name.slice(0, 160), mediaType, data, preview };
+}
+
+// A concise spoken version of the last answer. Cards remain visible for review and confirmation.
+function spokenReply(items) {
+  const reply = [...items].reverse().find((item) => item.role === 'assistant');
+  if (!reply) return '';
+  const parts = reply.parts || [];
+  const text = parts.filter((part) => part.type === 'text').map((part) => part.text).join(' ');
+  const cards = parts.filter((part) => part.type === 'card' && part.card.status === 'pending').map((part) => {
+    const action = { meeting: 'meeting', email: 'email', note: 'note', automation: 'automation' }[part.card.kind] || 'action';
+    return `I prepared a ${action} card for ${part.card.title}. Please review and confirm it on screen.`;
+  });
+  return [text, ...cards].join(' ').replace(/[*_`#]/g, '').replace(/\s+/g, ' ').trim().slice(0, 1400);
 }
 
 /* ----- a small, safe Markdown subset: paragraphs, bullet and numbered lists, **bold**, `code` ----- */
@@ -130,7 +149,7 @@ function Card({ card, onAct }) {
   const settled = card.status !== 'pending';
   const head = {
     email: { icon: 'mail', label: d.replyToId ? 'Reply' : 'Email' },
-    meeting: { icon: 'videocam', label: 'Google Meet' },
+    meeting: { icon: 'videocam', label: d.provider === 'nextspace' ? 'Nextspace meeting' : 'Google Meet' },
     note: { icon: 'chat', label: 'Instant note' },
     automation: { icon: 'scheduleSend', label: 'Automation' },
   }[card.kind];
@@ -188,7 +207,7 @@ function Card({ card, onAct }) {
         <div className="ai-card-actions">
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => act('go')}>
             <Icon name={card.kind === 'meeting' ? 'videocam' : card.kind === 'automation' ? 'scheduleSend' : 'send'} size={18} />
-            {busy ? 'Working…' : card.kind === 'meeting' ? 'Create meeting' : card.kind === 'automation' ? 'Run automation' : 'Send'}
+            {busy ? 'Working…' : card.kind === 'meeting' ? `Create ${d.provider === 'nextspace' ? 'meeting' : 'Google Meet'}` : card.kind === 'automation' ? 'Run automation' : 'Send'}
           </button>
           {card.kind === 'email' && (
             <button type="button" className="btn btn-outline" disabled={busy} onClick={() => act('edit')}>
@@ -239,7 +258,7 @@ function CardSlot({ card }) {
   return <Card card={card} onAct={onAct} />;
 }
 
-export default function Assistant({ status, onClose, actions }) {
+export default function Assistant({ status, onClose, onWake, open = true, actions }) {
   const [chats, setChats] = useState([]);
   const [chatId, setChatId] = useState(null);
   const [items, setItems] = useState([]);
@@ -250,10 +269,24 @@ export default function Assistant({ status, onClose, actions }) {
   const [error, setError] = useState('');
   const [spent, setSpent] = useState(status?.spentUsd || 0);
   const [showChats, setShowChats] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [voiceText, setVoiceText] = useState('');
+  const [wakeEnabled, setWakeEnabled] = useState(rememberedWakeWord);
+  const [wakeArmed, setWakeArmed] = useState(false);
   const bottom = useRef(null);
   const box = useRef(null);
   const imageInput = useRef(null);
+  const recognition = useRef(null);
+  const speakNext = useRef(false);
+  const wakeEnabledRef = useRef(wakeEnabled);
+  const wakeArmedRef = useRef(false);
+  const busyRef = useRef(busy);
   const enabled = Boolean(status?.enabled);
+  const Recognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  const voiceSupported = Boolean(Recognition);
+  wakeEnabledRef.current = wakeEnabled;
+  busyRef.current = busy;
 
   const loadChats = () => api('/assistant/chats').then(setChats).catch(() => {});
   useEffect(() => { if (enabled) loadChats(); }, [enabled]);
@@ -261,10 +294,172 @@ export default function Assistant({ status, onClose, actions }) {
     bottom.current?.scrollIntoView({ block: 'end' });
   }, [items]);
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && !busy && onClose();
+    const onKey = (e) => e.key === 'Escape' && open && !busy && onClose();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [busy, onClose]);
+  }, [busy, onClose, open]);
+  useEffect(() => () => {
+    if (recognition.current) {
+      recognition.current.cancelled = true;
+      recognition.current.abort?.();
+    }
+    window.speechSynthesis?.cancel();
+  }, []);
+  useEffect(() => {
+    if (!enabled || !wakeEnabled || busy || speaking || recognition.current) return undefined;
+    const resume = () => startVoice(true);
+    window.addEventListener('pointerdown', resume, { once: true });
+    window.addEventListener('keydown', resume, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', resume);
+      window.removeEventListener('keydown', resume);
+    };
+  }, [enabled, wakeEnabled, busy, speaking]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function stopVoice() {
+    if (recognition.current) {
+      recognition.current.cancelled = true;
+      recognition.current.abort?.();
+      recognition.current = null;
+    }
+    setListening(false);
+    setWakeArmed(false);
+    wakeArmedRef.current = false;
+    setVoiceText('');
+  }
+
+  function stopSpeaking() {
+    window.speechSynthesis?.cancel();
+    setSpeaking(false);
+  }
+
+  function speak(itemsToRead) {
+    const words = spokenReply(itemsToRead);
+    if (!words || !window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+      if (wakeEnabledRef.current) setTimeout(() => startVoice(true), 350);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(words);
+    utterance.lang = navigator.language || 'en-US';
+    utterance.rate = 1.02;
+    utterance.pitch = 1.03;
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => {
+      setSpeaking(false);
+      if (wakeEnabledRef.current) setTimeout(() => startVoice(true), 350);
+    };
+    utterance.onerror = () => {
+      setSpeaking(false);
+      if (wakeEnabledRef.current) setTimeout(() => startVoice(true), 350);
+    };
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function startVoice(wake = false) {
+    if (!voiceSupported) {
+      setError('Voice input isn’t supported by this browser. Use a current version of Chrome or Edge, or type your request.');
+      return;
+    }
+    if (recognition.current) {
+      if (wake) return;
+      stopVoice();
+      return;
+    }
+    stopSpeaking();
+    setError('');
+    setVoiceText(wake ? 'Waiting for “Hey Nex”…' : 'Listening…');
+    const listener = new Recognition();
+    listener.wake = wake;
+    recognition.current = listener;
+    listener.lang = navigator.language || 'en-US';
+    listener.continuous = wake;
+    listener.interimResults = !wake;
+    listener.maxAlternatives = 1;
+    let finalText = '';
+    listener.onstart = () => setListening(true);
+    listener.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const words = event.results[i][0]?.transcript || '';
+        if (wake && event.results[i].isFinal) {
+          const heard = words.replace(/\s+/g, ' ').trim();
+          const wakePhrase = /\b(?:hey|hi|okay|ok)\s+nex\b[\s,.:;-]*(.*)$/i.exec(heard);
+          const request = wakeArmedRef.current ? heard : wakePhrase?.[1]?.trim();
+          if (wakePhrase && !request) {
+            wakeArmedRef.current = true;
+            setWakeArmed(true);
+            setVoiceText('I’m listening — what should I do?');
+            onWake?.();
+          } else if (request) {
+            listener.pausedForRequest = true;
+            wakeArmedRef.current = false;
+            setWakeArmed(false);
+            setVoiceText(request);
+            setInput(request);
+            onWake?.();
+            speakNext.current = true;
+            listener.abort?.();
+            void ask(request);
+          }
+          continue;
+        }
+        if (event.results[i].isFinal) finalText += `${words} `;
+        else interim += words;
+      }
+      if (wake) return;
+      const heard = `${finalText}${interim}`.trim();
+      setVoiceText(heard || 'Listening…');
+      if (heard) setInput(heard);
+    };
+    listener.onerror = (event) => {
+      if (listener.cancelled || event.error === 'aborted') return;
+      const message = event.error === 'not-allowed'
+        ? 'Microphone access is blocked. Allow it in your browser settings to talk to Nex.'
+        : event.error === 'no-speech' ? (wake ? '' : 'I didn’t hear anything. Try again when you’re ready.') : 'Voice input stopped. Please try again.';
+      if (!message) return;
+      setError(message);
+    };
+    listener.onend = () => {
+      if (recognition.current === listener) recognition.current = null;
+      setListening(false);
+      if (!wake) setVoiceText('');
+      const request = finalText.replace(/\s+/g, ' ').trim();
+      if (!wake && !listener.cancelled && request) {
+        speakNext.current = true;
+        void ask(request);
+      } else if (wake && !listener.cancelled && !listener.pausedForRequest && wakeEnabledRef.current && !busyRef.current) {
+        setTimeout(() => startVoice(true), 450);
+      }
+    };
+    try {
+      listener.start();
+    } catch {
+      recognition.current = null;
+      setListening(false);
+      setVoiceText('');
+      setError('Couldn’t start the microphone. Please try again.');
+    }
+  }
+
+  function toggleWakeWord() {
+    if (wakeEnabled) {
+      wakeEnabledRef.current = false;
+      setWakeEnabled(false);
+      try { localStorage.setItem(WAKE_KEY, 'off'); } catch { /* private window */ }
+      stopVoice();
+      return;
+    }
+    if (!voiceSupported) {
+      setError('“Hey Nex” requires voice recognition in a current version of Chrome or Edge.');
+      return;
+    }
+    wakeEnabledRef.current = true;
+    setWakeEnabled(true);
+    try { localStorage.setItem(WAKE_KEY, 'on'); } catch { /* private window */ }
+    onWake?.();
+    startVoice(true);
+  }
 
   async function openChat(id) {
     setShowChats(false);
@@ -285,6 +480,9 @@ export default function Assistant({ status, onClose, actions }) {
 
   function newChat() {
     polling.current += 1;
+    stopVoice();
+    stopSpeaking();
+    speakNext.current = false;
     setBusy(false);
     setShowChats(false);
     setChatId(null);
@@ -292,6 +490,7 @@ export default function Assistant({ status, onClose, actions }) {
     setImage(null);
     setError('');
     setTimeout(() => box.current?.focus(), 0);
+    if (wakeEnabledRef.current) setTimeout(() => startVoice(true), 350);
   }
 
   // Delete a chat after asking; it leaves the list at once (and comes back if deleting fails).
@@ -337,11 +536,21 @@ export default function Assistant({ status, onClose, actions }) {
         if (run !== polling.current) return;
         setSpent(chat.spentUsd ?? 0);
         setItems(chat.running ? chat.items.map((item, i) => (i === chat.items.length - 1 && item.role === 'assistant' ? { ...item, live: true } : item)) : chat.items);
-        if (!chat.running) break;
+        if (!chat.running) {
+          if (speakNext.current) {
+            speakNext.current = false;
+            speak(chat.items);
+          }
+          break;
+        }
         await new Promise((r) => setTimeout(r, POLL_MS));
       }
     } catch (err) {
       setError(err.message);
+      if (speakNext.current) {
+        speakNext.current = false;
+        if (wakeEnabledRef.current) setTimeout(() => startVoice(true), 450);
+      }
     } finally {
       if (run === polling.current) {
         setBusy(false);
@@ -352,6 +561,8 @@ export default function Assistant({ status, onClose, actions }) {
   useEffect(() => () => { polling.current += 1; }, []);
 
   async function stop() {
+    speakNext.current = false;
+    stopSpeaking();
     if (chatId) await api(`/assistant/chats/${chatId}/stop`, { method: 'POST' }).catch(() => {});
   }
 
@@ -420,7 +631,12 @@ export default function Assistant({ status, onClose, actions }) {
   const empty = !items.length;
 
   return (
-    <section className={`assistant ${showChats ? 'show-chats' : ''}`} aria-label="Assistant">
+    <section className={`assistant nex-assistant ${open ? 'nex-open' : 'nex-hidden'} ${showChats ? 'show-chats' : ''}`} aria-label="Nex voice assistant">
+      {!open && wakeEnabled && (
+        <button type="button" className="nex-background-listener" onClick={onWake} aria-label="Open Nex; Hey Nex is listening">
+          <span className="nex-wake-dot" /> <span>Hey Nex</span><small>Listening</small>
+        </button>
+      )}
       <aside className="ai-chats">
         <button type="button" className="btn btn-primary ai-new" onClick={newChat}>
           <Icon name="add" size={18} /> New chat
@@ -450,7 +666,17 @@ export default function Assistant({ status, onClose, actions }) {
           <button type="button" className="icon-btn ai-chats-toggle" aria-label="Chats" onClick={() => setShowChats(!showChats)}>
             <Icon name="menu" />
           </button>
-          <span className="ai-head-title"><Icon name="sparkle" size={20} /> Assistant</span>
+          <span className="ai-head-title"><Icon name="sparkle" size={20} /> Nex <small>Voice assistant</small></span>
+          <button
+            type="button"
+            className={`nex-wake-toggle ${wakeEnabled ? 'on' : ''}`}
+            aria-pressed={wakeEnabled}
+            title={wakeEnabled ? 'Turn off Hey Nex' : 'Enable Hey Nex while Nextspace is open'}
+            disabled={!enabled}
+            onClick={toggleWakeWord}
+          >
+            <span className="nex-wake-dot" /> Hey Nex
+          </button>
           <button type="button" className="icon-btn ai-chats-toggle" aria-label="New chat" onClick={newChat}>
             <Icon name="edit" />
           </button>
@@ -462,7 +688,7 @@ export default function Assistant({ status, onClose, actions }) {
               {!enabled && (
                 <div className="ai-welcome">
                   <span className="ai-mark"><Icon name="sparkle" size={30} /></span>
-                  <h1>The Assistant isn’t set up yet</h1>
+                  <h1>Nex isn’t set up yet</h1>
                   <p className="muted">
                     It needs an AI key. The admin adds one in Admin console → Assistant → AI settings.
                   </p>
@@ -471,10 +697,10 @@ export default function Assistant({ status, onClose, actions }) {
               {enabled && empty && (
                 <div className="ai-welcome">
                   <span className="ai-mark"><Icon name="sparkle" size={30} /></span>
-                  <h1>{firstName ? `How can I help, ${firstName}?` : 'How can I help?'}</h1>
-                  <p className="muted">I can read and search your mail, write replies, set up Google Meet meetings and send notes to your team. Nothing goes out until you press Send.</p>
+                  <h1>{firstName ? `What can Nex do for you, ${firstName}?` : 'What can Nex do for you?'}</h1>
+                  <p className="muted">Speak or type to search mail, draft replies, arrange meetings, message teammates, and run your saved workflows. Nex always asks you to confirm before anything goes out.</p>
                   <div className="ai-suggestions">
-                    {SUGGESTIONS.filter((s) => !s.meet || status.meet).map((s) => (
+                    {SUGGESTIONS.map((s) => (
                       <button
                         key={s.text}
                         type="button"
@@ -516,6 +742,15 @@ export default function Assistant({ status, onClose, actions }) {
 
         <form className="ai-compose" onSubmit={(e) => { e.preventDefault(); ask(input); }}>
           <div className="ai-box">
+            {(listening || speaking) && (
+              <div className={`nex-voice-state ${listening ? 'listening' : 'speaking'}`} role="status" aria-live="polite">
+                <span className="nex-orb"><i /><i /><i /></span>
+                <span>
+                  <strong>{listening ? (wakeEnabled && !wakeArmed ? 'Say “Hey Nex”' : 'Nex is listening') : 'Nex is speaking'}</strong>
+                  <small>{listening ? voiceText : 'Tap the voice button to stop'}</small>
+                </span>
+              </div>
+            )}
             {image && (
               <div className="ai-image-preview">
                 <img src={image.preview} alt="Image to send" />
@@ -551,14 +786,24 @@ export default function Assistant({ status, onClose, actions }) {
             >
               <Icon name="image" size={21} />
             </button>
-            <label className="sr-only" htmlFor="ai-input">Message the Assistant</label>
+            <button
+              type="button"
+              className={`icon-btn nex-voice-button ${listening ? 'listening' : ''} ${speaking ? 'speaking' : ''}`}
+              aria-label={wakeEnabled ? 'Turn off Hey Nex' : listening ? 'Stop listening' : speaking ? 'Stop Nex speaking' : 'Talk to Nex'}
+              title={!voiceSupported ? 'Voice input requires Chrome or Edge' : wakeEnabled ? 'Hey Nex is always listening; click to turn it off' : listening ? 'Stop listening' : speaking ? 'Stop speaking' : 'Talk to Nex'}
+              disabled={!enabled || busy || imageBusy}
+              onClick={wakeEnabled ? toggleWakeWord : speaking ? stopSpeaking : () => startVoice(false)}
+            >
+              <Icon name={listening ? 'micOff' : 'mic'} size={21} />
+            </button>
+            <label className="sr-only" htmlFor="ai-input">Message Nex</label>
             <textarea
               id="ai-input"
               ref={box}
               rows={1}
               maxLength={8000}
               disabled={!enabled}
-              placeholder={enabled ? 'Write, find or schedule…' : 'Not set up yet'}
+              placeholder={enabled ? 'Ask Nex to write, find, schedule, or run something…' : 'Not set up yet'}
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);
@@ -583,7 +828,7 @@ export default function Assistant({ status, onClose, actions }) {
             )}
           </div>
           <p className="ai-foot muted small">
-            The Assistant can make mistakes, so check what it writes. Nothing is sent until you press Send.
+            Nex can make mistakes, so check its work. Actions always wait for your confirmation.
             {status?.provider === 'gemini' && ' · Test mode (Google Gemini)'}
             {status?.provider === 'openrouter' && ` · Test mode (OpenRouter: ${status.model})`}
             {enabled && spent > 0 && ` · This month: US$${spent.toFixed(2)}`}

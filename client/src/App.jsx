@@ -153,9 +153,37 @@ function Screen() {
   const sharedBox = shared ? user.mailboxes?.find((m) => m.address === shared) : null;
   const view = sharedBox ? { ...own, email: sharedBox.address, displayName: sharedBox.displayName, color: sharedBox.color, avatarUrl: sharedBox.avatarUrl } : own;
   const inConsole = user.role === 'admin' && (adminView === 'console' || !user.mailbox);
+  const openNex = () => {
+    setAdminView('mail');
+    setWorkspace('mail');
+  };
+  const hasMailbox = user.role !== 'admin' || Boolean(user.mailbox);
+  const mailbox = hasMailbox ? (
+    <Mailbox
+      key={sharedBox ? `shared:${sharedBox.address}` : 'own'}
+      user={view}
+      account={own}
+      mailboxes={user.mailboxes || []}
+      shared={sharedBox}
+      onSwitchMailbox={switchMailbox}
+      onRefreshMailboxes={refreshAccount}
+      onLogout={logout}
+      onUserChange={onUserChange}
+      onOpenAdmin={user.role === 'admin' ? () => setAdminView('console') : undefined}
+      onOpenTasks={() => setWorkspace('tasks')}
+      onOpenAutomations={() => setWorkspace('automations')}
+      onOpenAttendance={() => setWorkspace('attendance')}
+      onOpenRecordings={() => setWorkspace('recordings')}
+      onAssistantWake={openNex}
+    />
+  ) : null;
+  const awayFromMail = inConsole || workspace !== 'mail';
   return (
     <>
-    <Suspense fallback={<ShellSkeleton plain={inConsole || workspace !== 'mail'} />}>
+    <Suspense fallback={<ShellSkeleton plain={awayFromMail} />}>
+      {/* Keep the personal mailbox mounted while other workspaces are open. SpeechRecognition is
+          tied to its Nex instance, so unmounting it would make "Hey Nex" stop at every page change. */}
+      {mailbox && <div className={awayFromMail ? 'persistent-mailbox is-background' : 'persistent-mailbox'} aria-hidden={awayFromMail || undefined}>{mailbox}</div>}
       {inConsole ? (
         <Admin
             user={user}
@@ -171,24 +199,7 @@ function Screen() {
         <Attendance user={user} onClose={() => setWorkspace('mail')} />
       ) : workspace === 'recordings' ? (
         <Recordings me={user.role === 'admin' ? user.mailbox : user.email} onClose={() => setWorkspace('mail')} />
-      ) : (
-        <Mailbox
-            key={sharedBox ? `shared:${sharedBox.address}` : 'own'}
-            user={view}
-            account={own}
-            mailboxes={user.mailboxes || []}
-            shared={sharedBox}
-            onSwitchMailbox={switchMailbox}
-            onRefreshMailboxes={refreshAccount}
-            onLogout={logout}
-            onUserChange={onUserChange}
-            onOpenAdmin={user.role === 'admin' ? () => setAdminView('console') : undefined}
-            onOpenTasks={() => setWorkspace('tasks')}
-            onOpenAutomations={() => setWorkspace('automations')}
-            onOpenAttendance={() => setWorkspace('attendance')}
-            onOpenRecordings={() => setWorkspace('recordings')}
-          />
-      )}
+      ) : null}
     </Suspense>
     <Suspense fallback={null}><CallCenter /></Suspense>
     </>

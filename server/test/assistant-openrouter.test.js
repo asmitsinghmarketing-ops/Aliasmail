@@ -36,6 +36,7 @@ function plan(prompt) {
   const latest = prompt.split('Latest message:').pop();
   if (/hello there/i.test(latest)) return JSON.stringify({ intent: 'answer', answer: 'Hi! How can I help?' });
   if (/email billing/i.test(latest)) return JSON.stringify({ intent: 'email', to: ['billing@vendor.test'], subject: 'Invoice', body: 'Hello,\n\nCould you send the invoice?' });
+  if (/team catchup/i.test(latest)) return JSON.stringify({ intent: 'meeting', title: 'Team catchup', start: '2026-11-27T11:00:00+05:30', minutes: 30, guests: [] });
   if (/payroll/i.test(latest)) return 'Sure: ```json\n' + JSON.stringify({ intent: 'summarise', folder: 'unread', query: 'payroll' }) + '\n```';
   return JSON.stringify({ intent: 'other' });
 }
@@ -129,7 +130,7 @@ test('with only an OpenRouter key and model, the Assistant uses OpenRouter: tool
   assert.equal(first.headers.authorization, 'Bearer or-test-key');
   assert.equal(first.body.model, 'test/free-model:free');
   assert.equal(first.body.messages[0].role, 'system');
-  assert.deepEqual(first.body.tools.map((t) => t.function.name), ['search_mail', 'read_email', 'list_team', 'draft_email', 'send_note', 'list_automations', 'run_automation']);
+  assert.deepEqual(first.body.tools.map((t) => t.function.name), ['search_mail', 'read_email', 'list_team', 'draft_email', 'schedule_meeting', 'send_note', 'list_automations', 'run_automation']);
 
   // The tool call (arguments joined from pieces) goes back, then its result as a "tool" message.
   const second = requests[1].body.messages;
@@ -161,6 +162,14 @@ test('common requests take the fast path: one call to understand, Nextspace does
   const card = parts.find((p) => p.type === 'card').card;
   assert.deepEqual([card.kind, card.status, card.data.to, card.data.subject, card.data.body], ['email', 'pending', ['billing@vendor.test'], 'Invoice', 'Hello,\n\nCould you send the invoice?']);
   assert.match(textOf(parts), /ready below/);
+  assert.equal(planned - before, 1);
+
+  // Without Google connected, Nex still prepares a native Nextspace meeting for confirmation.
+  before = planned;
+  parts = await answered(call, chat.id, { message: 'Arrange a team catchup' });
+  const meeting = parts.find((p) => p.type === 'card').card;
+  assert.deepEqual([meeting.kind, meeting.status, meeting.data.provider, meeting.data.title, meeting.data.minutes], ['meeting', 'pending', 'nextspace', 'Team catchup', 30]);
+  assert.match(textOf(parts), /meeting is ready/i);
   assert.equal(planned - before, 1);
 
   // A summary of nothing: the search runs here, no second call needed (and fenced JSON is read).

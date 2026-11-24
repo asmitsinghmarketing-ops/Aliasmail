@@ -158,13 +158,13 @@ export function settleCard(person, chatId, cardId, status, detail = '') {
 
 /* ---------------------------------- the model's tools ---------------------------------- */
 
-const SYSTEM = `You are the Nextspace Assistant, built into Nextspace, a team email workspace. You help the person with their email and their team.
+const SYSTEM = `You are Nex, the voice-capable Nextspace Assistant built into Nextspace, a team email workspace. You help the person with their email, meetings and team.
 
 What you can do:
 - search_mail and read_email: find and read the person's mail (their own mailbox only).
 - list_team: see who is on their team and who is online.
 - draft_email: prepare an email (new, or a reply with reply_to_id). It appears as a card; the person presses Send or edits it first.
-- schedule_meeting: prepare a Google Meet meeting in their Google Calendar, with invitations. It appears as a card; the person presses Create.
+- schedule_meeting: prepare a meeting with invitations. When Google Meet is connected it uses Google Calendar; otherwise it creates a native Nextspace meeting for teammates. It appears as a card; the person presses Create.
 - send_note: prepare an instant note to a teammate (private, inside Nextspace). It appears as a card; the person presses Send.
 - list_automations and run_automation: find one of the person's saved workflows and prepare it as a card. The person presses Run before its steps execute.
 
@@ -175,7 +175,7 @@ Rules:
 - Search before answering questions about mail, and read an email before summarising it or replying to it. When replying, use reply_to_id and keep the original subject.
 - Write emails in the person's voice: clear, polite and professional, in the language of the email being answered. Email bodies are plain text without markdown. Do not add a sign-off name or signature block; Nextspace adds the person's signature.
 - Each message from the person starts with their local date, time and time zone. Meeting start times are ISO 8601 with that time zone's offset. If a time or the people involved are unclear, ask first.
-- You cannot see calendars, open attachments, or use Google Docs, Slides or Sheets yet. Say so when asked.
+- You cannot see calendar availability, open attachments, or use Google Docs, Slides or Sheets yet. Say so when asked.
 - Keep chat replies short. Use **bold** and short bullet lists when they help; no tables or headings.`;
 
 const TOOLS = [
@@ -219,7 +219,7 @@ const TOOLS = [
   },
   {
     name: 'schedule_meeting',
-    description: 'Prepare a Google Meet meeting in the person’s Google Calendar, inviting guests by email. Shown as a card with Create; nothing happens until they press it.',
+    description: 'Prepare a meeting. If Google Meet is connected it uses Google Calendar and can invite guests by email; otherwise it creates a native Nextspace meeting and guests must be teammates. Shown as a card with Create; nothing happens until they press it.',
     input_schema: {
       type: 'object',
       properties: {
@@ -260,7 +260,7 @@ const TOOLS = [
   },
 ].map((tool) => ({ ...tool, eager_input_streaming: true }));
 
-const toolsFor = () => TOOLS.filter((t) => t.name !== 'schedule_meeting' || meetEnabled());
+const toolsFor = () => TOOLS;
 
 const STEP_LABELS = {
   search_mail: (i) => (i.query ? `Searching mail for “${String(i.query).slice(0, 60)}”` : `Looking at ${i.folder || 'inbox'}`),
@@ -322,15 +322,24 @@ async function runTool(name, input, me) {
     return { card: { kind: 'email', title: data.subject || '(no subject)', data } };
   }
   if (name === 'schedule_meeting') {
-    if (!meetEnabled()) throw new BadInput('Google Meet is not set up in this Nextspace');
     const start = text(i.start, 60, 'start');
     if (Number.isNaN(Date.parse(start))) throw new BadInput('start must be an ISO 8601 date-time');
+    const google = meetEnabled();
+    const guests = emails(i.guests, 'guests', false);
+    if (!google) {
+      const team = new Set(teammates().filter((person) => person.address !== me).map((person) => person.address));
+      const outside = guests.find((address) => !team.has(address));
+      if (outside) throw new BadInput(`${outside} is not a teammate. Native Nextspace meetings invite teammates only; use list_team to find them.`);
+    }
+    const requestedMinutes = Math.min(Math.max(Math.round(Number(i.minutes) || 30), 5), 1440);
+    const nativeDurations = [15, 30, 45, 60, 90, 120, 180, 240];
     const data = {
       title: text(i.title, 200, 'title'),
       start,
-      minutes: Math.min(Math.max(Math.round(Number(i.minutes) || 30), 5), 1440),
-      guests: emails(i.guests, 'guests', false),
+      minutes: google ? requestedMinutes : nativeDurations.reduce((best, value) => Math.abs(value - requestedMinutes) < Math.abs(best - requestedMinutes) ? value : best),
+      guests,
       description: text(i.description, 4000, 'description', false),
+      provider: google ? 'google' : 'nextspace',
     };
     return { card: { kind: 'meeting', title: data.title, data } };
   }

@@ -1899,6 +1899,7 @@ a.btn { color: inherit; text-decoration: none; }
    ===================================================================================== */
 :root { --navy: #0b2a6f; --navy-2: #1c3f8f; font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; }
 button, input, select, textarea { font-family: inherit; }
+.persistent-mailbox.is-background { display: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .rail, .crumbs, .pane-head, .list-head { display: none; }
 .tag.waiting-tag { background: #fef3e2; color: #93370d; }
@@ -3905,4 +3906,353 @@ a.recording-drive:hover { text-decoration: underline; }
   .call-backdrop { align-items: end; padding: 12px; }
   .incoming-call { padding: 32px 22px max(24px, env(safe-area-inset-bottom)); border-radius: 26px; }
   .incoming-call-pulse { top: 26px; }
+}
+
+/* ---------- Meeting motion: smooth, GPU-friendly transforms with restrained staging ---------- */
+@keyframes meeting-room-enter {
+  from { opacity: 0; }
+}
+@keyframes meeting-header-enter {
+  from { opacity: 0; transform: translateY(-10px); }
+}
+@keyframes meeting-tile-enter {
+  from { opacity: 0; transform: translateY(12px) scale(.975); }
+}
+@keyframes meeting-dock-enter {
+  from { opacity: 0; transform: translateY(18px) scale(.97); }
+}
+@keyframes meeting-panel-enter {
+  from { opacity: 0; transform: translateX(24px) scale(.985); }
+}
+@keyframes meeting-sheet-enter {
+  from { opacity: 0; transform: translateY(28px) scale(.99); }
+}
+@keyframes meeting-card-enter {
+  from { opacity: 0; transform: translateY(18px) scale(.975); }
+}
+@keyframes meeting-glow-breathe {
+  50% { opacity: .62; transform: scale(1.18); }
+}
+@keyframes incoming-card-enter {
+  from { opacity: 0; transform: translateY(18px) scale(.94); }
+  65% { transform: translateY(-2px) scale(1.006); }
+}
+
+.call-room { animation: meeting-room-enter .32s ease-out both; }
+.call-room-head { animation: meeting-header-enter .48s cubic-bezier(.22, 1, .36, 1) both; }
+.call-grid > .call-tile, .call-strip > .call-tile { animation: meeting-tile-enter .52s cubic-bezier(.22, 1, .36, 1) both; }
+.call-grid > .call-tile:nth-child(2), .call-strip > .call-tile:nth-child(2) { animation-delay: 45ms; }
+.call-grid > .call-tile:nth-child(3), .call-strip > .call-tile:nth-child(3) { animation-delay: 80ms; }
+.call-grid > .call-tile:nth-child(4), .call-strip > .call-tile:nth-child(4) { animation-delay: 115ms; }
+.call-grid > .call-tile:nth-child(5), .call-strip > .call-tile:nth-child(5) { animation-delay: 145ms; }
+.call-grid > .call-tile:nth-child(n + 6), .call-strip > .call-tile:nth-child(n + 6) { animation-delay: 170ms; }
+.call-tile {
+  transition: border-color .3s ease, box-shadow .38s ease, background-color .3s ease;
+}
+.call-tile-avatar, .call-tile-name, .call-tile-status { transition: opacity .28s ease, transform .38s cubic-bezier(.22, 1, .36, 1); }
+.call-tile.speaking { transition-duration: .18s, .32s, .3s; }
+.call-screen, .call-pip { animation: meeting-tile-enter .52s cubic-bezier(.22, 1, .36, 1) both; }
+.call-controls-main { animation: meeting-dock-enter .55s .08s cubic-bezier(.22, 1, .36, 1) both; }
+.call-controls-info, .call-controls-side { animation: fade-in .42s .18s ease-out both; }
+.call-control {
+  transition: transform .22s cubic-bezier(.22, 1, .36, 1), background-color .24s ease, color .24s ease, border-color .24s ease, box-shadow .3s ease;
+}
+.call-control:hover:not(:disabled) { transform: translateY(-2px); }
+.call-control:active:not(:disabled) { transform: translateY(0) scale(.92); transition-duration: .09s; }
+.call-control svg { transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
+.call-control:hover:not(:disabled) svg { transform: scale(1.08); }
+.call-control.on svg, .call-control.off svg { transform: scale(1.04); }
+.call-control-badge { transition: transform .25s cubic-bezier(.22, 1, .36, 1); }
+.call-control:hover .call-control-badge { transform: translateY(-1px) scale(1.06); }
+.call-panel { animation: meeting-panel-enter .42s cubic-bezier(.22, 1, .36, 1) both; }
+.call-panel-section { animation: rise-in .35s ease-out both; }
+.call-panel-section:nth-of-type(2) { animation-delay: 45ms; }
+.call-panel-section:nth-of-type(3) { animation-delay: 80ms; }
+.call-lobby-item, .call-share-card, .call-record-confirm, .call-recording-saved { animation-duration: .42s; animation-timing-function: cubic-bezier(.22, 1, .36, 1); }
+.call-live-mark i { animation: meeting-glow-breathe 2.6s ease-in-out infinite; }
+.call-mini { animation: meeting-card-enter .42s cubic-bezier(.22, 1, .36, 1) both; }
+.call-mini-btn { transition: transform .18s cubic-bezier(.22, 1, .36, 1), background-color .22s ease, color .22s ease; }
+.call-mini-btn:hover { transform: translateY(-1px); }
+.call-mini-btn:active { transform: scale(.92); }
+
+.join-preview { animation: meeting-card-enter .62s .04s cubic-bezier(.22, 1, .36, 1) both; }
+.join-panel { animation: meeting-card-enter .62s .13s cubic-bezier(.22, 1, .36, 1) both; }
+.join-preview-controls { animation: meeting-dock-enter .48s .24s cubic-bezier(.22, 1, .36, 1) both; }
+.join-preview video { animation: fade-in .5s ease-out both; }
+.join-waiting, .join-form { animation: rise-in .36s cubic-bezier(.22, 1, .36, 1) both; }
+.join-page::before, .join-page::after { animation: meeting-glow-breathe 8s ease-in-out infinite alternate; transform-origin: center; }
+
+.meet-choice { transition: transform .28s cubic-bezier(.22, 1, .36, 1), border-color .22s ease, background-color .22s ease, box-shadow .28s ease; }
+.meet-choice:active:not(:disabled) { transform: translateY(0) scale(.985); transition-duration: .1s; }
+.meet-choice svg { transition: transform .3s cubic-bezier(.22, 1, .36, 1); }
+.meet-choice:hover:not(:disabled) svg { transform: translateX(2px) scale(1.06); }
+.meet-form, .meet-done { animation: rise-in .38s cubic-bezier(.22, 1, .36, 1) both; }
+
+.call-backdrop { animation: fade-in .3s ease-out both; }
+.incoming-call { animation: incoming-card-enter .58s cubic-bezier(.22, 1, .36, 1) both; }
+.incoming-call-avatar { animation: meeting-card-enter .48s .12s cubic-bezier(.22, 1, .36, 1) both; }
+.incoming-call p, .incoming-call h2, .incoming-call > .muted { animation: rise-in .42s .18s cubic-bezier(.22, 1, .36, 1) both; }
+.incoming-call-actions { animation: meeting-dock-enter .48s .24s cubic-bezier(.22, 1, .36, 1) both; }
+.incoming-call-alt { animation: fade-in .35s .34s ease-out both; transition: color .2s ease, transform .2s cubic-bezier(.22, 1, .36, 1); }
+.incoming-call-alt:hover { transform: translateY(-1px); }
+
+@media (max-width: 800px) {
+  .call-panel { animation-name: meeting-sheet-enter; }
+}
+@media (max-width: 460px) {
+  .incoming-call { transform-origin: bottom center; animation-name: meeting-sheet-enter; }
+}
+
+/* ---------- Nextspace Meet 2.0: complete light theme ---------- */
+.call-room {
+  --call-ink: #172033;
+  --call-muted: #6f7b91;
+  --call-panel: rgb(255 255 255 / 94%);
+  --call-accent: #596fe8;
+  --call-accent-strong: #725de2;
+  background:
+    radial-gradient(circle at 8% -12%, rgb(126 145 245 / 18%), transparent 34%),
+    radial-gradient(circle at 96% 4%, rgb(167 123 224 / 12%), transparent 28%),
+    linear-gradient(145deg, #f8faff 0%, #f0f3f9 52%, #f7f8fc 100%);
+  color: var(--call-ink);
+}
+.call-room::before {
+  background-image: linear-gradient(rgb(69 82 120 / 3%) 1px, transparent 1px), linear-gradient(90deg, rgb(69 82 120 / 3%) 1px, transparent 1px);
+  mask-image: linear-gradient(to bottom, black, transparent 68%);
+}
+.call-room-head { min-height: 64px; padding: 9px 22px; border-bottom: 1px solid rgb(56 69 103 / 7%); background: rgb(255 255 255 / 56%); backdrop-filter: blur(18px); }
+.call-live-mark { border-color: #dbe1ef; background: #fff; box-shadow: 0 5px 16px rgb(49 63 100 / 8%); }
+.call-live-mark i { background: #20b77b; box-shadow: 0 0 0 5px rgb(32 183 123 / 12%), 0 0 16px rgb(32 183 123 / 32%); }
+.call-room-title strong { color: #172033; font-size: 16px; }
+.call-room-title span { color: #7a869a; }
+.call-head-btn { border-color: #dce2ed; background: #fff; color: #4a5871; box-shadow: 0 5px 16px rgb(49 63 100 / 7%); }
+.call-head-btn:hover { border-color: #cbd4e5; background: #f5f7fc; color: #26344f; }
+.call-room-body { gap: 16px; padding: 16px 22px 0; }
+.call-grid { gap: 14px; }
+.call-tile {
+  border-color: #e0e5ef; border-radius: 20px;
+  background:
+    radial-gradient(circle at 50% 35%, rgb(122 141 235 / 13%), transparent 35%),
+    linear-gradient(145deg, #f9faff, #e9edf6);
+  box-shadow: 0 12px 34px rgb(47 61 96 / 10%), inset 0 1px 0 #fff;
+}
+.call-tile::after { box-shadow: inset 0 0 45px rgb(97 113 155 / 4%); }
+.call-tile.speaking { border-color: #3cc58e; box-shadow: 0 0 0 4px rgb(60 197 142 / 14%), 0 16px 38px rgb(47 61 96 / 13%); }
+.call-tile-avatar .avatar { box-shadow: 0 0 0 7px rgb(255 255 255 / 75%), 0 12px 30px rgb(59 72 109 / 16%); }
+.call-tile-name { border-color: rgb(255 255 255 / 32%); background: rgb(26 34 53 / 72%); color: #fff; box-shadow: 0 5px 16px rgb(24 31 48 / 16%); }
+.call-tile-status { border-color: rgb(255 255 255 / 30%); background: rgb(255 255 255 / 82%); color: #46546d; box-shadow: 0 5px 16px rgb(45 58 91 / 10%); }
+.call-tile-hand { background: #ffce5c; color: #3f3103; box-shadow: 0 7px 20px rgb(117 84 4 / 17%); }
+.call-screen { border-color: #dce2ed; border-radius: 20px; box-shadow: 0 14px 36px rgb(42 54 85 / 12%); }
+.call-strip { width: 220px; gap: 14px; }
+.call-strip .call-tile { height: 138px; }
+.call-pip { border: 3px solid #fff; border-radius: 17px; box-shadow: 0 16px 38px rgb(30 39 62 / 24%); }
+.call-sharing-note { border: 1px solid #ccebdd; background: rgb(239 253 247 / 94%); color: #147554; box-shadow: 0 8px 24px rgb(40 104 79 / 12%); backdrop-filter: blur(14px); }
+.call-sharing-note button { background: #d6f3e5; color: #116446; }
+
+.call-panel {
+  width: 360px; border-color: #dfe4ee; border-radius: 20px; background: var(--call-panel); color: #1d2940;
+  box-shadow: 0 22px 55px rgb(41 54 87 / 15%); backdrop-filter: blur(24px);
+}
+.call-panel-close { color: #6b7890; }
+.call-panel-close:hover { background: #f0f3f8; color: #26344f; }
+.call-panel-title { color: #182239; }
+.call-panel-section { border-color: #edf0f5; }
+.call-panel h3 { color: #718097; }
+.call-panel h3 span { background: #eef1f7; color: #5b6880; }
+.call-panel-note, .call-person small, .call-people small { color: #7a869a; }
+.call-panel-error { color: #b42338; }
+.call-people li:hover { background: #f5f7fb; }
+.call-person strong { color: #253149; }
+.call-person-mic { color: #526079; }
+.call-person-mic.off { color: #d34c61; }
+.call-person-hand { background: #ffce5c; color: #3f3103; }
+.call-pill { border-color: #ced6e5; background: #fff; color: #5267dc; }
+.call-pill:hover:not(:disabled) { border-color: #aebaf0; background: #f1f3ff; }
+.call-pill:disabled { color: #9aa4b6; }
+.call-pill.primary { border-color: #6479e8; background: linear-gradient(135deg, #6479e8, #7963dc); color: #fff; box-shadow: 0 6px 16px rgb(91 105 214 / 20%); }
+.call-people-search { border: 1px solid #e2e6ef; background: #f6f8fb; color: #8490a4; }
+.call-people-search input { color: #253149; }
+.call-panel .call-share-link input, .call-device select { border-color: #dce2ec; background: #f8f9fc; color: #253149; }
+.call-panel .presence-dot { border-color: #fff; }
+.call-meter span { background: #dfe4ec; }
+.call-test-sound { border-color: #d9dfeb; background: #fff; color: #40506c; }
+.call-test-sound:hover:not(:disabled) { background: #f4f6fa; }
+.call-link { color: #5369df; }
+
+.call-controls { grid-template-columns: minmax(170px, 1fr) auto minmax(170px, 1fr); padding: 16px 22px max(20px, env(safe-area-inset-bottom)); }
+.call-controls-info { color: #77849a; }
+.call-controls-info .call-info-time { border-color: #dce2ec; background: rgb(255 255 255 / 78%); color: #35435d; box-shadow: 0 5px 16px rgb(49 63 100 / 6%); }
+.call-controls-info span:last-child { color: #77849a; }
+.call-controls-main { border-color: #dce2ec; background: rgb(255 255 255 / 92%); box-shadow: 0 16px 42px rgb(42 54 86 / 14%), inset 0 1px 0 #fff; }
+.call-control { color: #4f5d75; }
+.call-control:hover:not(:disabled) { background: #f0f3f8; color: #273550; }
+.call-control .call-control-label { color: #748197; }
+.call-control.off, .call-control.off:hover:not(:disabled) { border-color: #f3c5cc; background: #fff0f2; color: #c63850; }
+.call-control.off .call-control-label { color: #b6475a; }
+.call-control.on { border-color: #6579e5; background: linear-gradient(145deg, #6d82ec, #7e67dd); color: #fff; box-shadow: 0 8px 20px rgb(91 106 216 / 24%); }
+.call-control.on:hover:not(:disabled) { background: linear-gradient(145deg, #6076e5, #735bd6); }
+.call-control.recording, .call-control.recording:hover:not(:disabled) { border-color: #b8324c; background: #be3d55; color: #fff; }
+.call-control.danger { background: #df4e62; color: #fff; box-shadow: 0 8px 20px rgb(188 52 73 / 20%); }
+.call-control.danger:hover:not(:disabled) { background: #cf4055; }
+.call-control.side { border: 1px solid #dce2ec; background: rgb(255 255 255 / 76%); color: #58677f; box-shadow: 0 5px 16px rgb(49 63 100 / 5%); }
+.call-control.side:hover:not(:disabled) { background: #fff; }
+.call-control.side.on { border-color: #bfc8f5; background: #eef0ff; color: #5267dc; }
+.call-control-badge { background: #ffca52; color: #3f3103; box-shadow: 0 0 0 3px #f5f7fb; }
+.call-control:focus-visible, .call-head-btn:focus-visible, .call-panel button:focus-visible, .join-preview button:focus-visible { outline-color: #6b7fe8; }
+.call-notice { border-color: #eadcad; background: rgb(255 250 232 / 94%); color: #725716; box-shadow: 0 8px 24px rgb(95 75 20 / 8%); }
+.call-share-card, .call-record-confirm, .call-recording-saved { border-color: #dce2ec; background: rgb(255 255 255 / 96%); color: #1e2a42; box-shadow: 0 24px 60px rgb(41 53 85 / 17%); }
+.call-share-card .call-panel-note, .call-record-confirm p, .call-recording-saved small { color: #738097; }
+.call-record-confirm-actions button.ghost { background: #edf0f5; color: #42516b; }
+.call-lobby-item { border: 1px solid #e0e5ee; background: #fff; color: #1e2a42; box-shadow: 0 12px 30px rgb(42 54 86 / 14%); }
+.call-lobby-who small { color: #748096; }
+.call-rec { background: #fff0f2; color: #a82e45; box-shadow: inset 0 0 0 1px #f5ccd2; }
+.call-rec time { color: #a82e45; }
+.call-rec button { background: #f7dce1; color: #98283e; }
+.call-rec-dot { background: #dc4059; }
+
+.call-mini { border: 1px solid #dce2ec; background: #fff; color: #1f2b43; box-shadow: 0 18px 46px rgb(37 49 78 / 20%); }
+.call-mini-bar { border-top: 1px solid #edf0f5; }
+.call-mini-btn { border: 1px solid #dce2ec; background: #f7f8fb; color: #4b5972; }
+.call-mini-btn.on { border-color: #f0bdc5; background: #fff0f2; color: #c63850; }
+.call-mini-btn.danger { border-color: #df4e62; background: #df4e62; color: #fff; }
+.call-mini-expand { background: rgb(255 255 255 / 86%); color: #2e3b55; box-shadow: 0 5px 16px rgb(29 38 61 / 14%); }
+
+/* Light, welcoming pre-join lobby. */
+.join-page {
+  background:
+    radial-gradient(circle at 4% 0%, rgb(111 133 238 / 17%), transparent 32%),
+    radial-gradient(circle at 100% 100%, rgb(173 127 223 / 12%), transparent 32%),
+    #f5f7fb;
+  color: #18233a;
+}
+.join-page::before { background: radial-gradient(circle, rgb(111 133 238 / 16%), transparent 66%); }
+.join-page::after { background: radial-gradient(circle, rgb(167 120 218 / 12%), transparent 66%); }
+.join-preview { border-color: #dce2ed; background: linear-gradient(145deg, #eef1f8, #e3e8f2); box-shadow: 0 28px 70px rgb(44 57 91 / 16%), inset 0 1px 0 #fff; }
+.join-preview::after { box-shadow: inset 0 0 70px rgb(80 97 139 / 5%); }
+.join-preview-off { color: #637089; }
+.join-preview-name { border-color: rgb(255 255 255 / 45%); background: rgb(29 38 58 / 68%); color: #fff; }
+.join-preview-controls .call-control { border-color: rgb(255 255 255 / 55%); background: rgb(255 255 255 / 88%); color: #35435d; box-shadow: 0 8px 22px rgb(36 48 77 / 16%); }
+.join-preview-controls .call-control:hover:not(:disabled) { background: #fff; }
+.join-preview-controls .call-control.off { border-color: #d8495f; background: #d8495f; color: #fff; }
+.join-panel { border-color: #dfe4ee; background: rgb(255 255 255 / 86%); box-shadow: 0 24px 65px rgb(46 58 91 / 13%); }
+.join-panel h1 { color: #17223a; }
+.join-note, .join-waiting p { color: #6f7b91; }
+.join-starts { border: 1px solid #d8ddfb; background: #f0f2ff; color: #5266d7; }
+.join-form input { border-color: #d9e0eb; background: #fff; color: #202c44; }
+.join-form input:focus { border-color: #7588e8; outline-color: rgb(104 123 229 / 16%); }
+.join-go { background: linear-gradient(135deg, #6278e8, #7862da); box-shadow: 0 10px 24px rgb(88 102 210 / 22%); }
+
+/* Meeting creation is now an airy command palette rather than a plain form. */
+.meet-modal { max-width: 620px; border-color: #dfe4ee; border-radius: 24px; box-shadow: 0 30px 90px rgb(37 49 79 / 22%); }
+.meet-modal .modal-head { margin: -20px -20px 8px; padding: 22px 24px; border-bottom: 1px solid #edf0f5; background: linear-gradient(135deg, #f3f5ff, #fff 58%, #faf7ff); }
+.meet-title { color: #1b2740; letter-spacing: -.02em; }
+.meet-badge { width: 42px; height: 42px; border-radius: 14px; background: linear-gradient(135deg, #647ae9, #8067dc); box-shadow: 0 9px 20px rgb(93 104 207 / 22%); }
+.meet-choices { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.meet-choice { min-height: 142px; align-items: flex-start; flex-direction: column; gap: 14px; padding: 20px; border-color: #e0e5ef; border-radius: 18px; background: linear-gradient(145deg, #fff, #fafbfe); box-shadow: 0 7px 22px rgb(44 56 87 / 5%); }
+.meet-choice > svg { box-sizing: content-box; padding: 10px; border-radius: 12px; background: #eef0ff; color: #5d72df; }
+.meet-choice > span { gap: 6px; }
+.meet-choice strong { color: #202c44; font-size: 15px; }
+.meet-choice .muted { color: #748097; line-height: 1.45; }
+.meet-choice:hover:not(:disabled) { border-color: #bfc8f3; background: #fff; box-shadow: 0 14px 30px rgb(57 71 112 / 10%); }
+.meet-choice-google { grid-column: 1 / -1; min-height: 94px; flex-direction: row; align-items: center; }
+.meet-form { gap: 18px; padding-top: 4px; }
+.meet-form label, .meet-label { color: #4f5d74; font-weight: 600; }
+.meet-form input, .meet-form select, .meet-form textarea { border-color: #dbe1eb; border-radius: 11px; background: #fbfcfe; }
+.meet-form input:focus, .meet-form select:focus, .meet-form textarea:focus { border-color: #7184e4; outline: 3px solid rgb(99 119 226 / 13%); }
+.meet-link { border-color: #d9def8; border-radius: 13px; background: #f2f3ff; color: #4f64d7; }
+.schedule-person { border-color: #dce2ec; background: #fafbfc; }
+.schedule-person.on { border-color: #7c8de5; background: #eef0ff; color: #5164d2; }
+
+/* Incoming calls stay light and immediately actionable. */
+.call-backdrop { background: radial-gradient(circle at 50% 42%, rgb(103 122 226 / 15%), transparent 38%), rgb(229 234 245 / 78%); }
+.incoming-call {
+  border-color: rgb(255 255 255 / 85%);
+  background: radial-gradient(circle at 50% 0%, rgb(116 136 236 / 15%), transparent 42%), rgb(255 255 255 / 96%);
+  color: #17233b; box-shadow: 0 34px 100px rgb(43 55 86 / 25%), inset 0 1px 0 #fff;
+}
+.incoming-call::before { background: #8092ef; opacity: .09; }
+.incoming-call-avatar { border-color: #dce2ef; background: linear-gradient(145deg, #eef1ff, #f4effd); box-shadow: 0 16px 38px rgb(51 64 100 / 16%), inset 0 1px 0 #fff; }
+.incoming-call-pulse { border-color: rgb(100 121 229 / 38%); box-shadow: 0 0 28px rgb(96 116 224 / 12%); }
+.incoming-call-pulse::after { border-color: rgb(129 100 215 / 30%); }
+.incoming-call p { color: #5b6fd7; }
+.incoming-call h2 { color: #17233b; }
+.incoming-call > .muted { color: #738097; }
+.incoming-call-alt { color: #65728a; }
+.incoming-call-alt:hover { color: #26334d; }
+
+@media (max-width: 800px) {
+  .call-room-head { min-height: 54px; padding: 7px 10px; }
+  .call-room-body { padding: 8px 8px 0; }
+  .call-grid { gap: 8px; }
+  .call-tile { border-radius: 15px; }
+  .call-controls { padding: 10px 8px max(12px, env(safe-area-inset-bottom)); }
+  .call-controls-main { box-shadow: 0 12px 30px rgb(42 54 86 / 13%); }
+  .call-panel { width: auto; border-radius: 18px; }
+  .join-main { padding-top: 18px; }
+  .meet-modal { max-width: min(620px, calc(100vw - 24px)); }
+}
+@media (max-width: 560px) {
+  .meet-choices { grid-template-columns: 1fr; }
+  .meet-choice, .meet-choice-google { grid-column: auto; min-height: 94px; flex-direction: row; align-items: center; padding: 16px; }
+  .meet-choice > svg { padding: 8px; }
+}
+
+/* ---------- Nex: voice-capable action assistant ---------- */
+.nex-assistant {
+  background:
+    radial-gradient(circle at 72% -20%, rgb(121 101 221 / 10%), transparent 38%),
+    radial-gradient(circle at 28% 110%, rgb(86 119 229 / 8%), transparent 34%),
+    var(--bg, #f6f8fc);
+}
+.nex-assistant.nex-hidden { pointer-events: none; background: none; animation: none; }
+.nex-assistant.nex-hidden > .ai-chats, .nex-assistant.nex-hidden > .ai-main { display: none; }
+.nex-background-listener { pointer-events: auto; position: fixed; z-index: 42; right: 18px; bottom: calc(18px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: auto auto; align-items: center; gap: 1px 7px; padding: 9px 14px 9px 12px; border: 1px solid #dce2ed; border-radius: 16px; background: rgb(255 255 255 / 94%); color: #37445d; font: inherit; font-size: 12px; font-weight: 700; box-shadow: 0 14px 38px rgb(38 50 80 / 18%); backdrop-filter: blur(16px); cursor: pointer; animation: meeting-card-enter .4s cubic-bezier(.22, 1, .36, 1) both; }
+.nex-background-listener .nex-wake-dot { grid-row: 1 / 3; background: #21b77c; box-shadow: 0 0 0 4px rgb(33 183 124 / 12%); animation: nex-wake-breathe 2s ease-in-out infinite; }
+.nex-background-listener small { color: #7c879b; font-size: 9px; font-weight: 600; letter-spacing: .04em; text-align: left; text-transform: uppercase; }
+.nex-assistant .ai-head { min-height: 44px; border-bottom: 1px solid var(--border); background: rgb(255 255 255 / 72%); backdrop-filter: blur(18px); }
+.nex-assistant .ai-head-title { color: #293753; }
+.nex-assistant .ai-head-title svg { color: #665fe0; }
+.nex-assistant .ai-head-title small { margin-left: 3px; padding: 3px 8px; border-radius: 999px; background: #efefff; color: #655fca; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.nex-wake-toggle { flex: none; display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 11px; border: 1px solid #dce1ed; border-radius: 999px; background: #fff; color: #67748b; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: border-color .2s ease, background-color .2s ease, color .2s ease, transform .2s cubic-bezier(.22, 1, .36, 1); }
+.nex-wake-toggle:hover { transform: translateY(-1px); border-color: #bfc7eb; color: #5664c9; }
+.nex-wake-toggle.on { border-color: #c8cdf3; background: #f0f1ff; color: #5d60cb; }
+.nex-wake-toggle:disabled { opacity: .45; cursor: default; transform: none; }
+.nex-wake-dot { width: 7px; height: 7px; border-radius: 50%; background: #aab2c2; }
+.nex-wake-toggle.on .nex-wake-dot { background: #21b77c; box-shadow: 0 0 0 4px rgb(33 183 124 / 12%); animation: nex-wake-breathe 2s ease-in-out infinite; }
+.nex-assistant .ai-mark, .nex-assistant .ai-avatar { background: linear-gradient(135deg, #5d76e8, #7b5bd7); }
+.nex-assistant .ai-mark { position: relative; box-shadow: 0 12px 30px -8px rgb(92 91 211 / 45%); }
+.nex-assistant .ai-mark::after { position: absolute; inset: -7px; border: 1px solid rgb(102 95 222 / 20%); border-radius: 23px; content: ''; }
+.nex-assistant .ai-suggestions button { background: rgb(255 255 255 / 82%); box-shadow: 0 7px 22px rgb(48 61 96 / 5%); }
+.nex-assistant .ai-suggestions button svg { color: #5e71df; }
+.nex-assistant .ai-box { border-color: #d9dfeb; background: rgb(255 255 255 / 92%); box-shadow: 0 12px 34px -12px rgb(42 54 86 / 24%); backdrop-filter: blur(18px); }
+.nex-assistant .ai-box:focus-within { border-color: #8392e3; box-shadow: 0 0 0 4px rgb(103 120 224 / 10%), 0 14px 36px -12px rgb(42 54 86 / 25%); }
+.nex-voice-button { flex: none; color: #5f6f88; transition: color .2s ease, background-color .2s ease, transform .2s cubic-bezier(.22, 1, .36, 1); }
+.nex-voice-button:hover:not(:disabled) { background: #f0f1ff; color: #5b61d6; transform: translateY(-1px); }
+.nex-voice-button.listening { background: #fff0f3; color: #d23f5a; animation: nex-mic-pulse 1.5s ease-in-out infinite; }
+.nex-voice-button.speaking { background: #efefff; color: #625bd5; }
+.nex-voice-button:disabled { opacity: .4; }
+.nex-voice-state { width: 100%; min-width: 0; display: flex; align-items: center; gap: 11px; padding: 8px 10px; box-sizing: border-box; border-radius: 14px; background: linear-gradient(135deg, #f1f3ff, #f8f3ff); color: #35415a; animation: rise-in .3s cubic-bezier(.22, 1, .36, 1) both; }
+.nex-voice-state > span:last-child { min-width: 0; display: grid; gap: 1px; }
+.nex-voice-state strong { font-size: 12px; }
+.nex-voice-state small { overflow: hidden; color: #6f7890; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.nex-orb { flex: none; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; gap: 2px; border-radius: 11px; background: linear-gradient(145deg, #6378e7, #7a5fd8); box-shadow: 0 7px 18px rgb(91 93 201 / 22%); }
+.nex-orb i { width: 3px; border-radius: 3px; background: #fff; animation: nex-wave .8s ease-in-out infinite alternate; }
+.nex-orb i:nth-child(1) { height: 8px; animation-delay: -.3s; }
+.nex-orb i:nth-child(2) { height: 16px; animation-delay: -.1s; }
+.nex-orb i:nth-child(3) { height: 11px; animation-delay: -.5s; }
+.nex-voice-state.speaking .nex-orb i { animation-duration: .55s; }
+@keyframes nex-wave { to { transform: scaleY(.42); opacity: .65; } }
+@keyframes nex-mic-pulse { 50% { box-shadow: 0 0 0 5px rgb(210 63 90 / 10%); } }
+@keyframes nex-wake-breathe { 50% { box-shadow: 0 0 0 7px rgb(33 183 124 / 5%); } }
+
+@media (max-width: 800px) {
+  .nex-assistant .ai-head { background: linear-gradient(135deg, #5269d7, #6f56c8); color: #fff; border-bottom: 0; }
+  .nex-assistant .ai-head-title, .nex-assistant .ai-head-title svg { color: #fff; }
+  .nex-assistant .ai-head-title small { background: rgb(255 255 255 / 16%); color: #fff; }
+  .nex-wake-toggle { padding-inline: 9px; border-color: rgb(255 255 255 / 22%); background: rgb(255 255 255 / 11%); color: #fff; }
+  .nex-wake-toggle.on { border-color: rgb(255 255 255 / 30%); background: rgb(255 255 255 / 18%); color: #fff; }
+}
+@media (max-width: 480px) {
+  .nex-assistant .ai-head-title small { display: none; }
+  .nex-wake-toggle { font-size: 0; gap: 0; width: 36px; justify-content: center; padding: 0; }
 }
