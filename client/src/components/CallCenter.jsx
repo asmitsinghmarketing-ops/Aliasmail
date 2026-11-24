@@ -33,16 +33,17 @@ async function unlockCallAudio() {
   } catch { /* desktop notification remains the fallback */ }
 }
 
-// Soft marimba-like notes: a quick attack, then the overtones fade faster than the note itself.
-const C5 = 523.25, E5 = 659.25, G5 = 783.99, C6 = 1046.5, G4 = 392, E4 = 329.63;
+// Nextspace's call signature: a soft glassy rise for incoming calls and a quiet answer tone
+// for the caller. The phrases leave plenty of silence so they get attention without nagging.
+const D5 = 587.33, FS5 = 739.99, A5 = 880, D6 = 1174.66, A4 = 440, E5 = 659.25;
 const RINGTONES = {
-  // Someone is calling you: a rising chime, twice, then a pause.
+  // Someone is calling you: two short rising phrases, then a generous pause.
   incoming: {
-    seconds: 3.2,
-    notes: [[0, C5], [0.13, E5], [0.26, G5], [0.39, C6], [0.9, C5], [1.03, E5], [1.16, G5], [1.29, C6]],
+    seconds: 4.4,
+    notes: [[0, D5], [0.16, FS5], [0.34, A5], [0.56, D6], [1.3, D5], [1.46, FS5], [1.64, A5], [1.86, D6]],
   },
-  // You are calling: a calm two-note tone while it rings at the other end.
-  waiting: { seconds: 3.5, notes: [[0, G4], [0.32, E4]] },
+  // You are calling: a restrained two-note reply while it rings at the other end.
+  waiting: { seconds: 4.2, notes: [[0, A4], [0.28, E5]] },
 };
 
 function chime(t, frequency) {
@@ -57,7 +58,7 @@ function chime(t, frequency) {
 }
 
 // `level`: quieter for the sound a caller hears while waiting.
-function startRingtone(level = 0.14, kind = 'incoming') {
+function startRingtone(level = 0.11, kind = 'incoming') {
   try {
     const context = contextForCall();
     if (!context) return null;
@@ -207,7 +208,7 @@ export default function CallCenter() {
         <div className="call-backdrop" role="dialog" aria-modal="true" aria-label={`Incoming call from ${call.fromName}`}>
           <section className="incoming-call">
             <span className="incoming-call-avatar"><Avatar person={{ name: call.fromName, address: call.from }} size="lg" /></span>
-            <span className="incoming-call-pulse" />
+            <span className="incoming-call-pulse" aria-hidden="true" />
             <p>Incoming {call.video ? 'video' : 'voice'} call</p>
             <h2>{call.fromName}</h2>
             {call.invited?.length > 1 && <span className="muted">with {call.invited.length - 1} other{call.invited.length > 2 ? 's' : ''}</span>}
