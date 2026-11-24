@@ -62,6 +62,7 @@ export default function MeetDialog({ me, google = false, onClose, onEmail, onEma
     e.preventDefault();
     const start = new Date(`${form.date}T${form.time}`);
     if (Number.isNaN(start.getTime())) return setError('Choose a date and time');
+    if (start.getTime() < Date.now() - 60_000) return setError('Choose a time in the future');
     create({
       title: form.title.trim() || 'Meeting',
       start: start.toISOString(),
@@ -72,9 +73,15 @@ export default function MeetDialog({ me, google = false, onClose, onEmail, onEma
   }
 
   async function copy() {
-    await navigator.clipboard?.writeText(meeting.link).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setError('');
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(meeting.link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError('Couldn’t copy the link. Select it and copy it manually.');
+    }
   }
 
   async function startNow() {
@@ -96,9 +103,9 @@ export default function MeetDialog({ me, google = false, onClose, onEmail, onEma
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal meet-modal" role="dialog" aria-label="Google Meet" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal meet-modal" role="dialog" aria-modal="true" aria-labelledby="meet-dialog-title" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h2 className="meet-title">
+          <h2 className="meet-title" id="meet-dialog-title">
             <span className="meet-badge"><Icon name="videocam" size={20} /></span>
             {view === 'done' ? (meeting.guests.length ? 'Meeting scheduled' : 'Your meeting is ready') : view === 'schedule' ? 'Schedule a Google Meet' : view === 'google' ? 'Google Meet' : 'New meeting'}
           </h2>
@@ -164,7 +171,7 @@ export default function MeetDialog({ me, google = false, onClose, onEmail, onEma
             <div className="meet-row">
               <label>
                 Date
-                <input type="date" value={form.date} onChange={set('date')} required />
+                <input type="date" value={form.date} min={localDate(new Date())} onChange={set('date')} required />
               </label>
               <label>
                 Time
@@ -211,7 +218,7 @@ export default function MeetDialog({ me, google = false, onClose, onEmail, onEma
             <div className="meet-link">
               <Icon name="videocam" size={18} />
               <span className="grow" title={meeting.link}>{meeting.link.replace(/^https:\/\//, '')}</span>
-              <button type="button" className="icon-btn" title="Copy link" onClick={copy}>
+              <button type="button" className="icon-btn" title="Copy link" aria-label="Copy meeting link" onClick={copy}>
                 <Icon name={copied ? 'check' : 'copy'} size={18} />
               </button>
             </div>

@@ -173,6 +173,7 @@ function ControlButton({ icon, label, on, off, danger, recording, disabled, onCl
       onClick={onClick}
     >
       <Icon name={icon} />
+      <span className="call-control-label" aria-hidden="true">{label}</span>
       {badge > 0 && <span className="call-control-badge">{badge}</span>}
     </button>
   );
@@ -772,9 +773,10 @@ export default function CallRoom({ state }) {
     <div className={`call-room ${panel ? 'with-panel' : ''}`} role="dialog" aria-label="Call">
       {voicesPlayed}
       <header className="call-room-head">
+        <span className="call-live-mark" aria-hidden="true"><i /></span>
         <div className="call-room-title">
           <strong>{title}</strong>
-          <span>{duration || (call.video ? 'Video call' : 'Voice call')}</span>
+          <span>{duration || (call.video ? 'Video call' : 'Voice call')} · {call.peers.length} {call.peers.length === 1 ? 'person' : 'people'}</span>
         </div>
         {recordingActive && (
           <div className={`call-rec ${state.recording ? 'mine' : ''}`} role="status" aria-label={recordingText} title={recordingText}>
@@ -870,7 +872,7 @@ export default function CallRoom({ state }) {
 
       <footer className="call-controls">
         <div className="call-controls-info" aria-hidden="true">
-          <strong>{clock}</strong>
+          <span className="call-info-time">{clock}</span>
           <span>{call.code || (call.video ? 'Video call' : 'Voice call')}</span>
         </div>
         <div className="call-controls-main">

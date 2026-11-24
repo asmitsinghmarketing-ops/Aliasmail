@@ -56,6 +56,7 @@ export default function ScheduleMeeting({ me, day, meeting, onSaved, onClose, on
     event.preventDefault();
     const startAt = new Date(`${form.date}T${form.time}`);
     if (Number.isNaN(startAt.getTime())) return setError('Choose a date and time');
+    if (!meeting && startAt.getTime() < Date.now() - 60_000) return setError('Choose a time in the future');
     setBusy(true);
     setError('');
     try {
@@ -73,18 +74,22 @@ export default function ScheduleMeeting({ me, day, meeting, onSaved, onClose, on
   }
 
   async function copy() {
+    setError('');
     try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(meetingLink(saved.code));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch { /* the link is selectable */ }
+    } catch {
+      setError('Couldn’t copy the link. Select it and copy it manually.');
+    }
   }
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal meet-modal schedule-modal" role="dialog" aria-label={meeting ? 'Change meeting' : 'Schedule a meeting'} onMouseDown={(event) => event.stopPropagation()}>
+      <div className="modal meet-modal schedule-modal" role="dialog" aria-modal="true" aria-labelledby="schedule-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-head">
-          <h2 className="meet-title">
+          <h2 className="meet-title" id="schedule-dialog-title">
             <span className="meet-badge"><Icon name="event" size={20} /></span>
             {saved ? 'Meeting scheduled' : meeting ? 'Change meeting' : 'Schedule a meeting'}
           </h2>
@@ -101,9 +106,10 @@ export default function ScheduleMeeting({ me, day, meeting, onSaved, onClose, on
             <div className="meet-link">
               <Icon name="link" size={18} />
               <span className="grow" title={meetingLink(saved.code)}>{meetingLink(saved.code).replace(/^https?:\/\//, '')}</span>
-              <button type="button" className="icon-btn" title="Copy link" onClick={copy}><Icon name={copied ? 'check' : 'copy'} size={18} /></button>
+              <button type="button" className="icon-btn" title="Copy link" aria-label="Copy meeting link" onClick={copy}><Icon name={copied ? 'check' : 'copy'} size={18} /></button>
             </div>
             {copied && <span className="muted small">Link copied</span>}
+            {error && <div className="alert" role="alert">{error}</div>}
             <div className="meet-actions">
               {onOpenMeetings && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onOpenMeetings(); }}><Icon name="event" size={18} /> Open Meet</button>}
               {onEmail && <button type="button" className="btn btn-outline" onClick={() => onEmail({ ...saved, link: meetingLink(saved.code) })}><Icon name="mail" size={18} /> Send by email</button>}
@@ -117,7 +123,7 @@ export default function ScheduleMeeting({ me, day, meeting, onSaved, onClose, on
               <input type="text" value={form.title} onChange={set('title')} placeholder="Meeting" maxLength={120} autoFocus />
             </label>
             <div className="meet-row">
-              <label>Date<input type="date" value={form.date} onChange={set('date')} required /></label>
+              <label>Date<input type="date" value={form.date} min={meeting ? undefined : localDate(new Date())} onChange={set('date')} required /></label>
               <label>Time<input type="time" value={form.time} onChange={set('time')} required /></label>
               <label>
                 Length
