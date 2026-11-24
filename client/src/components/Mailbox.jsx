@@ -1186,6 +1186,24 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     return { to: d.to.join(', '), cc: d.cc.join(', '), subject: d.subject, html, text: textFromHtml(html), ...headers };
   }
   const assistantActions = {
+    runCommand: async (command) => {
+      if (command === 'help') return;
+      setAssistantOpen(false);
+      if (command === 'inbox') {
+        setFolder('inbox');
+        setSearch('');
+        closeViewer();
+      } else if (command === 'tasks') onOpenTasks?.();
+      else if (command === 'meetings') onOpenRecordings?.();
+      else if (command === 'planMeeting') setModal('meet');
+      else if (command === 'attendance') onOpenAttendance?.();
+      else if (command === 'automations') onOpenAutomations?.();
+      else if (command === 'notes') openNotes();
+      else if (command === 'settings') {
+        setSettingsTab('profile');
+        setModal('settings');
+      } else if (command === 'compose') compose();
+    },
     sendEmail: async (card) => {
       handleSend({ ...(await assistantEmail(card)), files: [] });
       return '';

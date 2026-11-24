@@ -85,6 +85,7 @@ function MeetingCard({ meeting, onJoin, onEdit, onCancel }) {
   const others = meeting.invitees.filter((person) => !(meeting.mine && person.address === meeting.host.address));
   return (
     <article className={`meeting-card ${meeting.live ? 'live' : ''} ${ended ? 'ended' : ''}`}>
+      <span className="meeting-card-icon"><Icon name="videocam" size={19} /></span>
       <span className="recording-time">
         <strong>{clock(meeting.startAt)}</strong>
         <small>{clock(meeting.endAt)}</small>
@@ -246,29 +247,65 @@ export default function Recordings({ me, onClose }) {
   const pickedDate = day ? fromKey(day) : null;
 
   return (
-    <div className="attendance-app recordings-app">
+    <div className="attendance-app recordings-app meet-hub">
       <header className="tasks-topbar attendance-topbar">
         <button type="button" className="icon-btn tasks-back" onClick={onClose} title="Back to mailbox" aria-label="Back to mailbox"><Icon name="back" /></button>
         <button className="tasks-brand" type="button" onClick={onClose} title="Back to mail"><Logo /><Wordmark /></button>
         <span className="tasks-divider" />
         <strong>Meet</strong>
         <span className="grow" />
-        <button type="button" className="btn btn-outline" onClick={() => setEditing('new')}><Icon name="event" size={18} /> Schedule</button>
-        <button type="button" className="btn btn-primary" disabled={starting} onClick={startNow}><Icon name="videocam" size={18} /> Start now</button>
+        <span className="meet-top-status"><i /> Ready to meet</span>
       </header>
 
       <main className="attendance-main">
-        <div className="attendance-heading">
-          <div>
-            <h1>Meet</h1>
-            <p>Start or join a meeting, plan one ahead, and watch recorded calls. {data ? `Recordings are deleted automatically ${data.keepDays} days after the meeting, so download anything you want to keep.` : ''}</p>
+        <section className="meet-hub-hero">
+          <div className="meet-hub-intro">
+            <span className="meet-hub-kicker"><i /> Nextspace Meet</span>
+            <h1>Meet, share, and move work forward.</h1>
+            <p>A calm place for quick calls, planned conversations, and everything you recorded along the way.</p>
+            <div className="meet-hub-actions">
+              <button type="button" className="btn meet-start" disabled={starting} onClick={startNow}><Icon name="videocam" size={19} /> Start instant meeting</button>
+              <button type="button" className="btn meet-schedule" onClick={() => setEditing('new')}><Icon name="event" size={19} /> Schedule for later</button>
+            </div>
+            <form className="meet-join meet-join-hero" onSubmit={joinWithCode}>
+              <span className="meet-join-icon"><Icon name="keyboard" size={19} /></span>
+              <label htmlFor="meeting-code">Have an invite?</label>
+              <input id="meeting-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Paste a meeting link or code" aria-label="Meeting code or link" autoComplete="off" spellCheck={false} />
+              <button type="submit" className="btn" disabled={starting || !code.trim()}>Join</button>
+            </form>
           </div>
-          <form className="meet-join" onSubmit={joinWithCode}>
-            <Icon name="keyboard" size={18} />
-            <input type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Enter a code or link" aria-label="Meeting code or link" autoComplete="off" spellCheck={false} />
-            <button type="submit" className="btn btn-outline" disabled={starting || !code.trim()}>Join</button>
-          </form>
-        </div>
+
+          <div className={`meet-next-card ${upcoming[0]?.live ? 'live' : ''}`}>
+            <div className="meet-next-art" aria-hidden="true">
+              <span className="meet-orbit orbit-one" />
+              <span className="meet-orbit orbit-two" />
+              <span className="meet-next-camera"><Icon name="videocam" size={30} /></span>
+            </div>
+            {upcoming[0] ? (
+              <div className="meet-next-content">
+                <span className="meet-next-label">{upcoming[0].live ? 'Live now' : 'Up next'} <em>{startsIn(upcoming[0])}</em></span>
+                <h2>{upcoming[0].title}</h2>
+                <p>{new Date(upcoming[0].startAt).toLocaleString([], { weekday: 'long', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                <button type="button" className="btn" onClick={() => join(upcoming[0])}><Icon name="videocam" size={17} /> {upcoming[0].live ? 'Join now' : 'Open meeting'}</button>
+              </div>
+            ) : (
+              <div className="meet-next-content meet-next-empty">
+                <span className="meet-next-label">Your meeting space</span>
+                <h2>No rush. You’re all clear.</h2>
+                <p>Schedule a conversation when the team is ready.</p>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {data && meetings && (
+          <section className="meet-hub-stats" aria-label="Meeting overview">
+            <div><span className="meet-stat-icon violet"><Icon name="event" size={18} /></span><strong>{upcoming.length}</strong><small>Upcoming</small></div>
+            <div><span className="meet-stat-icon blue"><Icon name="videocam" size={18} /></span><strong>{meetings.filter((meeting) => meeting.live).length}</strong><small>Live now</small></div>
+            <div><span className="meet-stat-icon coral"><Icon name="play" size={18} /></span><strong>{data.items.length}</strong><small>Recordings</small></div>
+            <p><Icon name="info" size={16} /> Recordings stay available for {data.keepDays} days.</p>
+          </section>
+        )}
         {error && <div className="alert"><span>{error}</span><button className="link" onClick={() => setError('')}>Dismiss</button></div>}
         {!data || !meetings ? <PanelSkeleton /> : (
           <div className="recordings-layout">

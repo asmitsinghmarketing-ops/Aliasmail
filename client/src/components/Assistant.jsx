@@ -25,6 +25,30 @@ const SUGGESTIONS = [
   { text: 'Send my team a note: ', icon: 'chat', fill: true },
 ];
 
+const BUILT_IN_SUGGESTIONS = [
+  { text: 'Open my inbox', icon: 'inbox' },
+  { text: 'Open tasks', icon: 'checkCircle' },
+  { text: 'Schedule a meeting', icon: 'videocam' },
+  { text: 'Open attendance', icon: 'clock' },
+];
+
+// Deterministic commands that need no LLM and add virtually no hosting load. Content-changing
+// commands still open an existing confirmation screen instead of acting silently.
+export function builtInCommand(text) {
+  const said = String(text || '').toLowerCase().replace(/[?!.]+$/g, '').replace(/\s+/g, ' ').trim();
+  if (/^(?:help|what can you do|show commands|list commands)$/.test(said)) return { action: 'help', reply: 'I can open Inbox, Tasks, Meet, Attendance, Automations, Notes, Settings, or Compose, and I can open the meeting planner.' };
+  if (/^(?:(?:open|show|go to|take me to) )?(?:my )?(?:inbox|mail|mailbox|email)$/.test(said)) return { action: 'inbox', reply: 'Opening your inbox.' };
+  if (/^(?:(?:open|show|go to|take me to) )?(?:my )?tasks?$/.test(said)) return { action: 'tasks', reply: 'Opening Tasks.' };
+  if (/^(?:(?:open|show|go to|take me to) )?(?:my )?(?:meet|meetings|recordings)$/.test(said)) return { action: 'meetings', reply: 'Opening Meet.' };
+  if (/^(?:start|create|schedule|arrange|plan|set up|book)\b.*\b(?:call|meeting)\b.*$/.test(said)) return { action: 'planMeeting', reply: 'Opening the meeting planner. You can choose the time and invitees before creating it.' };
+  if (/^(?:(?:open|show|go to|take me to) )?(?:my )?attendance$/.test(said)) return { action: 'attendance', reply: 'Opening Attendance.' };
+  if (/^(?:(?:open|show|go to|take me to) )?(?:my )?(?:automations?|workflows?)$/.test(said)) return { action: 'automations', reply: 'Opening Automations.' };
+  if (/^(?:(?:open|show|go to|take me to) )?(?:my )?notes?$/.test(said)) return { action: 'notes', reply: 'Opening Notes.' };
+  if (/^(?:(?:open|show|go to|take me to) )?(?:my )?settings?$/.test(said)) return { action: 'settings', reply: 'Opening Settings.' };
+  if (/^(?:compose|write|create|start)(?: a| an)?(?: new)? (?:email|message|mail)$/.test(said)) return { action: 'compose', reply: 'Opening a new email.' };
+  return null;
+}
+
 // The person's local date and time, given to Claude with each message.
 function localNow() {
   const d = new Date();
@@ -283,6 +307,8 @@ export default function Assistant({ status, onClose, onWake, open = true, action
   const wakeArmedRef = useRef(false);
   const busyRef = useRef(busy);
   const enabled = Boolean(status?.enabled);
+  const commandsAvailable = Boolean(actions?.runCommand);
+  const available = enabled || commandsAvailable;
   const Recognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
   const voiceSupported = Boolean(Recognition);
   wakeEnabledRef.current = wakeEnabled;
@@ -306,7 +332,7 @@ export default function Assistant({ status, onClose, onWake, open = true, action
     window.speechSynthesis?.cancel();
   }, []);
   useEffect(() => {
-    if (!enabled || !wakeEnabled || busy || speaking || recognition.current) return undefined;
+    if (!available || !wakeEnabled || busy || speaking || recognition.current) return undefined;
     const resume = () => startVoice(true);
     window.addEventListener('pointerdown', resume, { once: true });
     window.addEventListener('keydown', resume, { once: true });
@@ -314,7 +340,7 @@ export default function Assistant({ status, onClose, onWake, open = true, action
       window.removeEventListener('pointerdown', resume);
       window.removeEventListener('keydown', resume);
     };
-  }, [enabled, wakeEnabled, busy, speaking]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [available, wakeEnabled, busy, speaking]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function stopVoice() {
     if (recognition.current) {
@@ -569,7 +595,28 @@ export default function Assistant({ status, onClose, onWake, open = true, action
   async function ask(text) {
     const message = text.trim();
     const attached = image;
-    if ((!message && !attached) || busy || imageBusy || !enabled) return;
+    if ((!message && !attached) || busy || imageBusy) return;
+    const command = !attached && builtInCommand(message);
+    if (command && commandsAvailable) {
+      const replyItem = { role: 'assistant', parts: [{ type: 'text', text: command.reply }] };
+      setError('');
+      setInput('');
+      setItems((list) => [...list, { role: 'user', text: message }, replyItem]);
+      speakNext.current = false;
+      speak([replyItem]);
+      try { await actions.runCommand(command.action); }
+      catch (err) { setError(err.message); }
+      return;
+    }
+    if (!enabled) {
+      const replyItem = { role: 'assistant', parts: [{ type: 'text', text: 'That request needs the AI service. Built-in mode can open Inbox, Tasks, Meet, Attendance, Automations, Notes, Settings, Compose, or the meeting planner. Say “help” to hear the list.' }] };
+      setError('');
+      setInput('');
+      setItems((list) => [...list, { role: 'user', text: message }, replyItem]);
+      speakNext.current = false;
+      speak([replyItem]);
+      return;
+    }
     setError('');
     setInput('');
     setImage(null);
@@ -672,7 +719,7 @@ export default function Assistant({ status, onClose, onWake, open = true, action
             className={`nex-wake-toggle ${wakeEnabled ? 'on' : ''}`}
             aria-pressed={wakeEnabled}
             title={wakeEnabled ? 'Turn off Hey Nex' : 'Enable Hey Nex while Nextspace is open'}
-            disabled={!enabled}
+            disabled={!available}
             onClick={toggleWakeWord}
           >
             <span className="nex-wake-dot" /> Hey Nex
@@ -685,13 +732,20 @@ export default function Assistant({ status, onClose, onWake, open = true, action
         <div className="ai-scroll">
           <CardContext.Provider value={onAct}>
             <div className="ai-column">
-              {!enabled && (
+              {!enabled && empty && (
                 <div className="ai-welcome">
                   <span className="ai-mark"><Icon name="sparkle" size={30} /></span>
-                  <h1>Nex isn’t set up yet</h1>
+                  <h1>Nex built-in commands are ready</h1>
                   <p className="muted">
-                    It needs an AI key. The admin adds one in Admin console → Assistant → AI settings.
+                    Voice navigation and meeting controls work without an AI key. Connect an AI provider later for mail summaries, drafting, and open-ended requests.
                   </p>
+                  <div className="ai-suggestions">
+                    {BUILT_IN_SUGGESTIONS.map((s) => (
+                      <button key={s.text} type="button" onClick={() => ask(s.text)}>
+                        <Icon name={s.icon} size={18} /> {s.text}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
               {enabled && empty && (
@@ -791,7 +845,7 @@ export default function Assistant({ status, onClose, onWake, open = true, action
               className={`icon-btn nex-voice-button ${listening ? 'listening' : ''} ${speaking ? 'speaking' : ''}`}
               aria-label={wakeEnabled ? 'Turn off Hey Nex' : listening ? 'Stop listening' : speaking ? 'Stop Nex speaking' : 'Talk to Nex'}
               title={!voiceSupported ? 'Voice input requires Chrome or Edge' : wakeEnabled ? 'Hey Nex is always listening; click to turn it off' : listening ? 'Stop listening' : speaking ? 'Stop speaking' : 'Talk to Nex'}
-              disabled={!enabled || busy || imageBusy}
+              disabled={!available || busy || imageBusy}
               onClick={wakeEnabled ? toggleWakeWord : speaking ? stopSpeaking : () => startVoice(false)}
             >
               <Icon name={listening ? 'micOff' : 'mic'} size={21} />
@@ -802,8 +856,8 @@ export default function Assistant({ status, onClose, onWake, open = true, action
               ref={box}
               rows={1}
               maxLength={8000}
-              disabled={!enabled}
-              placeholder={enabled ? 'Ask Nex to write, find, schedule, or run something…' : 'Not set up yet'}
+              disabled={!available}
+              placeholder={enabled ? 'Ask Nex to write, find, schedule, or run something…' : 'Try “open tasks” or “schedule a meeting”…'}
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);
@@ -822,13 +876,13 @@ export default function Assistant({ status, onClose, onWake, open = true, action
                 <span className="ai-stop-square" />
               </button>
             ) : (
-              <button className="ai-send" aria-label="Send" disabled={!enabled || imageBusy || (!input.trim() && !image)}>
+              <button className="ai-send" aria-label="Send" disabled={!available || imageBusy || (!input.trim() && !image)}>
                 <Icon name="send" size={20} />
               </button>
             )}
           </div>
           <p className="ai-foot muted small">
-            Nex can make mistakes, so check its work. Actions always wait for your confirmation.
+            {enabled ? 'Nex can make mistakes, so check its work. Actions always wait for your confirmation.' : 'Built-in commands run locally without an AI key. Content understanding and writing require an AI provider.'}
             {status?.provider === 'gemini' && ' · Test mode (Google Gemini)'}
             {status?.provider === 'openrouter' && ` · Test mode (OpenRouter: ${status.model})`}
             {enabled && spent > 0 && ` · This month: US$${spent.toFixed(2)}`}
