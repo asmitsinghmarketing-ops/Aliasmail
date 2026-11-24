@@ -12,6 +12,10 @@ let retryTimer = null;
 let attempts = 0;
 let seq = 0;
 let online = null; // addresses with Nextspace open; null while the socket is down
+let pingTimer = null;
+let pongTimer = null;
+const PING_MS = 20_000;
+const PONG_MS = 8_000; // no answer this long after a ping: the socket is dead, even if it looks open
 
 const emit = (message) => {
   if (message.type === 'hello') online = new Set(message.online);
@@ -48,6 +52,7 @@ function connect() {
     opened = true;
     attempts = 0;
     stopEvents();
+    startPinging(socket);
     emit({ type: 'open', via: 'socket' });
   };
   socket.onmessage = (event) => {
@@ -57,6 +62,9 @@ function connect() {
     } catch {
       return;
     }
+    clearTimeout(pongTimer); // anything arriving proves the socket works
+    pongTimer = null;
+    if (message.type === 'pong') return;
     const waiting = message.ref && pending.get(message.ref);
     if (waiting) {
       pending.delete(message.ref);
@@ -69,6 +77,7 @@ function connect() {
   socket.onclose = (event) => {
     if (ws !== socket) return; // closed on purpose and already replaced
     ws = null;
+    stopPinging();
     // Already sent, so not retried another way (a note could arrive twice).
     for (const [ref, waiting] of pending) {
       pending.delete(ref);
@@ -83,6 +92,46 @@ function connect() {
     retryTimer = setTimeout(connect, delay);
   };
 }
+
+/**
+ * After the network changes (Wi-Fi to mobile data, a laptop waking up) a socket can look open but
+ * never deliver anything again. Ask regularly; no answer means close it and connect afresh.
+ */
+function startPinging(socket) {
+  stopPinging();
+  pingTimer = setInterval(() => checkSocket(socket), PING_MS);
+}
+function checkSocket(socket = ws) {
+  if (!socket || ws !== socket || socket.readyState !== WebSocket.OPEN || pongTimer) return;
+  try {
+    socket.send(JSON.stringify({ type: 'ping' }));
+  } catch {
+    return;
+  }
+  pongTimer = setTimeout(() => {
+    pongTimer = null;
+    if (ws === socket) socket.close(4000, 'No answer');
+    // onclose may take a long time on a dead network: don't wait for it.
+    if (ws === socket) socket.onclose({ code: 4000 });
+  }, PONG_MS);
+}
+function stopPinging() {
+  clearInterval(pingTimer);
+  clearTimeout(pongTimer);
+  pingTimer = pongTimer = null;
+}
+
+/** Back online, or back on this tab: reconnect now instead of waiting out the backoff, and check the socket. */
+function reconnectNow() {
+  if (!listeners.size) return;
+  if (ws) return checkSocket();
+  attempts = 0;
+  connect();
+}
+window.addEventListener('online', reconnectNow);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') reconnectNow();
+});
 
 function startEvents() {
   if (sse || !window.EventSource) return;
@@ -112,6 +161,7 @@ export function subscribe(fn) {
     if (listeners.size) return;
     clearTimeout(retryTimer);
     stopEvents();
+    stopPinging();
     ws?.close();
     ws = null;
   };

@@ -85,6 +85,8 @@ test('presence, typing and notes travel over the socket; strangers and other sit
   assert.equal((await waitFor(mary.got, (m) => m.type === 'hello')).me, 'mary@example.com');
   const john = await connect(johnCookie);
   assert.deepEqual(await waitFor(mary.got, (m) => m.type === 'presence' && m.address === 'john@example.com'), { type: 'presence', address: 'john@example.com', online: true });
+  john.send({ type: 'ping' });
+  assert.ok(await waitFor(john.got, (m) => m.type === 'pong'), 'application heartbeat gets a prompt answer');
   const threads = await (await fetch(`${BASE}/api/notes/threads`, { headers: { Cookie: maryCookie } })).json();
   assert.equal(threads.find((t) => t.address === 'john@example.com').online, true);
 

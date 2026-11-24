@@ -136,7 +136,10 @@ export function attachLive(server) {
       }
       const ref = message?.ref;
       try {
-        if (message.type === 'note') {
+        if (message.type === 'ping') {
+          // The browser checking the socket still works (after a network change it can look open but be dead).
+          send(ws, { type: 'pong' });
+        } else if (message.type === 'note') {
           send(ws, { type: 'sent', ref, note: await createNote(who, message) });
         } else if (message.type === 'read') {
           send(ws, { type: 'done', ref, changed: message.group ? markGroupRead(who, String(message.group)) : markNotesRead(who, message.with) });

@@ -2,7 +2,7 @@
 // types their name, asks to join, and waits until someone in the call lets them in.
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api } from '../api.js';
-import { callState, guestTransport, joinAsGuest, joinByCode, toggleMute, watchCall } from '../calls.js';
+import { callState, guestTransport, joinAsGuest, joinByCode, watchCall } from '../calls.js';
 import CallRoom from './CallRoom.jsx';
 import Icon from './Icon.jsx';
 import { hideBoot } from './Loading.jsx';
@@ -91,16 +91,25 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
   const choices = useRef({ cameraOn, micOn });
   choices.current = { cameraOn, micOn };
   const session = useRef(null); // { guestId, token, source, listeners, joined }
+  const knocking = useRef(null); // the current lobby request, so Cancel can clean it up even after the server accepted it
   const preview = useCameraPreview(cameraOn && ['form', 'knocking', 'waiting'].includes(phase));
 
-  const loadMeeting = () => fetch(`/api/meet/${encodeURIComponent(code)}`, { credentials: 'same-origin' })
+  const loadMeeting = (signal) => fetch(`/api/meet/${encodeURIComponent(code)}`, { credentials: 'same-origin', signal })
     .then((res) => (res.ok ? res.json() : Promise.reject()))
     .then(setMeeting)
-    .catch(() => setPhase('missing'));
+    .catch((err) => {
+      if (err?.name !== 'AbortError') setPhase('missing');
+    });
   useEffect(() => {
+    const controller = new AbortController();
+    setMeeting(null);
+    setMe(undefined);
+    setError('');
+    setPhase('form');
     hideBoot(); // the loading splash: this page doesn't wait for the mailbox
-    loadMeeting();
+    loadMeeting(controller.signal);
     api('/auth/me', { signInFlow: true }).then(setMe).catch(() => setMe(null));
+    return () => controller.abort();
   }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A scheduled meeting nobody from the team has opened yet: check again every few seconds.
@@ -138,23 +147,30 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
     return () => window.removeEventListener('pagehide', leave);
   }, [code]);
 
-  useEffect(() => () => closeSession(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => {
+    if (knocking.current) knocking.current.cancelled = true;
+    const current = session.current;
+    closeSession();
+    if (current && !current.joined) leaveSession(current, true);
+  }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function closeSession() {
     session.current?.source.close();
     session.current = null;
   }
 
-  const afterJoining = () => {
-    if (!choices.current.micOn) toggleMute();
-  };
+  function leaveSession(current, keepalive = false) {
+    return fetch(`/api/meet/${encodeURIComponent(code)}/leave`, {
+      method: 'POST', keepalive, credentials: 'same-origin',
+      headers: { ...HEADERS, 'X-Guest-Id': current.guestId, 'X-Guest-Token': current.token }, body: '{}',
+    }).catch(() => {});
+  }
 
   async function joinAsTeammate() {
     setError('');
     setPhase('joining');
     try {
-      await joinByCode(code, { video: choices.current.cameraOn });
-      afterJoining();
+      await joinByCode(code, { video: choices.current.cameraOn, muted: !choices.current.micOn });
       onJoinedAsMember();
     } catch (err) {
       setError(err.message);
@@ -179,11 +195,11 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
           return () => current.listeners.delete(fn);
         },
       });
-      joinAsGuest({ call: message.call, peerId: message.peerId, iceServers: message.iceServers }, via, { video: choices.current.cameraOn })
-        .then(afterJoining)
+      joinAsGuest({ call: message.call, peerId: message.peerId, iceServers: message.iceServers }, via, { video: choices.current.cameraOn, muted: !choices.current.micOn })
         .catch((err) => {
           setError(err.message);
           setPhase('form');
+          leaveSession(current);
           closeSession();
         });
     } else if (['denied', 'expired', 'ended'].includes(message.status)) {
@@ -194,8 +210,11 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
 
   async function askToJoin(event) {
     event.preventDefault();
+    if (knocking.current) return undefined;
     const clean = name.replace(/\s+/g, ' ').trim();
     if (!clean) return setError('Enter your name so they know who is asking.');
+    const request = { cancelled: false };
+    knocking.current = request;
     setError('');
     setPhase('knocking');
     try {
@@ -204,6 +223,10 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
     try {
       const res = await fetch(`/api/meet/${encodeURIComponent(code)}/knock`, { method: 'POST', credentials: 'same-origin', headers: HEADERS, body: JSON.stringify({ name: clean }) });
       const data = await res.json().catch(() => null);
+      if (request.cancelled) {
+        if (res.ok && data?.guestId && data?.token) leaveSession(data);
+        return undefined;
+      }
       if (!res.ok) {
         if (res.status === 404) setPhase('missing');
         else {
@@ -217,29 +240,35 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
       const early = [];
       session.current = { guestId: data.guestId, token: data.token, source, listeners, early, joined: false };
       source.onmessage = (event) => {
-        const message = JSON.parse(event.data);
+        let message;
+        try {
+          message = JSON.parse(event.data);
+        } catch {
+          return;
+        }
         if (message.type === 'lobby') onLobby(message);
         else if (listeners.size) listeners.forEach((fn) => fn(message));
         else early.push(message); // let in, but the call isn't listening yet
       };
       source.onopen = () => listeners.forEach((fn) => fn({ type: 'open' }));
       setPhase('waiting');
-    } catch {
+    } catch (err) {
+      if (request.cancelled) return undefined;
       setError('Couldn’t reach Nextspace. Check your connection and try again.');
       setPhase('form');
+    } finally {
+      if (knocking.current === request) knocking.current = null;
     }
     return undefined;
   }
 
   async function cancel() {
+    if (knocking.current) knocking.current.cancelled = true;
+    knocking.current = null;
     const current = session.current;
     closeSession();
     setPhase('form');
-    if (current) {
-      await fetch(`/api/meet/${encodeURIComponent(code)}/leave`, {
-        method: 'POST', credentials: 'same-origin', headers: { ...HEADERS, 'X-Guest-Id': current.guestId, 'X-Guest-Token': current.token }, body: '{}',
-      }).catch(() => {});
-    }
+    if (current) await leaveSession(current);
   }
 
   if (phase === 'in-call' && room.phase === 'in-call') return <CallRoom state={room} />;

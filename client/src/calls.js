@@ -14,6 +14,16 @@ const RECONNECT_AFTER_MS = 5_000;
 // Still not connected after this long: it's not going to work by itself, so say why.
 const STUCK_AFTER_MS = 20_000;
 const ENDED_NOTICE_MS = 3_000;
+// Not connected to someone for this long: try again (and again, at this pace) until it works.
+const RECOVER_EVERY_MS = 12_000;
+// A connection message that couldn't be sent (network blip): try again after these waits.
+const SIGNAL_RETRIES = [1_000, 3_000];
+// Each camera's upper limit, by how many others it goes to: everyone sends to everyone, so the
+// more people, the less each picture may use (as Meet does), and the call stays smooth.
+const CAMERA_BITRATE = [1_500_000, 1_500_000, 900_000, 650_000, 450_000, 350_000];
+const SCREEN_BITRATE = 1_200_000;
+const OFFLINE_NOTICE = 'You’re offline. The call will reconnect when your connection is back.';
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const IDLE = {
   phase: 'idle', // idle | joining | in-call | ended
@@ -59,6 +69,8 @@ let stopLive = null;
 let checkIn = null;
 let endedTimer = null;
 let attempt = 0; // Bumped to abandon a call still being set up.
+let rejoining = false;
+let wakeLock = null;
 
 const tracks = { audio: () => mic, camera: () => camera, screen: () => screen };
 
@@ -96,12 +108,14 @@ function saveDevice(kind, deviceId) {
 const deviceOf = (track) => track?.getSettings?.().deviceId || '';
 
 /** Microphone and (if asked) camera. A missing camera or microphone doesn't stop anyone joining. */
-async function openDevices(video) {
+async function openDevices(video, muted = false) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('Calls need a secure (https) connection and a modern browser.');
   const saved = savedDevices();
   const notices = [];
   try {
-    useMic((await navigator.mediaDevices.getUserMedia({ audio: micOptions(saved.audioinput, false) })).getAudioTracks()[0]);
+    const track = (await navigator.mediaDevices.getUserMedia({ audio: micOptions(saved.audioinput, false) })).getAudioTracks()[0];
+    track.enabled = !muted; // honour the pre-join choice before this track can reach another person
+    useMic(track);
   } catch (err) {
     notices.push(`${mediaError(err, 'microphone')} You can still listen.`);
   }
@@ -128,6 +142,7 @@ function useMic(track) {
       if (mic !== track || state.phase !== 'in-call') return next.stop();
       next.enabled = !state.muted;
       useMic(next);
+      track.stop();
       setChannel('audio', next);
       set({ micDevice: deviceOf(next), notice: `Your microphone was disconnected. Now using ${next.label || 'the default microphone'}.` });
     } catch (err) {
@@ -180,6 +195,8 @@ const memberTransport = (callId) => ({
   guest: false,
   post: (suffix, body) => api(`/calls/${callId}${suffix}`, { method: 'POST', body }),
   refresh: () => api(`/calls/${callId}`),
+  // Dropped by the server (the phone slept, the network went): back in, as a new window.
+  rejoin: (peerId) => api(`/calls/${callId}/rejoin`, { method: 'POST', body: { peerId } }),
   subscribe: subscribeLive,
   // Closing the tab: an ordinary request wouldn't finish in time, and a beacon can't carry the
   // header the server requires.
@@ -201,29 +218,73 @@ export function guestTransport({ code, guestId, token, subscribe }) {
     async post(suffix, body) {
       const res = await fetch(url(suffix), { method: 'POST', headers, credentials: 'same-origin', body: JSON.stringify(body || {}) });
       const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
-      if (!res.ok) throw new Error(data?.error || 'Something went wrong. Try again.');
+      if (!res.ok) throw Object.assign(new Error(data?.error || 'Something went wrong. Try again.'), { status: res.status });
       return data;
     },
     refresh: null, // the guest's event stream sends where things stand each time it reconnects
+    rejoin() {
+      return this.post('/rejoin', {});
+    },
     subscribe,
     leaveNow: (body) => fetch(url('/leave'), { method: 'POST', keepalive: true, credentials: 'same-origin', headers, body: JSON.stringify(body) }),
   };
 }
 
 function sendState() {
-  if (state.phase !== 'in-call') return;
+  if (state.phase !== 'in-call' || rejoining || !transport) return;
   transport.post('/state', { peerId: state.me, muted: state.muted, camera: state.cameraOn, sharing: state.sharing, hand: state.hand, recording: state.recording })
     .then(applyCall)
-    .catch(() => {}); // The next check-in tries again.
+    // The server no longer has this window in the call: get back in. Anything else: the next check-in tries again.
+    .catch((err) => err?.status === 404 && rejoin());
+}
+
+/**
+ * Back into the call after the server let this window go: a phone that slept or switched apps, or
+ * a network that went away for a while. The camera and microphone carry on; the connections to the
+ * others start afresh.
+ */
+async function rejoin() {
+  if (rejoining || state.phase !== 'in-call' || !transport?.rejoin) return;
+  const mine = attempt;
+  rejoining = true;
+  set({ notice: 'Reconnecting to the call…' });
+  let joined;
+  try {
+    joined = await transport.rejoin(state.me);
+  } catch (err) {
+    if (mine !== attempt) return;
+    rejoining = false;
+    // The call is over (or full): say so. A network problem: the next check-in tries again.
+    if ([403, 404, 409].includes(err?.status)) finish('ended');
+    return;
+  }
+  if (mine !== attempt) return;
+  rejoining = false;
+  [...connections.keys()].forEach(disconnect);
+  if (joined.iceServers) iceServers = joined.iceServers;
+  set({ me: joined.peerId, notice: '' });
+  applyCall(joined.call);
+  sendState();
 }
 
 /* ---------------------------------- one connection per person ---------------------------------- */
 
 function send(connection, data) {
-  // One at a time, so the other side gets them in order.
-  connection.sending = connection.sending
-    .then(() => transport.post('/signal', { peerId: state.me, to: connection.id, data }))
-    .catch(() => {});
+  // One at a time, so the other side gets them in order. A network blip: try again shortly.
+  connection.sending = connection.sending.then(async () => {
+    for (let i = 0; ; i++) {
+      if (connections.get(connection.id) !== connection || !transport) return;
+      try {
+        await transport.post('/signal', { peerId: state.me, to: connection.id, data });
+        return;
+      } catch (err) {
+        // They left, or the server let this window go: a check-in sorts out which (and rejoins).
+        if (err?.status === 404) return sendState();
+        if (err?.status || i >= SIGNAL_RETRIES.length) return;
+        await pause(SIGNAL_RETRIES[i]);
+      }
+    }
+  }).catch(() => {});
 }
 
 function queueCandidate(connection, candidate) {
@@ -242,6 +303,29 @@ function fillChannels(connection) {
     transceiver.direction = 'sendrecv';
     transceiver.sender.replaceTrack(tracks[slot]() || null).catch(() => {});
   });
+}
+
+/** How much each picture may use, by how many people it goes to. */
+function tuneSenders() {
+  const cameraLimit = CAMERA_BITRATE[Math.min(connections.size, CAMERA_BITRATE.length - 1)];
+  for (const connection of connections.values()) {
+    const transceivers = connection.pc.getTransceivers();
+    limitBitrate(transceivers[SLOTS.indexOf('camera')]?.sender, cameraLimit);
+    limitBitrate(transceivers[SLOTS.indexOf('screen')]?.sender, SCREEN_BITRATE);
+  }
+}
+
+function limitBitrate(sender, maxBitrate) {
+  if (!sender?.getParameters) return;
+  try {
+    const params = sender.getParameters();
+    // Not set up yet: done again once connected.
+    if (!params.encodings?.length || params.encodings[0].maxBitrate === maxBitrate) return;
+    params.encodings[0].maxBitrate = maxBitrate;
+    sender.setParameters(params).catch(() => {});
+  } catch {
+    // Older browsers choose for themselves.
+  }
 }
 
 function setChannel(slot, track) {
@@ -267,6 +351,7 @@ async function offer(connection, options) {
 }
 
 function recover(connection) {
+  connection.recoveredAt = Date.now();
   if (connection.initiator) offer(connection, { iceRestart: true }).catch(() => {});
   else send(connection, { restart: true });
 }
@@ -274,7 +359,8 @@ function recover(connection) {
 function connect(id) {
   const existing = connections.get(id);
   if (existing) return existing;
-  const pc = new RTCPeerConnection({ iceServers });
+  // max-bundle: microphone, camera and screen share one network path, so only one is set up (and relayed).
+  const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
   const connection = {
     id, pc, initiator: state.me > id, media: {}, waiting: [], outgoing: [], outgoingTimer: null, retryTimer: null,
     work: Promise.resolve(), sending: Promise.resolve(), since: Date.now(), stuckTimer: null, warned: false,
@@ -296,7 +382,9 @@ function connect(id) {
     clearTimeout(connection.retryTimer);
     if (pc.connectionState === 'connected') {
       connection.since = null;
+      connection.warned = false;
       clearTimeout(connection.stuckTimer);
+      tuneSenders();
     } else if (!connection.since) {
       connection.since = Date.now();
       watchStuck();
@@ -384,8 +472,56 @@ const END_REASONS = {
   ended: 'Call ended.',
 };
 
+/**
+ * The regular check-in: tells the server this window is still here, and tries again with anyone
+ * it still isn't connected to (a lost message or a changed network otherwise leaves them stuck).
+ */
+function checkInNow() {
+  sendState();
+  const now = Date.now();
+  for (const connection of connections.values()) {
+    if (connection.pc.connectionState === 'connected' || !connection.since) continue;
+    if (now - connection.since < RECOVER_EVERY_MS || now - (connection.recoveredAt || 0) < RECOVER_EVERY_MS) continue;
+    recover(connection);
+  }
+}
+
+/** Back online, or back to this tab (a phone unlocked): catch up and repair what broke meanwhile. */
+function catchUp() {
+  if (state.phase !== 'in-call') return;
+  if (state.notice === OFFLINE_NOTICE) set({ notice: '' });
+  sendState();
+  transport?.refresh?.().then(applyCall).catch(() => {});
+  for (const connection of connections.values()) {
+    if (!['connected', 'new'].includes(connection.pc.connectionState)) recover(connection);
+  }
+  keepAwake();
+}
+
+/** Keep a phone's screen on during the call, as Meet does. */
+async function keepAwake() {
+  if (wakeLock || !navigator.wakeLock || document.visibilityState !== 'visible' || state.phase !== 'in-call') return;
+  try {
+    const lock = await navigator.wakeLock.request('screen');
+    if (state.phase !== 'in-call' || wakeLock) return void lock.release().catch(() => {});
+    wakeLock = lock;
+    lock.addEventListener('release', () => {
+      if (wakeLock === lock) wakeLock = null;
+    });
+  } catch {
+    // Battery saver, or not allowed: the screen sleeps as usual.
+  }
+}
+
+function letSleep() {
+  wakeLock?.release().catch(() => {});
+  wakeLock = null;
+}
+
 function tearDown() {
   attempt++;
+  rejoining = false;
+  letSleep();
   clearInterval(checkIn);
   checkIn = null;
   stopLive?.();
@@ -412,6 +548,7 @@ function applyCall(call) {
   for (const id of [...connections.keys()]) if (!ids.has(id)) disconnect(id);
   set({ call, startedAt: state.startedAt || (others.length ? Date.now() : null) });
   others.forEach((peer) => connect(peer.id));
+  tuneSenders();
   publishPeers();
 }
 
@@ -426,33 +563,34 @@ function onLive(message) {
   }
 }
 
-function enter({ call, peerId, iceServers: servers }, notice, via) {
+function enter({ call, peerId, iceServers: servers }, notice, via, { muted = false } = {}) {
   iceServers = servers;
   transport = via || memberTransport(call.id);
   clearTimeout(endedTimer);
   const saved = savedDevices();
-  set({ phase: 'in-call', call, me: peerId, notice, muted: false, hand: false, recording: false, guest: transport.guest, startedAt: null, speakerDevice: saved.audiooutput, cameraDevice: saved.videoinput });
+  set({ phase: 'in-call', call, me: peerId, notice, muted, hand: false, recording: false, guest: transport.guest, startedAt: null, speakerDevice: saved.audiooutput, cameraDevice: saved.videoinput });
   publishLocal();
   stopLive = transport.subscribe(onLive);
-  checkIn = setInterval(sendState, CHECK_IN_MS);
+  checkIn = setInterval(checkInNow, CHECK_IN_MS);
   applyCall(call);
   sendState();
+  keepAwake();
 }
 
-async function begin(video, request, via) {
+async function begin(video, request, via, { muted = false } = {}) {
   if (state.phase === 'in-call' || state.phase === 'joining') await hangUp();
   clearTimeout(endedTimer);
   const mine = ++attempt;
   set({ ...IDLE, phase: 'joining' });
   try {
-    const notice = await openDevices(video);
+    const notice = await openDevices(video, muted);
     if (mine !== attempt) return;
     const joined = await request();
     if (mine !== attempt) {
       (via || memberTransport(joined.call.id)).post('/leave', { peerId: joined.peerId }).catch(() => {});
       return;
     }
-    enter(joined, notice, via);
+    enter(joined, notice, via, { muted });
   } catch (err) {
     if (mine !== attempt) return;
     tearDown();
@@ -471,10 +609,10 @@ export const joinCall = (id, { video = false } = {}) => begin(video, () => api(`
 export const startMeeting = ({ video = true } = {}) => begin(video, () => api('/calls', { method: 'POST', body: { to: [], video, meeting: true } }));
 
 /** A teammate opening a meeting link: straight in. */
-export const joinByCode = (code, { video = true } = {}) => begin(video, () => api(`/calls/code/${encodeURIComponent(code)}/join`, { method: 'POST', body: {} }));
+export const joinByCode = (code, { video = true, muted = false } = {}) => begin(video, () => api(`/calls/code/${encodeURIComponent(code)}/join`, { method: 'POST', body: {} }), undefined, { muted });
 
 /** A guest who has just been let in (`admitted` is what the server sent them). */
-export const joinAsGuest = (admitted, via, { video = true } = {}) => begin(video, async () => admitted, via);
+export const joinAsGuest = (admitted, via, { video = true, muted = false } = {}) => begin(video, async () => admitted, via, { muted });
 
 export async function hangUp() {
   const { me, phase } = state;
@@ -617,6 +755,28 @@ export async function chooseDevice(kind, deviceId) {
 window.addEventListener('pagehide', () => {
   if (state.phase !== 'in-call' || !transport) return;
   transport.leaveNow({ peerId: state.me }).catch(() => {});
+});
+
+window.addEventListener('online', catchUp);
+window.addEventListener('offline', () => {
+  if (state.phase === 'in-call') set({ notice: OFFLINE_NOTICE });
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') catchUp();
+});
+
+// Some browsers do not fire a track's `ended` event when a USB/Bluetooth device disappears.
+// Device enumeration catches that case and also moves a vanished speaker back to the system default.
+navigator.mediaDevices?.addEventListener?.('devicechange', async () => {
+  if (state.phase !== 'in-call' || !navigator.mediaDevices?.enumerateDevices) return;
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => null);
+  if (!devices) return;
+  const micId = deviceOf(mic);
+  if (mic && micId && !devices.some((device) => device.kind === 'audioinput' && device.deviceId === micId)) void mic.onended?.();
+  if (state.speakerDevice && state.speakerDevice !== 'default' && !devices.some((device) => device.kind === 'audiooutput' && device.deviceId === state.speakerDevice)) {
+    saveDevice('audiooutput', 'default');
+    set({ speakerDevice: 'default', notice: 'Your speaker was disconnected. Now using the default speaker.' });
+  }
 });
 
 window.addEventListener(LOGOUT_EVENT, () => {

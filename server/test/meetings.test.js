@@ -85,6 +85,7 @@ test.before(async () => {
       ...process.env, PORT: String(PORT), DATA_FILE: path.join(dir, 'db.json'), DATABASE_URL: '', NODE_ENV: 'test', IP_LOCATION: 'off',
       JWT_SECRET: 'meetings-test-secret', MAIL_USER: ADMIN.email, MAIL_PASSWORD: '', MAIL_BRIDGE_URL: '', MAIL_BRIDGE_TOKEN: '', MAIL_TRANSPORT: 'direct',
       ADMIN_EMAIL: ADMIN.email, ADMIN_PASSWORD: ADMIN.password,
+      CALL_PEER_TIMEOUT_MS: '1200', CALL_REJOIN_GRACE_MS: '2000', CALL_SWEEP_MS: '50',
     },
     stdio: 'ignore',
   });
@@ -191,6 +192,35 @@ test('a meeting with a link stays open while its host waits alone', async () => 
   assert.equal((await call('mary', `/calls/${ordinary.call.id}/link`, { peerId: started.peerId })).status, 404);
   await call('john', `/calls/${started.call.id}/leave`, { peerId: started.peerId });
   await call('john', `/calls/${ordinary.call.id}/leave`, { peerId: ordinary.peerId });
+});
+
+test('a timed-out meeting window can rejoin once without creating duplicate people', async () => {
+  const started = await json('john', '/calls', { to: [], meeting: true });
+  const path = `/calls/${started.call.id}`;
+
+  // Stop checking in, as when a laptop sleeps, and wait for the server heartbeat to expire it.
+  let expired = false;
+  for (let i = 0; i < 50; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if ((await json('john', path)).peers.length === 0) {
+      expired = true;
+      break;
+    }
+  }
+  assert.equal(expired, true, 'the old window should time out');
+  assert.equal((await fetch(`${BASE}/api/meet/${started.call.code}`)).status, 200, 'the meeting waits through the reconnect grace period');
+
+  const rejoined = await call('john', `${path}/rejoin`, { peerId: started.peerId });
+  assert.equal(rejoined.status, 200);
+  const restored = await rejoined.json();
+  assert.equal(restored.peerId, started.peerId);
+  assert.equal(restored.call.peers.length, 1);
+
+  // A lost HTTP response can cause the browser to retry. That retry is idempotent.
+  const retried = await json('john', `${path}/rejoin`, { peerId: started.peerId });
+  assert.equal(retried.peerId, started.peerId);
+  assert.equal(retried.call.peers.length, 1);
+  await call('john', `${path}/leave`, { peerId: started.peerId });
 });
 
 test('a scheduled meeting: invitees see it, its link waits for the team, and the first teammate starts it', async () => {

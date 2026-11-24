@@ -25,12 +25,19 @@ router.use(requireAuth());
 // Everyone sends to everyone else directly, which gets heavy quickly: more than this needs a media server.
 export const MAX_PEOPLE = 6;
 const RING_MS = 60_000;
-const PEER_TIMEOUT_MS = 45_000; // Windows check in every 15 seconds; a closed laptop drops out after this.
+// Tests shorten these so reconnect behaviour can be exercised without a minute-long test. Production
+// always uses the conservative values below.
+const testTiming = (name, fallback) => process.env.NODE_ENV === 'test' && Number(process.env[name]) > 0 ? Number(process.env[name]) : fallback;
+const PEER_TIMEOUT_MS = testTiming('CALL_PEER_TIMEOUT_MS', 45_000); // Windows check in every 15 seconds; a closed laptop drops out after this.
 const KEEP_ENDED_MS = 5 * 60_000;
 const MAX_SIGNAL_BYTES = 64 * 1024;
 const MAX_LOBBY = 20; // people waiting to be let in at once
 const LOBBY_MS = 10 * 60_000; // nobody answered: the guest is told and has to knock again
 const LOBBY_GONE_MS = 45_000; // a waiting guest who closed the page
+// Someone's window dropped out without leaving (a phone asleep, a lost network): the call waits this
+// long for them to come back before ending for whoever is left alone in it.
+const REJOIN_GRACE_MS = testTiming('CALL_REJOIN_GRACE_MS', 60_000);
+const SWEEP_MS = testTiming('CALL_SWEEP_MS', 15_000);
 const GUEST = 'guest:';
 const CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
 
@@ -105,14 +112,22 @@ function endCall(call, reason) {
   for (const guest of call.guests.values()) callEvents.emit('lobby', GUEST + guest.id, { status: 'ended' });
   call.guests.clear();
   call.peers.clear();
+  call.dropped.clear();
   if (call.code) codes.delete(call.code);
 }
 
 const members = (call) => [...call.peers.values()].filter((peer) => !isGuest(peer.address));
+// Timed-out windows keep their seat briefly so a busy call cannot fill up and then reject them.
+const reservedSeats = (call) => call.dropped.size + [...call.guests.values()].filter((guest) => guest.status === 'away').length;
+const seats = (call) => call.peers.size + reservedSeats(call);
+
+/** Someone dropped out a moment ago and may well be back: don't end the call on them yet. */
+const waitingForReturn = (call) => call.dropped.size > 0;
 
 /** After someone joins, leaves or doesn't answer: does the call carry on? */
 function settle(call) {
   if (call.status === 'ended') return;
+  if (waitingForReturn(call)) return tell(call);
   // A meeting with a link stays open for whoever comes, as long as a teammate is there to let them in.
   if (call.code) {
     if (!members(call).length) return endCall(call, call.connected ? 'ended' : 'cancelled');
@@ -148,8 +163,7 @@ function ring(call, addresses) {
   }
 }
 
-function addPeer(call, address) {
-  const id = crypto.randomUUID();
+function addPeer(call, address, id = crypto.randomUUID()) {
   call.peers.set(id, { address, muted: false, camera: false, sharing: false, hand: false, recording: false, lastSeen: Date.now() });
   return id;
 }
@@ -215,7 +229,7 @@ function createCall(from, { to = [], video = false, meeting = false, code = null
   const call = {
     id: crypto.randomUUID(), from, fromName: nameOf(from), video: Boolean(video), status: to.length ? 'ringing' : 'active', reason: null,
     createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + RING_MS).toISOString(),
-    invited: new Map(), peers: new Map(), guests: new Map(), connected: false, code: null, title,
+    invited: new Map(), peers: new Map(), dropped: new Map(), guests: new Map(), connected: false, code: null, title,
   };
   calls.set(call.id, call);
   if (meeting) giveLink(call, code);
@@ -272,13 +286,26 @@ setInterval(() => {
     for (const [peerId, peer] of call.peers) {
       if (now - peer.lastSeen > PEER_TIMEOUT_MS) {
         call.peers.delete(peerId);
+        if (!isGuest(peer.address)) call.dropped.set(peerId, { address: peer.address, since: now });
+        changed = true;
+      }
+    }
+    // The wait for someone to come back is over: settle the call as it now stands.
+    for (const [peerId, dropped] of call.dropped) {
+      if (now - dropped.since > REJOIN_GRACE_MS) {
+        call.dropped.delete(peerId);
         changed = true;
       }
     }
     for (const [guestId, guest] of call.guests) {
       const waitedTooLong = guest.status === 'waiting' && (now - guest.since > LOBBY_MS || (!guest.streams && now - guest.lastSeen > LOBBY_GONE_MS));
-      const droppedOut = guest.status === 'admitted' && !call.peers.has(guest.peerId);
-      if (waitedTooLong || droppedOut) {
+      // A guest whose window dropped out may come back (rejoin) for a while without knocking again.
+      if (guest.status === 'admitted' && !call.peers.has(guest.peerId)) {
+        guest.status = 'away';
+        guest.awaySince = now;
+      }
+      const goneForGood = guest.status === 'away' && now - guest.awaySince > LOBBY_MS;
+      if (waitedTooLong || goneForGood) {
         if (waitedTooLong) callEvents.emit('lobby', GUEST + guestId, { status: 'expired' });
         call.guests.delete(guestId);
         changed = true;
@@ -286,7 +313,7 @@ setInterval(() => {
     }
     if (changed) settle(call);
   }
-}, 15_000).unref?.();
+}, SWEEP_MS).unref?.();
 
 /** Muted, camera on, sharing, hand raised, recording. */
 function updateState(call, peer, body, { canRecord = true } = {}) {
@@ -311,7 +338,7 @@ function relay(call, from, body) {
 
 function joinAsMember(call, me, res) {
   if (call.status === 'ended') throw new HttpError(409, 'This call has already ended');
-  if (call.peers.size >= MAX_PEOPLE) throw new HttpError(409, `This call is full (${MAX_PEOPLE} people)`);
+  if (seats(call) >= MAX_PEOPLE) throw new HttpError(409, `This call is full (${MAX_PEOPLE} people)`);
   const invite = call.invited.get(me);
   if (invite) {
     clearTimeout(invite.timer);
@@ -326,6 +353,29 @@ function joinAsMember(call, me, res) {
   callEvents.emit('ended', me, { id: call.id, status: 'accepted' });
   tell(call);
   res.json({ call: publicCall(call), peerId, iceServers: iceServersFor(me) });
+}
+
+/**
+ * Restore a window that the heartbeat expired. Keeping its peer id makes retries idempotent: if
+ * the response is lost, trying again cannot create a duplicate participant.
+ */
+function rejoinAsMember(call, me, req, res) {
+  if (call.status === 'ended') throw new HttpError(409, 'This call has already ended');
+  const peerId = String(req.body?.peerId || '');
+  const existing = call.peers.get(peerId);
+  if (existing) {
+    if (existing.address !== me) throw new HttpError(404, 'You are not in this call');
+    existing.lastSeen = Date.now();
+    return res.json({ call: publicCall(call), peerId, iceServers: iceServersFor(me) });
+  }
+  const dropped = call.dropped.get(peerId);
+  if (!dropped || dropped.address !== me) throw new HttpError(409, 'The reconnect window has expired');
+  call.dropped.delete(peerId);
+  addPeer(call, me, peerId);
+  call.status = 'active';
+  call.connected = true;
+  settle(call);
+  return res.json({ call: publicCall(call), peerId, iceServers: iceServersFor(me) });
 }
 
 // `meeting: true` starts a meeting with a link, which may ring nobody yet.
@@ -362,6 +412,11 @@ router.post('/:id/join', (req, res) => {
   joinAsMember(call, me, res);
 });
 
+router.post('/:id/rejoin', (req, res) => {
+  const { call, me } = callFor(req);
+  rejoinAsMember(call, me, req, res);
+});
+
 router.post('/:id/respond', (req, res) => {
   const { call, me } = callFor(req);
   const invite = call.invited.get(me);
@@ -386,7 +441,7 @@ router.post('/:id/invite', (req, res) => {
   const { call, me } = peerFor(req);
   const to = people(req.body?.to, me).filter((address) => ![...call.peers.values()].some((peer) => peer.address === address) && call.invited.get(address)?.status !== 'ringing');
   const ringing = [...call.invited.values()].filter((invite) => invite.status === 'ringing').length;
-  if (call.peers.size + ringing + to.length > MAX_PEOPLE) throw new HttpError(400, `A call can have up to ${MAX_PEOPLE} people`);
+  if (seats(call) + ringing + to.length > MAX_PEOPLE) throw new HttpError(400, `A call can have up to ${MAX_PEOPLE} people`);
   ring(call, to);
   tell(call);
   res.json(publicCall(call));
@@ -409,7 +464,7 @@ router.post('/:id/admit', (req, res) => {
   if (!guest || guest.status !== 'waiting') throw new HttpError(409, 'They are no longer waiting');
   const address = GUEST + guest.id;
   if (req.body?.allow) {
-    if (call.peers.size >= MAX_PEOPLE) throw new HttpError(409, `This call is full (${MAX_PEOPLE} people)`);
+    if (seats(call) >= MAX_PEOPLE) throw new HttpError(409, `This call is full (${MAX_PEOPLE} people)`);
     guest.status = 'admitted';
     guest.peerId = addPeer(call, address);
     call.status = 'active';
@@ -540,6 +595,20 @@ guestRouter.post('/:code/signal', (req, res) => {
   const { call, peerId } = guestPeer(req);
   relay(call, peerId, req.body);
   res.status(204).end();
+});
+
+/** Back in after this guest's window dropped out (phone asleep, network gone), without knocking again. */
+guestRouter.post('/:code/rejoin', (req, res) => {
+  const { call, guest, address } = guestFor(req);
+  if (!['admitted', 'away'].includes(guest.status)) throw new HttpError(409, 'Ask to join again');
+  if (!guest.peerId || !call.peers.has(guest.peerId)) {
+    // This guest's away reservation becomes their active peer again, so the seat count is unchanged.
+    guest.peerId = addPeer(call, address, guest.peerId || undefined);
+  }
+  guest.status = 'admitted';
+  guest.awaySince = null;
+  tell(call);
+  res.json(admitted(call, guest));
 });
 
 /** Leaving the call, or giving up waiting. */

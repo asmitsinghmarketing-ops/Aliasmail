@@ -42,17 +42,52 @@ function Video({ stream, muted = true, className }) {
   return <video ref={element} className={[className, fit && 'fit'].filter(Boolean).join(' ')} autoPlay playsInline muted={muted} />;
 }
 
+const RESUME_CALL_AUDIO = 'nextspace:resume-call-audio';
+
 /** Plays one person's voice. Kept apart from the pictures so it carries on when they aren't shown. */
-function Voice({ stream, speaker }) {
+function Voice({ stream, speaker, onBlocked, onOutputError, onSpeakerFallback }) {
   const element = useRef(null);
+  const reports = useRef({ onBlocked, onOutputError, onSpeakerFallback });
+  reports.current = { onBlocked, onOutputError, onSpeakerFallback };
   useEffect(() => {
-    if (!element.current) return;
-    if (element.current.srcObject !== stream) element.current.srcObject = stream;
-    element.current.play?.().catch(() => {});
-  }, [stream]);
-  useEffect(() => {
-    if (speaker && element.current?.setSinkId) element.current.setSinkId(speaker).catch(() => {});
-  }, [speaker]);
+    const audio = element.current;
+    if (!audio) return undefined;
+    let alive = true;
+    if (audio.srcObject !== stream) audio.srcObject = stream;
+    const play = async () => {
+      if (!alive) return;
+      if (audio.setSinkId) {
+        const output = speaker || 'default';
+        try {
+          await audio.setSinkId(output);
+        } catch {
+          // A saved USB/Bluetooth output may have disappeared. Keep the call audible on default.
+          if (output !== 'default') {
+            await audio.setSinkId('default').catch(() => {});
+            reports.current.onSpeakerFallback?.();
+          }
+        }
+      }
+      try {
+        await audio.play();
+      } catch (err) {
+        if (!alive) return;
+        if (err?.name === 'NotAllowedError') reports.current.onBlocked?.();
+        else reports.current.onOutputError?.('Call audio could not start. Check your speaker and browser sound settings.');
+      }
+    };
+    const resume = () => { void play(); };
+    const track = stream?.getAudioTracks?.()[0];
+    track?.addEventListener('unmute', resume);
+    window.addEventListener(RESUME_CALL_AUDIO, resume);
+    void play();
+    return () => {
+      alive = false;
+      track?.removeEventListener('unmute', resume);
+      window.removeEventListener(RESUME_CALL_AUDIO, resume);
+      if (audio.srcObject === stream) audio.srcObject = null;
+    };
+  }, [stream, speaker]);
   return <audio ref={element} autoPlay />;
 }
 
@@ -531,6 +566,8 @@ export default function CallRoom({ state }) {
   const [confirmRecord, setConfirmRecord] = useState(false);
   const [recordStatus, setRecordStatus] = useState(null); // null | 'saving' | 'saved'
   const [recordingStartedAt, setRecordingStartedAt] = useState(null);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const [audioError, setAudioError] = useState('');
   const recorder = useRef(null); // { rec, upload } while recording
   const duration = useDuration(state.startedAt);
   const clock = useClock();
@@ -670,7 +707,25 @@ export default function CallRoom({ state }) {
   ];
   const leading = presenter ? null : tiles.find((tile) => tile.speaking && tile.key !== me) || tiles.find((tile) => tile.key !== me) || tiles[0];
 
-  const voicesPlayed = peers.map((peer) => peer.audio && <Voice key={peer.id} stream={peer.audio} speaker={state.speakerDevice} />);
+  const speakerFallback = () => {
+    setAudioError('The selected speaker is no longer available. The call is using the default speaker.');
+    void chooseDevice('audiooutput', 'default');
+  };
+  const voicesPlayed = peers.map((peer) => peer.audio && (
+    <Voice
+      key={peer.id}
+      stream={peer.audio}
+      speaker={state.speakerDevice}
+      onBlocked={() => setAudioBlocked(true)}
+      onOutputError={setAudioError}
+      onSpeakerFallback={speakerFallback}
+    />
+  ));
+  const resumeAudio = () => {
+    setAudioBlocked(false);
+    setAudioError('');
+    window.dispatchEvent(new Event(RESUME_CALL_AUDIO));
+  };
   const recordingPeers = call.peers.filter((peer) => peer.recording);
   const recordingActive = state.recording || recordingPeers.length > 0;
   const recordingDuration = useDuration(recordingStartedAt);
@@ -736,6 +791,20 @@ export default function CallRoom({ state }) {
         <div className="call-notice" role="alert">
           <span>{state.notice}</span>
           <button type="button" aria-label="Dismiss" onClick={clearNotice}><Icon name="close" size={18} /></button>
+        </div>
+      )}
+
+      {audioBlocked && (
+        <div className="call-notice" role="alert">
+          <span>Your browser paused call audio.</span>
+          <button type="button" className="btn btn-outline" onClick={resumeAudio}>Play audio</button>
+        </div>
+      )}
+
+      {audioError && !audioBlocked && (
+        <div className="call-notice" role="alert">
+          <span>{audioError}</span>
+          <button type="button" aria-label="Dismiss" onClick={() => setAudioError('')}><Icon name="close" size={18} /></button>
         </div>
       )}
 
