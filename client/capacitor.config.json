@@ -1,0 +1,17 @@
+{
+  "appId": "com.nexternconsultancy.nextspace",
+  "appName": "Nextspace",
+  "webDir": "dist",
+  "server": {
+    "url": "https://mail.nexternconsultancy.com",
+    "cleartext": false,
+    "allowNavigation": [
+      "mail.nexternconsultancy.com"
+    ]
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  }
+}

@@ -1,5 +1,7 @@
 node_modules/
 client/dist/
+client/android-tools/
+/release/
 server/.env
 server/data/
 php-mail-bridge/settings.local.php

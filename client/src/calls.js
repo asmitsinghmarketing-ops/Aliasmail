@@ -197,6 +197,8 @@ const inBackground = () => document.visibilityState === 'hidden';
 
 function useMic(track) {
   mic = track;
+  const activeDevice = deviceOf(track);
+  if (activeDevice) saveDevice('audioinput', activeDevice);
   track.onended = async () => {
     if (mic !== track || state.phase !== 'in-call') return;
     if (inBackground()) {
@@ -227,6 +229,8 @@ function useMic(track) {
 /** Start using a camera track. If the camera goes away, turn the camera off and say so. */
 function useCamera(track) {
   camera = track;
+  const activeDevice = deviceOf(track);
+  if (activeDevice) saveDevice('videoinput', activeDevice);
   track.onended = () => {
     if (camera !== track || state.phase !== 'in-call') return;
     camera = null;
@@ -756,7 +760,7 @@ function enter({ call, peerId, iceServers: servers }, notice, via, { muted = fal
   transport = via || memberTransport(call.id);
   clearTimeout(endedTimer);
   const saved = savedDevices();
-  set({ phase: 'in-call', call, me: peerId, notice, muted, hand: false, recording: false, guest: transport.guest, startedAt: null, speakerDevice: saved.audiooutput, cameraDevice: saved.videoinput });
+  set({ phase: 'in-call', call, me: peerId, notice, muted, hand: false, recording: false, guest: transport.guest, startedAt: null, speakerDevice: saved.audiooutput || 'default', cameraDevice: saved.videoinput });
   publishLocal();
   stopLive = transport.subscribe(onLive);
   checkIn = setInterval(checkInNow, CHECK_IN_MS);
@@ -923,13 +927,12 @@ export async function toggleCamera() {
 }
 
 /**
- * Whether this browser can really share the screen. Phones and tablets are left out on purpose:
- * Chrome on Android has the function but refuses every request (which looks like nothing happening),
- * and iPhones/iPads don't have it. They present a photo or screenshot instead (`sharePicture`).
+ * Screen capture support must be detected from the browser, not from the device name. Some mobile
+ * browsers now expose getDisplayMedia while iOS and older Android browsers still do not. Trying the
+ * real capability lets supported phones use the system share picker and leaves the picture fallback
+ * for browsers that genuinely cannot capture their screen.
  */
-const TOUCH_DEVICE = typeof navigator !== 'undefined'
-  && (/Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform)));
-const canShareScreen = () => !TOUCH_DEVICE && Boolean(navigator.mediaDevices?.getDisplayMedia);
+const canShareScreen = () => Boolean(navigator.mediaDevices?.getDisplayMedia);
 export { canShareScreen };
 
 let screenRedraw = null; // keeps a shared photo's picture flowing (see sharePicture)
@@ -947,9 +950,14 @@ function stopScreen() {
 }
 
 export async function toggleScreen() {
-  if (screen) return stopScreen();
+  if (screen) {
+    stopScreen();
+    return true;
+  }
+  if (!canShareScreen()) return false;
   try {
     const track = (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false })).getVideoTracks()[0];
+    if (!track) return false;
     // Keep text sharp rather than motion smooth.
     track.contentHint = 'detail';
     track.onended = stopScreen; // The browser's own "Stop sharing" button.
@@ -957,10 +965,11 @@ export async function toggleScreen() {
     setChannel('screen', track);
     publishLocal();
     sendState();
+    return true;
   } catch (err) {
     if (err?.name !== 'NotAllowedError') set({ notice: mediaError(err, 'screen') });
+    return false;
   }
-  return undefined;
 }
 
 /**

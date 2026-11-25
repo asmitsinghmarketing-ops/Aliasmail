@@ -83,6 +83,10 @@ self.addEventListener('push', (event) => {
       data: { url: data.url || '/', callId: data.callId || null },
       requireInteraction: data.kind === 'call',
       silent: false,
+      // Android uses this as a phone-like alert. iOS ignores custom vibration and uses the sound
+      // selected for web notifications in Settings, which a web app is not allowed to override.
+      vibrate: data.kind === 'call' ? [700, 250, 700, 350, 1100] : undefined,
+      timestamp: Date.now(),
       actions: data.kind === 'call' ? [
         { action: 'accept-call', title: 'Accept' },
         { action: 'decline-call', title: 'Decline' },

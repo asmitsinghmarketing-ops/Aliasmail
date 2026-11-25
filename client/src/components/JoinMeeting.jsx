@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api } from '../api.js';
 import { callState, guestTransport, joinAsGuest, joinByCode, rememberDevice, rememberedDevices, watchCall } from '../calls.js';
-import CallRoom, { useMicLevel } from './CallRoom.jsx';
+import CallRoom, { playTestSound, useMicLevel } from './CallRoom.jsx';
 import Icon from './Icon.jsx';
 import { hideBoot } from './Loading.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
@@ -167,7 +167,12 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
   const [name, setName] = useState(readName);
   const [cameraOn, setCameraOn] = useState(true);
   const [micOn, setMicOn] = useState(true);
-  const [chosen, setChosen] = useState(() => ({ videoinput: rememberedDevices().videoinput || '', audioinput: rememberedDevices().audioinput || '' }));
+  const [chosen, setChosen] = useState(() => ({
+    videoinput: rememberedDevices().videoinput || '',
+    audioinput: rememberedDevices().audioinput || '',
+    audiooutput: rememberedDevices().audiooutput || 'default',
+  }));
+  const [speakerTest, setSpeakerTest] = useState({ playing: false, error: '' });
   const choices = useRef({ cameraOn, micOn });
   choices.current = { cameraOn, micOn };
   const session = useRef(null); // { guestId, token, source, listeners, joined }
@@ -180,6 +185,16 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
     rememberDevice(kind, deviceId);
     setChosen((current) => ({ ...current, [kind]: deviceId }));
   };
+
+  async function testSpeaker() {
+    setSpeakerTest({ playing: true, error: '' });
+    try {
+      await playTestSound(chosen.audiooutput);
+      setSpeakerTest({ playing: false, error: '' });
+    } catch (err) {
+      setSpeakerTest({ playing: false, error: err.message });
+    }
+  }
 
   // `quiet`: a background re-check; a hiccup there shouldn't tell someone the link is broken.
   const loadMeeting = (signal, quiet = false) => fetch(`/api/meet/${encodeURIComponent(code)}`, { credentials: 'same-origin', signal })
@@ -398,7 +413,18 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
               <div className="nx-join-devices">
                 <DevicePicker devices={devices} kind="audioinput" label="Microphone" icon="mic" value={chosen.audioinput} onChange={pickDevice('audioinput')} />
                 <DevicePicker devices={devices} kind="videoinput" label="Camera" icon="videocam" value={chosen.videoinput} onChange={pickDevice('videoinput')} />
+                {'setSinkId' in HTMLMediaElement.prototype ? (
+                  <>
+                    <DevicePicker devices={devices} kind="audiooutput" label="Speaker" icon="volume" value={chosen.audiooutput} onChange={pickDevice('audiooutput')} />
+                    <button type="button" className="nx-join-device nx-join-speaker-test" disabled={speakerTest.playing} onClick={testSpeaker}>
+                      <Icon name="volume" size={17} /> {speakerTest.playing ? 'Playing…' : 'Test speaker'}
+                    </button>
+                  </>
+                ) : (
+                  <span className="nx-join-device nx-join-system-audio"><Icon name="volume" size={17} /> Speaker: system default</span>
+                )}
               </div>
+              {speakerTest.error && <p className="nx-join-problem"><Icon name="info" size={16} />{speakerTest.error}</p>}
               {problems.length > 0 && <p className="nx-join-problem"><Icon name="info" size={16} />{problems.join(' ')} You can still join.</p>}
             </div>
 

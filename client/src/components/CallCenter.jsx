@@ -83,6 +83,23 @@ function startRingtone(level = 0.11, kind = 'incoming') {
   }
 }
 
+// Android browsers can vibrate while an incoming-call card is open. Repeat the pattern for the
+// duration of the ring and cancel it immediately on accept, decline or timeout. iOS deliberately
+// does not expose vibration to websites, so its system notification sound remains the fallback.
+function startCallVibration() {
+  if (!navigator.vibrate) return null;
+  const pattern = [700, 250, 700, 350, 1100, 1200];
+  const ring = () => navigator.vibrate(pattern);
+  ring();
+  const timer = setInterval(ring, 4500);
+  return {
+    stop() {
+      clearInterval(timer);
+      navigator.vibrate(0);
+    },
+  };
+}
+
 function desktopRing(call) {
   if (document.visibilityState === 'visible' || !('Notification' in window) || Notification.permission !== 'granted') return;
   navigator.serviceWorker?.ready.then((worker) => worker.showNotification(`Incoming call from ${call.fromName}`, {
@@ -91,6 +108,8 @@ function desktopRing(call) {
     renotify: true,
     requireInteraction: true,
     silent: false,
+    vibrate: [700, 250, 700, 350, 1100],
+    timestamp: Date.now(),
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     data: { url: `/?call=${encodeURIComponent(call.id)}`, callId: call.id },
@@ -186,8 +205,9 @@ export default function CallCenter() {
   useEffect(() => {
     if (!call) return undefined;
     const ringtone = startRingtone();
+    const vibration = startCallVibration();
     const expires = setTimeout(() => setCall(null), Math.max(0, Date.parse(call.expiresAt) - Date.now()));
-    return () => { ringtone?.stop(); clearTimeout(expires); };
+    return () => { ringtone?.stop(); vibration?.stop(); clearTimeout(expires); };
   }, [call]);
 
   // The caller hears it ringing, until someone answers.

@@ -216,7 +216,7 @@ export function useMicLevel(stream, every = 80) {
 }
 
 /** A short three-note chime through the chosen speaker, so people can check they hear the call. */
-async function playTestSound(sinkId) {
+export async function playTestSound(sinkId) {
   const Context = AudioContextClass();
   if (!Context) throw new Error('This browser can’t play a test sound.');
   const context = new Context();
@@ -979,6 +979,9 @@ export default function CallRoom({ state }) {
   const [chatToast, setChatToast] = useState(null);
   const recorder = useRef(null); // { rec, upload } while recording
   const room = useRef(null);
+  const miniWindow = useRef(null);
+  const miniDrag = useRef(null);
+  const [miniPosition, setMiniPosition] = useState(null);
   const menus = useRef(null);
   const latest = useRef(state);
   latest.current = state;
@@ -1270,20 +1273,83 @@ export default function CallRoom({ state }) {
    * its own picker opens; phones that can't (iPhone, most Android) open their photos instead, so a
    * screenshot can be shown to everyone.
    */
-  function share() {
+  async function share() {
     setMenu(null);
-    if (state.sharing || canShareScreen()) return void toggleScreen();
+    if (state.sharing) return void toggleScreen();
+    if (canShareScreen()) {
+      const started = await toggleScreen();
+      if (!started) setMobileShareHelp(true);
+      return undefined;
+    }
     setMobileShareHelp(true);
     return undefined;
   }
+
+  const startMiniDrag = useCallback((event) => {
+    if (event.button !== 0 && event.pointerType !== 'touch') return;
+    const box = miniWindow.current?.getBoundingClientRect();
+    if (!box) return;
+    miniDrag.current = { pointerId: event.pointerId, offsetX: event.clientX - box.left, offsetY: event.clientY - box.top };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setMiniPosition({ left: box.left, top: box.top });
+    event.preventDefault();
+  }, []);
+
+  const moveMini = useCallback((event) => {
+    const drag = miniDrag.current;
+    const node = miniWindow.current;
+    if (!drag || drag.pointerId !== event.pointerId || !node) return;
+    const margin = 8;
+    const left = Math.min(Math.max(margin, event.clientX - drag.offsetX), Math.max(margin, window.innerWidth - node.offsetWidth - margin));
+    const top = Math.min(Math.max(margin, event.clientY - drag.offsetY), Math.max(margin, window.innerHeight - node.offsetHeight - margin));
+    setMiniPosition({ left, top });
+  }, []);
+
+  const stopMiniDrag = useCallback((event) => {
+    if (miniDrag.current?.pointerId !== event.pointerId) return;
+    miniDrag.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  }, []);
+
+  useEffect(() => {
+    if (!minimized || !miniPosition) return undefined;
+    const keepInView = () => {
+      const node = miniWindow.current;
+      if (!node) return;
+      const margin = 8;
+      setMiniPosition((position) => position && ({
+        left: Math.min(Math.max(margin, position.left), Math.max(margin, window.innerWidth - node.offsetWidth - margin)),
+        top: Math.min(Math.max(margin, position.top), Math.max(margin, window.innerHeight - node.offsetHeight - margin)),
+      }));
+    };
+    window.addEventListener('resize', keepInView);
+    return () => window.removeEventListener('resize', keepInView);
+  }, [minimized, Boolean(miniPosition)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (minimized) {
     const shown = presenter
       ? { key: 'screen', name: `${presenter.name} is presenting`, address: presenter.address, stream: presenter.screenStream, videoOn: true }
       : leading;
     return (
-      <div className={`nx-mini ${presenter ? 'presenting' : ''}`} role="region" aria-label="Call in progress">
+      <div
+        ref={miniWindow}
+        className={`nx-mini ${presenter ? 'presenting' : ''}`}
+        role="region"
+        aria-label="Call in progress"
+        style={miniPosition ? { left: miniPosition.left, top: miniPosition.top, right: 'auto', bottom: 'auto' } : undefined}
+      >
         {voicesPlayed}
+        <div
+          className="nx-mini-drag"
+          role="separator"
+          aria-label="Drag floating call window"
+          title="Drag to move"
+          onPointerDown={startMiniDrag}
+          onPointerMove={moveMini}
+          onPointerUp={stopMiniDrag}
+          onPointerCancel={stopMiniDrag}
+          onDoubleClick={() => setMiniPosition(null)}
+        ><span /></div>
         <button type="button" className="nx-mini-picture" aria-label="Back to the call" onClick={() => setMinimized(false)}>
           <Tile tile={shown} />
           <span className="nx-mini-expand"><Icon name="expand" size={16} /></span>
@@ -1506,7 +1572,7 @@ export default function CallRoom({ state }) {
           <div className="nx-dialog nx-mobile-share" role="dialog" aria-labelledby="nx-mobile-share-title">
             <span className="nx-dialog-icon"><Icon name="screenShare" size={22} /></span>
             <strong id="nx-mobile-share-title">Present from your phone</strong>
-            <p>This mobile browser cannot broadcast your device screen live. Take a screenshot first, then present it to everyone while your camera and microphone keep running.</p>
+            <p>This browser could not start live screen sharing. On supported Android browsers, allow the system screen-capture prompt. On iPhone or unsupported browsers, take a screenshot and present it while your camera and microphone keep running.</p>
             <div className="nx-dialog-actions">
               <button type="button" className="nx-btn" onClick={() => setMobileShareHelp(false)}>Cancel</button>
               <button type="button" className="nx-btn primary" autoFocus onClick={() => { setMobileShareHelp(false); picturePicker.current?.click(); }}><Icon name="image" size={17} />Choose screen capture</button>
