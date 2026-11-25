@@ -1,7 +1,7 @@
 // The call on screen: everyone's pictures, chat, reactions, the controls, and a small version to
 // keep working in. Layout adapts to the window: a gallery that fills the space for any number of
 // people, a spotlight with a filmstrip, a presenter view, and a phone-style 1:1.
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import {
   admitGuest, canShareScreen, chooseDevice, clearNotice, hangUp, inviteToCall, meetingCode, meetingLink, react, REACTIONS,
@@ -60,10 +60,14 @@ function Video({ stream, className, contain = false, onShape }) {
   useEffect(() => {
     const video = element.current;
     if (!video || contain) return undefined;
+    let frame = 0;
     const check = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
       if (!video.videoWidth || !video.videoHeight || !video.clientWidth || !video.clientHeight) return;
       shapeReport.current?.(video.videoWidth / video.videoHeight);
       setFit(shapesDiffer(video.videoWidth / video.videoHeight, video.clientWidth / video.clientHeight));
+      });
     };
     video.addEventListener('loadedmetadata', check);
     video.addEventListener('resize', check);
@@ -71,6 +75,7 @@ function Video({ stream, className, contain = false, onShape }) {
     observer?.observe(video);
     check();
     return () => {
+      cancelAnimationFrame(frame);
       video.removeEventListener('loadedmetadata', check);
       video.removeEventListener('resize', check);
       observer?.disconnect();
@@ -343,17 +348,36 @@ function useBoxSize() {
   useEffect(() => {
     const element = ref.current;
     if (!element || !window.ResizeObserver) return undefined;
+    let frame = 0;
     const observer = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect;
-      setBox((current) => (Math.abs(current.w - width) < 1 && Math.abs(current.h - height) < 1 ? current : { w: width, h: height }));
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const next = { w: Math.round(width), h: Math.round(height) };
+        setBox((current) => (current.w === next.w && current.h === next.h ? current : next));
+      });
     });
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, []);
   return [ref, box];
 }
 
 /* ---------------------------------- tiles ---------------------------------- */
+
+const tilePropsEqual = (before, after) => {
+  if (before.compact !== after.compact || before.pinned !== after.pinned || before.hug !== after.hug || Boolean(before.onPin) !== Boolean(after.onPin)) return false;
+  if (before.size?.w !== after.size?.w || before.size?.h !== after.size?.h) return false;
+  const a = before.tile;
+  const b = after.tile;
+  return a.key === b.key && a.name === b.name && a.address === b.address && a.stream === b.stream
+    && a.videoOn === b.videoOn && a.muted === b.muted && a.hand === b.hand && a.speaking === b.speaking
+    && a.status === b.status && a.mirrored === b.mirrored && a.isMe === b.isMe && a.ringing === b.ringing
+    && a.reaction?.key === b.reaction?.key;
+};
 
 const Tile = memo(function Tile({ tile, size, compact, onPin, pinned, hug }) {
   // The main picture takes the video's own shape: a phone held upright gets a tall box, not a
@@ -370,6 +394,7 @@ const Tile = memo(function Tile({ tile, size, compact, onPin, pinned, hug }) {
         ...(size && { width: size.w, height: size.h }),
         ...(hug && ratio && videoOn && stream && { aspectRatio: String(ratio), width: 'auto', height: '100%', maxWidth: '100%' }),
       }}
+      data-tile-key={tile.key}
       onDoubleClick={onPin}
     >
       {videoOn && stream
@@ -396,12 +421,45 @@ const Tile = memo(function Tile({ tile, size, compact, onPin, pinned, hug }) {
       )}
     </div>
   );
-});
+}, tilePropsEqual);
+
+/** Animate between gallery arrangements with transforms, without relaying out video every frame. */
+function useGalleryMotion(ref, tiles, fit) {
+  const previous = useRef(new Map());
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!root) return undefined;
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const next = new Map();
+    const animations = [];
+    root.querySelectorAll('[data-tile-key]').forEach((element) => {
+      const key = element.dataset.tileKey;
+      const rect = element.getBoundingClientRect();
+      next.set(key, rect);
+      const old = previous.current.get(key);
+      if (!old || reduced || !rect.width || !rect.height) return;
+      const dx = old.left - rect.left;
+      const dy = old.top - rect.top;
+      const sx = old.width / rect.width;
+      const sy = old.height / rect.height;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) return;
+      element.getAnimations().forEach((animation) => animation.cancel());
+      const animation = element.animate([
+        { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
+        { transform: 'translate(0, 0) scale(1, 1)' },
+      ], { duration: 360, easing: 'cubic-bezier(.2, 0, 0, 1)' });
+      animations.push(animation);
+    });
+    previous.current = next;
+    return () => animations.forEach((animation) => animation.cancel());
+  }, [ref, tiles.map((tile) => tile.key).join('|'), fit?.w, fit?.h]); // eslint-disable-line react-hooks/exhaustive-deps
+}
 
 function Gallery({ tiles, pinned, onPin }) {
   const [ref, box] = useBoxSize();
   const gap = box.w < 600 ? 8 : 12;
   const fit = useMemo(() => bestFit(tiles.length, box.w, box.h, gap), [tiles.length, box.w, box.h, gap]);
+  useGalleryMotion(ref, tiles, fit);
   return (
     <div className={`nx-gallery count-${Math.min(tiles.length, 9)}`} ref={ref}>
       <div className="nx-gallery-inner" style={{ gap }}>

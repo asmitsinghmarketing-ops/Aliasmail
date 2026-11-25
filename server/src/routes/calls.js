@@ -1,6 +1,6 @@
-// Team calls inside Nextspace. Audio, video and shared screens travel directly between the people
-// in a call (WebRTC); this route only rings people, keeps track of who is in the call and passes
-// their connection details to each other. It never receives any audio or video.
+// Team calls inside Nextspace. With Cloudflare SFU configured, this route authorizes each media
+// session and proxies SDP without receiving audio or video. Without SFU it keeps the original direct
+// WebRTC signaling path. It also rings people and keeps track of who is in each call.
 //
 // A call can also get a meeting link (/join/<code>). Teammates who open it join straight in;
 // anyone else types their name and waits in a lobby until someone in the call lets them in
@@ -9,6 +9,7 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import config from '../config.js';
+import { cloudflareSfuEnabled, cloudflareSfuRequest, createCloudflareSfuSession } from '../cloudflare-sfu.js';
 import { cloudflareTurnEnabled, cloudflareTurnServers } from '../cloudflare-turn.js';
 import { requireAuth, safeEqual } from '../auth.js';
 import { HttpError } from '../errors.js';
@@ -40,6 +41,9 @@ const REJOIN_GRACE_MS = testTiming('CALL_REJOIN_GRACE_MS', 60_000);
 const SWEEP_MS = testTiming('CALL_SWEEP_MS', 15_000);
 const GUEST = 'guest:';
 const CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
+const SFU_TRACKS = new Set(['audio', 'camera', 'screen']);
+const SFU_SESSION = /^[a-zA-Z0-9_-]{8,160}$/;
+const MAX_SDP_BYTES = 512 * 1024;
 
 const calls = new Map();
 const codes = new Map(); // meeting code -> call id
@@ -62,11 +66,15 @@ const publicCall = (call, { forGuest = false } = {}) => ({
   expiresAt: call.expiresAt,
   code: call.code || null,
   title: call.title || null, // a scheduled meeting's name
+  media: call.media,
   invited: forGuest ? [] : [...call.invited].map(([address, invite]) => ({ address, name: nameOf(address), status: invite.status })),
   peers: [...call.peers].map(([id, peer]) => ({
     id, address: forGuest && !isGuest(peer.address) ? '' : peer.address, name: nameIn(call, peer.address), guest: isGuest(peer.address),
     muted: peer.muted, camera: peer.camera, sharing: peer.sharing, hand: peer.hand, recording: peer.recording,
     reaction: reactionOf(peer),
+    ...(peer.sfu?.publisher?.ready && {
+      sfu: { sessionId: peer.sfu.publisher.sessionId, tracks: [...peer.sfu.publisher.tracks] },
+    }),
   })),
   lobby: forGuest ? [] : [...call.guests.values()].filter((guest) => guest.status === 'waiting').map((guest) => ({ id: guest.id, name: guest.name, since: guest.since })),
 });
@@ -165,7 +173,10 @@ function ring(call, addresses) {
 }
 
 function addPeer(call, address, id = crypto.randomUUID()) {
-  call.peers.set(id, { address, muted: false, camera: false, sharing: false, hand: false, recording: false, lastSeen: Date.now() });
+  call.peers.set(id, {
+    address, muted: false, camera: false, sharing: false, hand: false, recording: false, lastSeen: Date.now(),
+    sfu: { sessions: new Map(), publisher: null },
+  });
   return id;
 }
 
@@ -231,6 +242,7 @@ function createCall(from, { to = [], video = false, meeting = false, code = null
     id: crypto.randomUUID(), from, fromName: nameOf(from), video: Boolean(video), status: to.length ? 'ringing' : 'active', reason: null,
     createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + RING_MS).toISOString(),
     invited: new Map(), peers: new Map(), dropped: new Map(), guests: new Map(), connected: false, code: null, title,
+    media: cloudflareSfuEnabled() ? 'sfu' : 'p2p',
   };
   calls.set(call.id, call);
   if (meeting) giveLink(call, code);
@@ -256,6 +268,115 @@ function peerFor(req) {
   peer.lastSeen = Date.now();
   return { call, me, peerId, peer };
 }
+
+const sfuState = (peer) => {
+  peer.sfu ||= { sessions: new Map(), publisher: null };
+  peer.sfu.sessions ||= new Map();
+  return peer.sfu;
+};
+
+const sfuDescription = (value) => {
+  if (!value || !['offer', 'answer'].includes(value.type) || typeof value.sdp !== 'string' || !value.sdp || value.sdp.length > MAX_SDP_BYTES) {
+    throw new HttpError(400, 'Invalid SFU session description');
+  }
+  return { type: value.type, sdp: value.sdp };
+};
+
+const ownedSfuSession = (peer, value, role) => {
+  const sessionId = String(value || '');
+  if (!SFU_SESSION.test(sessionId) || sfuState(peer).sessions.get(sessionId) !== role) throw new HttpError(404, 'SFU session not found');
+  return sessionId;
+};
+
+const publishedSfuTrack = (call, requesterId, locator) => {
+  const sessionId = String(locator?.sessionId || '');
+  const trackName = String(locator?.trackName || '');
+  if (!SFU_TRACKS.has(trackName)) return false;
+  return [...call.peers].some(([id, peer]) => id !== requesterId
+    && peer.sfu?.publisher?.ready
+    && peer.sfu.publisher.sessionId === sessionId
+    && peer.sfu.publisher.tracks.has(trackName));
+};
+
+/**
+ * Cloudflare's app secret stays here. Each browser may only mutate sessions created for its own
+ * call peer, and subscriptions may only name tracks currently published inside this same call.
+ */
+const createSfuHandlers = (findPeer) => ({
+  create: async (req, res) => {
+    if (!cloudflareSfuEnabled()) throw new HttpError(503, 'Cloudflare SFU is not configured');
+    const { peer } = findPeer(req);
+    const role = req.body?.role === 'publish' ? 'publish' : req.body?.role === 'subscribe' ? 'subscribe' : null;
+    if (!role) throw new HttpError(400, 'Choose an SFU session role');
+    const created = await createCloudflareSfuSession();
+    if (!created?.sessionId || !SFU_SESSION.test(created.sessionId)) throw new HttpError(502, 'Cloudflare returned an invalid SFU session');
+    const media = sfuState(peer);
+    media.sessions.set(created.sessionId, role);
+    if (role === 'publish') media.publisher = { sessionId: created.sessionId, allocated: new Set(), tracks: new Set(), ready: false };
+    res.status(201).json({ sessionId: created.sessionId });
+  },
+
+  tracks: async (req, res) => {
+    const { call, peerId, peer } = findPeer(req);
+    const media = sfuState(peer);
+    const requested = Array.isArray(req.body?.tracks) ? req.body.tracks : [];
+    if (!requested.length || requested.length > 12) throw new HttpError(400, 'Choose SFU tracks');
+    const local = requested.every((track) => track?.location === 'local');
+    const remote = requested.every((track) => track?.location === 'remote');
+    if (!local && !remote) throw new HttpError(400, 'SFU tracks must use one direction');
+    const role = local ? 'publish' : 'subscribe';
+    const sessionId = ownedSfuSession(peer, req.params.sessionId, role);
+    let tracks;
+    if (local) {
+      if (media.publisher?.sessionId !== sessionId) throw new HttpError(409, 'This SFU publishing session was replaced');
+      tracks = requested.map((track) => {
+        const trackName = String(track.trackName || '');
+        const mid = String(track.mid ?? '');
+        if (!SFU_TRACKS.has(trackName) || !mid || mid.length > 32) throw new HttpError(400, 'Invalid local SFU track');
+        return { location: 'local', mid, trackName };
+      });
+    } else {
+      tracks = requested.map((track) => {
+        if (!publishedSfuTrack(call, peerId, track)) throw new HttpError(403, 'That SFU publication is not available in this call');
+        return { location: 'remote', sessionId: String(track.sessionId), trackName: String(track.trackName) };
+      });
+    }
+    const body = { tracks };
+    if (req.body?.sessionDescription) body.sessionDescription = sfuDescription(req.body.sessionDescription);
+    const result = await cloudflareSfuRequest(`sessions/${sessionId}/tracks/new`, { body });
+    if (local) {
+      const outcomes = Array.isArray(result?.tracks) ? result.tracks : [];
+      tracks.forEach((track, index) => {
+        if (!outcomes[index]?.errorCode && outcomes[index]?.mid !== undefined) media.publisher.allocated.add(track.trackName);
+      });
+    }
+    res.json(result);
+  },
+
+  renegotiate: async (req, res) => {
+    const { peer } = findPeer(req);
+    const media = sfuState(peer);
+    const sessionId = String(req.params.sessionId || '');
+    if (!SFU_SESSION.test(sessionId) || !media.sessions.has(sessionId)) throw new HttpError(404, 'SFU session not found');
+    const result = await cloudflareSfuRequest(`sessions/${sessionId}/renegotiate`, {
+      method: 'PUT', body: { sessionDescription: sfuDescription(req.body?.sessionDescription) },
+    });
+    res.json(result);
+  },
+
+  ready: (req, res) => {
+    const { call, peer } = findPeer(req);
+    const sessionId = ownedSfuSession(peer, req.params.sessionId, 'publish');
+    const media = sfuState(peer);
+    if (media.publisher?.sessionId !== sessionId) throw new HttpError(409, 'This SFU publishing session was replaced');
+    const tracks = (Array.isArray(req.body?.tracks) ? req.body.tracks : []).map(String);
+    if (!tracks.length || tracks.some((track) => !SFU_TRACKS.has(track) || !media.publisher.allocated.has(track))) throw new HttpError(400, 'Invalid SFU publications');
+    tracks.forEach((track) => media.publisher.tracks.add(track));
+    media.publisher.ready = true;
+    tell(call);
+    res.json(publicCall(call, { forGuest: isGuest(peer.address) }));
+  },
+});
 
 /** For recordings: the call, if `address` is in it with this window. */
 export function callWithPeer(callId, address, peerId) {
@@ -526,6 +647,16 @@ router.post('/:id/state', (req, res) => {
   res.json(publicCall(call));
 });
 
+/** An SFU negotiation failed for one endpoint: every participant must move to the same topology. */
+router.post('/:id/media/fallback', (req, res) => {
+  const { call } = peerFor(req);
+  if (call.media === 'sfu') {
+    call.media = 'p2p';
+    tell(call);
+  }
+  res.json(publicCall(call));
+});
+
 router.post('/:id/chat', (req, res) => {
   const { call, peerId, peer } = peerFor(req);
   res.status(201).json(postChat(call, peerId, peer, req.body));
@@ -541,6 +672,12 @@ router.post('/:id/signal', (req, res) => {
   relay(call, peerId, req.body);
   res.status(204).end();
 });
+
+const memberSfu = createSfuHandlers(peerFor);
+router.post('/:id/sfu/session', memberSfu.create);
+router.post('/:id/sfu/:sessionId/tracks', memberSfu.tracks);
+router.post('/:id/sfu/:sessionId/renegotiate', memberSfu.renegotiate);
+router.post('/:id/sfu/:sessionId/ready', memberSfu.ready);
 
 export default router;
 
@@ -642,6 +779,15 @@ guestRouter.post('/:code/state', (req, res) => {
   res.json(publicCall(call, { forGuest: true }));
 });
 
+guestRouter.post('/:code/media/fallback', (req, res) => {
+  const { call } = guestPeer(req);
+  if (call.media === 'sfu') {
+    call.media = 'p2p';
+    tell(call);
+  }
+  res.json(publicCall(call, { forGuest: true }));
+});
+
 guestRouter.post('/:code/chat', (req, res) => {
   const { call, peerId, peer } = guestPeer(req);
   res.status(201).json(postChat(call, peerId, peer, req.body));
@@ -657,6 +803,12 @@ guestRouter.post('/:code/signal', (req, res) => {
   relay(call, peerId, req.body);
   res.status(204).end();
 });
+
+const guestSfu = createSfuHandlers(guestPeer);
+guestRouter.post('/:code/sfu/session', guestSfu.create);
+guestRouter.post('/:code/sfu/:sessionId/tracks', guestSfu.tracks);
+guestRouter.post('/:code/sfu/:sessionId/renegotiate', guestSfu.renegotiate);
+guestRouter.post('/:code/sfu/:sessionId/ready', guestSfu.ready);
 
 /** Back in after this guest's window dropped out (phone asleep, network gone), without knocking again. */
 guestRouter.post('/:code/rejoin', (req, res) => {

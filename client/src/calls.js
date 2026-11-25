@@ -1,11 +1,12 @@
-// A team call in this window: the camera and microphone, a direct connection (WebRTC) to each other
-// person, and what the screen shows. Nothing here depends on React: CallCenter watches it, so a
+// A team call in this window: camera, microphone and screen media through Cloudflare SFU when it is
+// configured, with the original direct WebRTC mesh as the no-SFU mode. Nothing here depends on React:
 // call carries on while moving between mail, tasks and the rest of the app.
 //
 // Every connection has three fixed channels: microphone, camera, shared screen. Turning a camera or
 // screen on or off only changes what goes into a channel, which needs no renegotiating and so can't
 // collide with what the other side is doing. Of each pair, one side (the larger id) starts things.
 import { api, LOGOUT_EVENT } from './api.js';
+import { createCloudflareSfu } from './cloudflareSfu.js';
 import { subscribe as subscribeLive } from './live.js';
 
 const SLOTS = ['audio', 'camera', 'screen'];
@@ -78,8 +79,50 @@ let endedTimer = null;
 let attempt = 0; // Bumped to abandon a call still being set up.
 let rejoining = false;
 let wakeLock = null;
+let sfu = null;
+let sfuMedia = new Map(); // peer id -> { audio, camera, screen }
+let sfuProblemShown = false;
+let sfuNetwork = new WeakMap();
 
 const tracks = { audio: () => mic, camera: () => camera, screen: () => screen };
+
+const usesSfu = () => state.call?.media === 'sfu';
+
+function receiveSfuTrack(peerId, name, track) {
+  const media = sfuMedia.get(peerId) || {};
+  const stream = new MediaStream([track]);
+  media[name] = stream;
+  sfuMedia.set(peerId, media);
+  track.onended = () => {
+    if (sfuMedia.get(peerId)?.[name] !== stream) return;
+    delete media[name];
+    publishPeers();
+  };
+  publishPeers();
+}
+
+function reportSfuError(err) {
+  if (sfuProblemShown || state.phase !== 'in-call') return;
+  sfuProblemShown = true;
+  set({ notice: 'Cloudflare media couldn’t connect, so this meeting is switching to its backup connection.' });
+  transport?.post('/media/fallback', { peerId: state.me, reason: String(err?.message || '').slice(0, 160) })
+    .then(applyCall)
+    .catch(() => {});
+}
+
+function ensureSfu() {
+  if (!usesSfu() || sfu || !transport || state.phase !== 'in-call') return;
+  sfu = createCloudflareSfu({
+    post: transport.post,
+    peerId: state.me,
+    iceServers,
+    onCall: applyCall,
+    onMedia: receiveSfuTrack,
+    onState: publishPeers,
+    onError: reportSfuError,
+  });
+  sfu.start({ audio: mic, camera, screen }).catch(() => {});
+}
 
 /* ---------------------------------- this computer's devices ---------------------------------- */
 
@@ -288,6 +331,11 @@ async function rejoin() {
   if (mine !== attempt) return;
   rejoining = false;
   [...connections.keys()].forEach(disconnect);
+  sfu?.close();
+  sfu = null;
+  sfuMedia = new Map();
+  sfuProblemShown = false;
+  sfuNetwork = new WeakMap();
   if (joined.iceServers) iceServers = joined.iceServers;
   set({ me: joined.peerId, notice: '' });
   applyCall(joined.call);
@@ -373,6 +421,22 @@ async function sampleConnection(connection) {
 
 async function sampleNetwork() {
   if (state.phase !== 'in-call') return;
+  if (usesSfu()) {
+    const holders = (sfu?.peerConnections() || []).map((pc) => {
+      let holder = sfuNetwork.get(pc);
+      if (!holder) {
+        holder = { pc };
+        sfuNetwork.set(pc, holder);
+      }
+      return holder;
+    });
+    await Promise.all(holders.map((holder) => sampleConnection(holder).catch(() => {})));
+    const qualities = holders.filter(({ pc }) => pc.connectionState === 'connected').map((holder) => holder.network?.quality || 'unknown');
+    const networkQuality = qualities.includes('poor') ? 'poor' : qualities.includes('fair') ? 'fair' : qualities.includes('good') ? 'good' : 'unknown';
+    if (state.networkQuality !== networkQuality) set({ networkQuality });
+    publishPeers();
+    return;
+  }
   await Promise.all([...connections.values()].map((connection) => sampleConnection(connection).catch(() => {})));
   tuneSenders();
   const qualities = [...connections.values()]
@@ -397,6 +461,11 @@ function limitBitrate(sender, maxBitrate) {
 }
 
 function setChannel(slot, track) {
+  if (usesSfu()) {
+    ensureSfu();
+    sfu?.replace(slot, track).catch(() => {});
+    return;
+  }
   const index = SLOTS.indexOf(slot);
   for (const connection of connections.values()) {
     connection.pc.getTransceivers()[index]?.sender.replaceTrack(track || null).catch(() => {});
@@ -422,6 +491,10 @@ function recover(connection) {
   connection.recoveredAt = Date.now();
   if (connection.initiator) offer(connection, { iceRestart: true }).catch(() => {});
   else send(connection, { restart: true });
+}
+
+function closeSharePopup(event){
+
 }
 
 function connect(id) {
@@ -506,6 +579,27 @@ async function handleSignal(connection, data) {
 
 function publishPeers() {
   if (!state.call) return;
+  if (usesSfu()) {
+    const pcs = sfu?.peerConnections() || [];
+    const connected = pcs.some((pc) => pc.connectionState === 'connected');
+    const connecting = pcs.some((pc) => ['new', 'connecting'].includes(pc.connectionState));
+    const peers = state.call.peers.filter((peer) => peer.id !== state.me).map((peer) => {
+      const media = sfuMedia.get(peer.id) || {};
+      return {
+        ...peer,
+        connection: media.audio || media.camera || media.screen ? 'connected' : connected ? 'connected' : connecting ? 'connecting' : 'new',
+        stuck: false,
+        networkQuality: state.networkQuality,
+        networkRttMs: 0,
+        packetLoss: 0,
+        audio: media.audio || null,
+        cameraStream: media.camera || null,
+        screenStream: media.screen || null,
+      };
+    });
+    set({ peers });
+    return;
+  }
   const stuckNames = [];
   const peers = state.call.peers.filter((peer) => peer.id !== state.me).map((peer) => {
     const connection = connections.get(peer.id);
@@ -601,6 +695,11 @@ function tearDown() {
   stopLive = null;
   [...connections.keys()].forEach(disconnect);
   connections = new Map();
+  sfu?.close();
+  sfu = null;
+  sfuMedia = new Map();
+  sfuProblemShown = false;
+  sfuNetwork = new WeakMap();
   stopDevices();
   transport = null;
 }
@@ -619,9 +718,22 @@ function applyCall(call) {
   const others = call.peers.filter((peer) => peer.id !== state.me);
   const ids = new Set(others.map((peer) => peer.id));
   for (const id of [...connections.keys()]) if (!ids.has(id)) disconnect(id);
+  for (const id of [...sfuMedia.keys()]) if (!ids.has(id)) sfuMedia.delete(id);
   set({ call, startedAt: state.startedAt || (others.length ? Date.now() : null) });
-  others.forEach((peer) => connect(peer.id));
-  tuneSenders();
+  if (call.media === 'sfu') {
+    [...connections.keys()].forEach(disconnect);
+    ensureSfu();
+    sfu?.sync(call).catch(() => {});
+  } else {
+    if (sfu) {
+      sfu.close();
+      sfu = null;
+      sfuMedia = new Map();
+      sfuNetwork = new WeakMap();
+    }
+    others.forEach((peer) => connect(peer.id));
+    tuneSenders();
+  }
   publishPeers();
 }
 
@@ -630,6 +742,7 @@ function onLive(message) {
   else if (message.type === 'call-signal' && message.id === state.call?.id && message.to === state.me && message.data?.chat) {
     addChat([message.data.chat], !chatOpen);
   } else if (message.type === 'call-signal' && message.id === state.call?.id && message.to === state.me) {
+    if (usesSfu()) return;
     const connection = connect(message.from);
     connection.work = connection.work.then(() => handleSignal(connection, message.data)).catch(() => {});
   } else if (message.type === 'open' && state.call) {

@@ -109,6 +109,11 @@ test('a call rings, connects, passes connection details between windows, and end
   const room = await waitFor(john.got, (m) => m.type === 'call-room' && m.call.peers.length === 2);
   assert.equal(room.call.status, 'active');
 
+  // If any endpoint cannot negotiate the SFU, the whole room moves to the same tested backup path.
+  const fallback = await json('john', `/calls/${started.call.id}/media/fallback`, { peerId: started.peerId });
+  assert.equal(fallback.media, 'p2p');
+  await waitFor(mary.got, (m) => m.type === 'call-room' && m.call.id === started.call.id && m.call.media === 'p2p');
+
   const sent = await call('john', `/calls/${started.call.id}/signal`, { peerId: started.peerId, to: joined.peerId, data: { description: { type: 'offer', sdp: 'x' } } });
   assert.equal(sent.status, 204);
   const signal = await waitFor(mary.got, (m) => m.type === 'call-signal');
@@ -150,6 +155,7 @@ test('nobody outside a call can see it, join it, or speak for someone in it', as
   assert.equal((await call(omar, `/calls/${id}/join`, {})).status, 404);
   assert.equal((await call(omar, `/calls/${id}/respond`, { answer: 'decline' })).status, 404);
   assert.equal((await call(omar, `/calls/${id}/signal`, { peerId: started.peerId, to: started.peerId, data: {} })).status, 404);
+  assert.equal((await call(omar, `/calls/${id}/media/fallback`, { peerId: started.peerId })).status, 404);
   // Mary is invited, but can't use John's place in the call.
   assert.equal((await call('mary', `/calls/${id}/leave`, { peerId: started.peerId })).status, 404);
   assert.equal((await call('mary', `/calls/${id}/signal`, { peerId: started.peerId, to: started.peerId, data: {} })).status, 404);
