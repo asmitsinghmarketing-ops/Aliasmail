@@ -201,9 +201,9 @@
 
 /* ---------- the room is ready (nobody else here yet) ---------- */
 .nx-ready {
-  position: absolute; z-index: 5; left: 50%; bottom: 20px; transform: translateX(-50%); width: min(460px, calc(100% - 24px));
+  position: absolute; z-index: 5; right: 18px; bottom: 18px; width: min(410px, calc(100% - 36px));
   display: grid; gap: 12px; padding: 20px; border: 1px solid var(--nx-line-2); border-radius: 20px; background: var(--nx-surface);
-  box-shadow: 0 24px 60px rgb(0 0 0 / 45%); animation: nx-rise-center .4s var(--nx-ease) both;
+  box-shadow: 0 24px 60px rgb(0 0 0 / 55%); animation: nx-ready-in .35s var(--nx-ease) both;
 }
 .nx-ready > strong { font-size: 18px; }
 .nx-ready-head { display: flex; align-items: center; gap: 12px; }
@@ -211,6 +211,11 @@
 .nx-ready-head small { color: var(--nx-muted); font-size: 12px; font-weight: 600; }
 .nx-ready-head strong { font-size: 18px; }
 .nx-ready-art { flex: none; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 14px; background: var(--nx-accent); color: #fff; }
+.nx-ready-close {
+  position: absolute; z-index: 2; top: 12px; right: 12px; display: grid; place-items: center; width: 34px; height: 34px;
+  padding: 0; border: 0; border-radius: 50%; background: var(--nx-surface-3); color: var(--nx-muted);
+}
+.nx-ready-close:hover { background: var(--nx-surface-4); color: var(--nx-text); }
 .nx-ready .nx-link { justify-self: start; font-size: 13px; }
 .nx-share { display: grid; gap: 10px; }
 .nx-share .nx-note { margin: 0; }
@@ -218,14 +223,8 @@
 .nx-share-link input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none; color: var(--nx-text); font: inherit; font-size: 13px; }
 .nx-share-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* Keep the camera clear in an empty room: the sharing card becomes a simple Meet-style side lane. */
-.nx-stage.is-alone { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); gap: 16px; }
-.nx-stage.is-alone > :first-child { min-width: 0; min-height: 0; }
-.nx-stage.is-alone .nx-ready {
-  position: relative; left: auto; bottom: auto; transform: none; align-self: center; width: 100%;
-  border-color: var(--nx-line); border-radius: 20px; background: #171717; box-shadow: none;
-  animation: nx-panel-in .35s var(--nx-ease) both;
-}
+/* Empty room: keep the camera full-size and float a compact dark invitation card above it. */
+.nx-stage.has-ready .nx-ready { border-color: var(--nx-line-2); background: #171717; }
 .nx-ready-head small { letter-spacing: .04em; text-transform: uppercase; }
 .nx-ready-art { background: var(--nx-accent); color: var(--nx-accent-ink); }
 .nx-share-link { background: #0f0f0f; }
@@ -524,11 +523,7 @@
   .nx-ctl.labelled { width: 48px; }
   .nx-panel { width: 330px; }
   .nx-strip { width: 190px; }
-  .nx-stage.is-alone { display: flex; }
-  .nx-stage.is-alone .nx-ready {
-    position: absolute; left: 20px; bottom: 20px; width: min(400px, calc(100% - 40px));
-    padding: 18px; animation: nx-ready-corner .35s var(--nx-ease) both;
-  }
+  .nx-stage.has-ready .nx-ready { right: 16px; bottom: 16px; width: min(400px, calc(100% - 32px)); padding: 18px; }
 }
 
 /* =====================================================================================
@@ -600,7 +595,7 @@
   .nx-lobby-card .nx-btn { border-radius: 20px; }
 
   .nx-toasts { top: 4px; }
-  .nx-stage.is-alone .nx-ready { left: 10px; bottom: 10px; width: calc(100% - 20px); max-height: 52dvh; overflow-y: auto; padding: 16px; border-radius: 20px; }
+  .nx-stage.has-ready .nx-ready { right: 10px; bottom: 10px; width: calc(100% - 20px); max-height: 52dvh; overflow-y: auto; padding: 16px; border-radius: 20px; }
   .nx-pinned-chip { top: auto; bottom: 10px; }
   .view-present .nx-pinned-chip, .view-spotlight .nx-pinned-chip { bottom: 124px; }
 
@@ -647,6 +642,7 @@
 @keyframes nx-dock-in { from { opacity: 0; transform: translateY(16px); } }
 @keyframes nx-panel-in { from { opacity: 0; transform: translateX(18px); } }
 @keyframes nx-ready-corner { from { opacity: 0; transform: translateY(12px) scale(.985); } }
+@keyframes nx-ready-in { from { opacity: 0; transform: translateY(14px) scale(.985); } }
 @keyframes nx-sheet-in { from { transform: translateY(110%); } }
 @keyframes nx-menu-in { from { opacity: 0; transform: translateY(8px) scale(.97); } }
 @keyframes nx-rise-center { from { opacity: 0; transform: translate(-50%, 10px); } }

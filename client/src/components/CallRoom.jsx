@@ -971,6 +971,7 @@ export default function CallRoom({ state }) {
   const [confirmRecord, setConfirmRecord] = useState(false);
   const [recordStatus, setRecordStatus] = useState(null); // null | 'saving' | 'saved'
   const [mobileShareHelp, setMobileShareHelp] = useState(false);
+  const [readyOpen, setReadyOpen] = useState(true);
   const [recordingStartedAt, setRecordingStartedAt] = useState(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [audioError, setAudioError] = useState('');
@@ -992,6 +993,8 @@ export default function CallRoom({ state }) {
   const togglePanel = useCallback((name) => setPanel((open) => (open === name ? null : name)), []);
   const togglePin = useCallback((key) => setPinned((current) => (current === key ? null : key)), []);
   useOutside(menus, Boolean(menu), () => setMenu(null));
+
+  useEffect(() => setReadyOpen(true), [call.id]);
 
   // Chat counts as read while it's open.
   useEffect(() => {
@@ -1237,6 +1240,7 @@ export default function CallRoom({ state }) {
   const focus = pinnedTile || leading;
   const shownTiles = hideSelf && tiles.length > 1 ? tiles.slice(1) : tiles;
   const alone = !state.guest && Boolean(call.code) && !peers.length && !ringing.length;
+  const showReady = alone && readyOpen;
 
   const speakerFallback = () => {
     setAudioError('The selected speaker is no longer available. The call is using the default speaker.');
@@ -1421,7 +1425,7 @@ export default function CallRoom({ state }) {
 
       <div className="nx-body">
         <main
-          className={`nx-stage ${alone ? 'is-alone' : ''}`}
+          className={`nx-stage ${showReady ? 'has-ready' : ''}`}
           aria-label="Video"
           onClick={(event) => {
             // Phones: a tap on the pictures (not on a button) hides or brings back the controls.
@@ -1436,8 +1440,11 @@ export default function CallRoom({ state }) {
               <Icon name="pin" size={15} /> {pinnedTile.isMe ? 'You are' : `${pinnedTile.name} is`} pinned · <u>Unpin</u>
             </button>
           )}
-          {alone && (
+          {showReady && (
             <div className="nx-ready" role="region" aria-label="Invite people to this meeting">
+              <button type="button" className="nx-ready-close" aria-label="Close invitation card" title="Close" onClick={() => setReadyOpen(false)}>
+                <Icon name="close" size={19} />
+              </button>
               <div className="nx-ready-head">
                 <span className="nx-ready-art" aria-hidden="true"><Icon name="people" size={24} /></span>
                 <span>
