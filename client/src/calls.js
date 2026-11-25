@@ -746,7 +746,11 @@ export async function toggleCamera() {
 const canShareScreen = () => Boolean(navigator.mediaDevices?.getDisplayMedia);
 export { canShareScreen };
 
+let screenRedraw = null; // keeps a shared photo's picture flowing (see sharePicture)
+
 function stopScreen() {
+  clearInterval(screenRedraw);
+  screenRedraw = null;
   screen?.stop();
   screen = null;
   setChannel('screen', null);
@@ -769,6 +773,42 @@ export async function toggleScreen() {
     if (err?.name !== 'NotAllowedError') set({ notice: mediaError(err, 'screen') });
   }
   return undefined;
+}
+
+/**
+ * Present a photo or screenshot (phones, whose browsers can't share the screen itself). It goes out
+ * on the same channel as a shared screen, so everyone sees it the same way. Another call replaces it.
+ */
+export async function sharePicture(file) {
+  if (state.phase !== 'in-call' || !file) return;
+  const canvas = document.createElement('canvas');
+  if (!canvas.captureStream) {
+    set({ notice: 'This browser can’t present pictures in a call.' });
+    return;
+  }
+  let picture;
+  try {
+    picture = await createImageBitmap(file);
+  } catch {
+    set({ notice: 'That file isn’t a picture this browser can open. Choose a photo or screenshot.' });
+    return;
+  }
+  // At most 1920 × 1080, keeping its shape, so a tall phone screenshot stays tall.
+  const scale = Math.min(1, 1920 / picture.width, 1080 / picture.height);
+  canvas.width = Math.max(2, Math.round(picture.width * scale));
+  canvas.height = Math.max(2, Math.round(picture.height * scale));
+  const context = canvas.getContext('2d');
+  const draw = () => context.drawImage(picture, 0, 0, canvas.width, canvas.height);
+  draw();
+  const track = canvas.captureStream(5).getVideoTracks()[0];
+  track.contentHint = 'detail';
+  if (screen) stopScreen();
+  // A still picture produces no new frames by itself; some browsers then show the others nothing.
+  screenRedraw = setInterval(draw, 500);
+  screen = track;
+  setChannel('screen', track);
+  publishLocal();
+  sendState();
 }
 
 export function toggleHand() {

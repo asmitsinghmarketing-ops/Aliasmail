@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import {
   admitGuest, canShareScreen, chooseDevice, clearNotice, hangUp, inviteToCall, meetingCode, meetingLink, react, REACTIONS,
-  resendChat, retryMicrophone, sendChat, setChatOpen, setRecording, toggleCamera, toggleHand, toggleMute, toggleScreen,
+  resendChat, retryMicrophone, sendChat, setChatOpen, setRecording, sharePicture, toggleCamera, toggleHand, toggleMute, toggleScreen,
 } from '../calls.js';
 import { createCallRecorder, downloadRecording, recordingSupported } from '../callRecording.js';
 import { createRecordingUpload } from '../recordingUpload.js';
@@ -872,6 +872,8 @@ export default function CallRoom({ state }) {
   const [minimized, setMinimized] = useState(false);
   const [panel, setPanel] = useState(null); // 'people' | 'chat' | 'info' | 'devices'
   const [menu, setMenu] = useState(null); // 'react' | 'more'
+  const [chromeHidden, setChromeHidden] = useState(false); // phones: tap the picture to hide the controls
+  const picturePicker = useRef(null);
   const [layout, setLayoutState] = useState(readLayout);
   const [pinned, setPinned] = useState(null);
   const [hideSelf, setHideSelf] = useState(false);
@@ -1166,6 +1168,18 @@ export default function CallRoom({ state }) {
   const hands = call.peers.filter((peer) => peer.hand).length;
   const peopleBadge = lobby.length + peers.filter((peer) => peer.hand).length;
 
+  /**
+   * One tap, like Teams and Meet: stops sharing, or starts it. Where the browser can share the screen
+   * its own picker opens; phones that can't (iPhone, most Android) open their photos instead, so a
+   * screenshot can be shown to everyone.
+   */
+  function share() {
+    setMenu(null);
+    if (state.sharing || canShareScreen()) return void toggleScreen();
+    picturePicker.current?.click();
+    return undefined;
+  }
+
   if (minimized) {
     const shown = presenter
       ? { key: 'screen', name: `${presenter.name} is presenting`, address: presenter.address, stream: presenter.screenStream, videoOn: true }
@@ -1255,7 +1269,14 @@ export default function CallRoom({ state }) {
   if (talking) toasts.push(<div key="ptt" className="nx-toast live" role="status"><Icon name="mic" size={18} /><span>Talking — release Space to mute</span></div>);
 
   return (
-    <div ref={room} className={`nx-room view-${view} ${panel ? 'with-panel' : ''}`} role="dialog" aria-label="Call">
+    <div ref={room} className={`nx-room view-${view} ${panel ? 'with-panel' : ''} ${chromeHidden && !panel && !menu ? 'chrome-hidden' : ''}`} role="dialog" aria-label="Call">
+      <input
+        ref={picturePicker}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void sharePicture(file); }}
+      />
       {voicesPlayed}
 
       <header className="nx-top">
@@ -1296,7 +1317,15 @@ export default function CallRoom({ state }) {
       </header>
 
       <div className="nx-body">
-        <main className="nx-stage" aria-label="Video">
+        <main
+          className="nx-stage"
+          aria-label="Video"
+          onClick={(event) => {
+            // Phones: a tap on the pictures (not on a button) hides or brings back the controls.
+            if (!window.matchMedia('(max-width: 760px)').matches || event.target.closest('button, a, input, .nx-ready')) return;
+            setChromeHidden((hidden) => !hidden);
+          }}
+        >
           {stage}
           <ReactionLayer items={floating} />
           {pinnedTile && (
@@ -1368,8 +1397,8 @@ export default function CallRoom({ state }) {
         <div className="nx-dock" ref={menus}>
           <DockButton icon={micOff ? 'micOff' : 'mic'} label={micLabel} text={micOff ? 'Unmute' : 'Mic'} state={micOff ? 'off' : ''} onClick={toggleMute} aria-pressed={micOff} />
           <DockButton icon={state.cameraOn ? 'videocam' : 'videocamOff'} label={state.cameraOn ? `Turn camera off (${MOD} + E)` : `Turn camera on (${MOD} + E)`} text="Camera" state={state.cameraOn ? '' : 'off'} onClick={toggleCamera} aria-pressed={!state.cameraOn} />
-          {canShareScreen() && <DockButton icon="screenShare" label={state.sharing ? 'Stop presenting' : 'Present your screen'} text={state.sharing ? 'Stop' : 'Share'} state={state.sharing ? 'on' : ''} className="nx-only-desktop" onClick={toggleScreen} aria-pressed={state.sharing} />}
-          <DockButton icon="mood" label="Send a reaction" text="React" state={menu === 'react' ? 'on' : ''} onClick={() => setMenu(menu === 'react' ? null : 'react')} aria-expanded={menu === 'react'} />
+          <DockButton icon="screenShare" label={state.sharing ? 'Stop presenting' : canShareScreen() ? 'Share your screen' : 'Show a photo or screenshot'} text={state.sharing ? 'Stop' : 'Share'} state={state.sharing ? 'on' : ''} onClick={share} aria-pressed={state.sharing} />
+          <DockButton icon="mood" label="Send a reaction" text="React" className="nx-only-desktop" state={menu === 'react' ? 'on' : ''} onClick={() => setMenu(menu === 'react' ? null : 'react')} aria-expanded={menu === 'react'} />
           <DockButton icon="hand" label={state.hand ? 'Lower hand' : `Raise hand (${MOD} + Alt + H)`} text={state.hand ? 'Lower' : 'Raise'} state={state.hand ? 'on hand' : ''} className="nx-only-desktop" onClick={toggleHand} aria-pressed={state.hand} />
           <DockButton icon="chat" label="Chat" state={panel === 'chat' ? 'on' : ''} badge={panel === 'chat' ? 0 : state.unread} className="nx-only-mobile" onClick={() => togglePanel('chat')} />
           <DockButton icon="moreVert" label="More options" text="More" state={menu === 'more' ? 'on' : ''} badge={0} onClick={() => setMenu(menu === 'more' ? null : 'more')} aria-expanded={menu === 'more'} />
@@ -1387,12 +1416,16 @@ export default function CallRoom({ state }) {
           {menu === 'more' && (
             <div className="nx-popover nx-menu" role="menu" aria-label="More options">
               <span className="nx-sheet-grip nx-only-mobile" aria-hidden="true" />
+              <div className="nx-only-mobile nx-menu-reactions" role="group" aria-label="Reactions">
+                {REACTIONS.map((emoji) => <button key={emoji} type="button" aria-label={`React ${emoji}`} onClick={() => { void react(emoji); setMenu(null); }}>{emoji}</button>)}
+              </div>
               <div className="nx-only-mobile nx-menu-grid">
                 <button type="button" className={state.hand ? 'on' : ''} onClick={() => { toggleHand(); setMenu(null); }}><Icon name="hand" size={22} /><span>{state.hand ? 'Lower hand' : 'Raise hand'}</span></button>
-                {canShareScreen() && <button type="button" className={state.sharing ? 'on' : ''} onClick={() => { toggleScreen(); setMenu(null); }}><Icon name="screenShare" size={22} /><span>{state.sharing ? 'Stop' : 'Present'}</span></button>}
+                <button type="button" onClick={() => { setPanel('devices'); setMenu(null); }}><Icon name="settings" size={22} /><span>Settings</span></button>
                 <button type="button" onClick={() => { setPanel('info'); setMenu(null); }}><Icon name="info" size={22} /><span>Details</span></button>
                 <button type="button" onClick={() => { setPanel('people'); setMenu(null); }}><Icon name="people" size={22} /><span>People</span>{peopleBadge > 0 && <span className="nx-badge">{peopleBadge}</span>}</button>
               </div>
+              <MenuItem icon="image" label="Present a photo or screenshot" onClick={() => { setMenu(null); picturePicker.current?.click(); }} />
               {recordingSupported() && !state.guest && <MenuItem icon="record" label={state.recording ? 'Stop recording' : 'Record meeting'} className={state.recording ? 'danger' : ''} onClick={toggleRecording} />}
               <div className="nx-menu-label">Layout</div>
               {layoutChoices.map(([value, icon, label]) => <MenuItem key={value} icon={icon} label={label} checked={layout === value && !pinned} onClick={() => { setLayout(value); setMenu(null); }} />)}
