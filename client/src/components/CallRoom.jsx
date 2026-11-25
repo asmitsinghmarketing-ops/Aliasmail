@@ -15,6 +15,17 @@ import Avatar from './Avatar.jsx';
 import { colorFor } from '../format.js';
 import Icon from './Icon.jsx';
 
+/**
+ * A person's name for the call screen. Someone without a display name arrives as their email
+ * address: show "Admin" for admin@example.com, "Priya Nair" for priya.nair@…, never the address.
+ */
+export function personName(name = '') {
+  const text = String(name || '').trim();
+  if (!text.includes('@')) return text;
+  const local = text.split('@')[0].replace(/[._+-]+/g, ' ').trim();
+  return local ? local.replace(/(^|\s)\S/g, (c) => c.toUpperCase()) : text;
+}
+
 const AudioContextClass = () => window.AudioContext || window.webkitAudioContext;
 const RESUME_CALL_AUDIO = 'nextspace:resume-call-audio';
 const ALONE_STOP_MS = 15_000; // recording with nobody left: stop and save after this
@@ -29,9 +40,11 @@ const MOD = IS_MAC ? '⌘' : 'Ctrl';
 /** Filling the box would crop too much (a phone's tall picture in a wide tile): show it whole. */
 const shapesDiffer = (videoRatio, boxRatio) => Math.max(videoRatio / boxRatio, boxRatio / videoRatio) > 1.4;
 
-function Video({ stream, className, contain = false }) {
+function Video({ stream, className, contain = false, onShape }) {
   const element = useRef(null);
   const [fit, setFit] = useState(false);
+  const shapeReport = useRef(onShape);
+  shapeReport.current = onShape;
   useEffect(() => {
     const video = element.current;
     if (!video) return undefined;
@@ -49,6 +62,7 @@ function Video({ stream, className, contain = false }) {
     if (!video || contain) return undefined;
     const check = () => {
       if (!video.videoWidth || !video.videoHeight || !video.clientWidth || !video.clientHeight) return;
+      shapeReport.current?.(video.videoWidth / video.videoHeight);
       setFit(shapesDiffer(video.videoWidth / video.videoHeight, video.clientWidth / video.clientHeight));
     };
     video.addEventListener('loadedmetadata', check);
@@ -341,18 +355,25 @@ function useBoxSize() {
 
 /* ---------------------------------- tiles ---------------------------------- */
 
-const Tile = memo(function Tile({ tile, size, compact, onPin, pinned }) {
+const Tile = memo(function Tile({ tile, size, compact, onPin, pinned, hug }) {
+  // The main picture takes the video's own shape: a phone held upright gets a tall box, not a
+  // wide one with black bars either side.
+  const [ratio, setRatio] = useState(null);
   const { name, address, stream, videoOn, muted, hand, speaking, status, mirrored, isMe, reaction, ringing } = tile;
   const classes = ['nx-tile', speaking && 'speaking', compact && 'compact', ringing && 'ringing', videoOn && stream && 'has-video'].filter(Boolean).join(' ');
   return (
     <div
       className={classes}
       // Each person's own colour lights their tile while the camera is off.
-      style={{ '--tile': colorFor(address || name), ...(size && { width: size.w, height: size.h }) }}
+      style={{
+        '--tile': colorFor(address || name),
+        ...(size && { width: size.w, height: size.h }),
+        ...(hug && ratio && videoOn && stream && { aspectRatio: String(ratio), width: 'auto', height: '100%', maxWidth: '100%' }),
+      }}
       onDoubleClick={onPin}
     >
       {videoOn && stream
-        ? <Video stream={stream} className={mirrored ? 'mirrored' : ''} />
+        ? <Video stream={stream} className={mirrored ? 'mirrored' : ''} onShape={hug ? (r) => setRatio((old) => (old && Math.abs(old - r) < 0.01 ? old : r)) : undefined} />
         : (
           <span className="nx-tile-face">
             <span className="nx-tile-ring" aria-hidden="true" />
@@ -476,7 +497,7 @@ function InCall({ peer, me, pinned, onPin }) {
     <li>
       <Avatar person={peer} size="sm" />
       <span className="nx-person">
-        <strong>{peer.name}{peer.id === me ? ' (you)' : ''}</strong>
+        <strong>{personName(peer.name)}{peer.id === me ? ' (you)' : ''}</strong>
         <small>{peer.guest ? 'Guest' : peer.recording ? 'Recording' : peer.sharing ? 'Presenting' : 'In the call'}</small>
       </span>
       {peer.hand && <span className="nx-person-hand" title="Hand raised"><Icon name="hand" size={15} /></span>}
@@ -656,7 +677,7 @@ function ChatPanel({ state }) {
             <div key={message.id} className={`nx-msg ${mine ? 'mine' : ''} ${grouped ? 'grouped' : ''} ${message.failed ? 'failed' : ''}`}>
               {!grouped && (
                 <div className="nx-msg-head">
-                  <strong>{mine ? 'You' : message.name}</strong>
+                  <strong>{mine ? 'You' : personName(message.name)}</strong>
                   {message.guest && <small>Guest</small>}
                   <time>{new Date(message.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
                 </div>
@@ -1127,17 +1148,17 @@ export default function CallRoom({ state }) {
   const title = call.title
     ? call.title
     : peers.length
-      ? peers.map((peer) => peer.name).join(', ')
+      ? peers.map((peer) => personName(peer.name)).join(', ')
       : ringing.length ? `Calling ${ringing.map((invite) => invite.name).join(', ')}…` : call.code ? 'Your meeting' : 'Waiting for others…';
 
   const tiles = [
     {
-      key: me, isMe: true, name: myPeer?.name || 'You', address: myPeer?.address, stream: state.localCamera, videoOn: state.cameraOn,
+      key: me, isMe: true, name: personName(myPeer?.name) || 'You', address: myPeer?.address, stream: state.localCamera, videoOn: state.cameraOn,
       muted: state.muted || !state.micAvailable, hand: state.hand, speaking: speaker === me, mirrored: true, reaction: reactionByPeer.get(me),
     },
     ...peers.map((peer) => ({
       // Their picture only once connected; until then a black box looks like a broken camera.
-      key: peer.id, name: peer.name, address: peer.address, stream: peer.cameraStream, videoOn: peer.camera && peer.connection === 'connected',
+      key: peer.id, name: personName(peer.name), address: peer.address, stream: peer.cameraStream, videoOn: peer.camera && peer.connection === 'connected',
       muted: peer.muted, hand: peer.hand, speaking: speaker === peer.id, reaction: reactionByPeer.get(peer.id),
       status: peer.connection === 'connected' ? null
         : peer.stuck ? 'Can’t connect'
@@ -1153,7 +1174,7 @@ export default function CallRoom({ state }) {
   const view = presenter ? 'present'
     : pinnedTile ? 'spotlight'
       : layout === 'spotlight' && tiles.length > 1 ? 'spotlight'
-        : layout === 'auto' && solo ? 'solo'
+        : layout !== 'grid' && solo ? 'solo'
           : 'grid';
   const focus = pinnedTile || leading;
   const shownTiles = hideSelf && tiles.length > 1 ? tiles.slice(1) : tiles;
@@ -1242,7 +1263,7 @@ export default function CallRoom({ state }) {
     const rest = shownTiles.filter((tile) => tile.key !== focus.key);
     stage = (
       <div className="nx-stage-split">
-        <div className="nx-focus"><Tile tile={focus} pinned={pinned === focus.key} onPin={() => togglePin(focus.key)} /></div>
+        <div className="nx-focus"><Tile tile={focus} hug pinned={pinned === focus.key} onPin={() => togglePin(focus.key)} /></div>
         <Filmstrip tiles={rest} pinned={pinned} onPin={togglePin} />
       </div>
     );
@@ -1251,7 +1272,7 @@ export default function CallRoom({ state }) {
     const small = swapped ? others[0] : selfTile;
     stage = (
       <div className="nx-solo">
-        <div className="nx-focus"><Tile tile={big} /></div>
+        <div className="nx-focus"><Tile tile={big} hug /></div>
         {(onlyMe || swapped) && (
           <button type="button" className="nx-pip" onClick={() => setSwapped((s) => !s)} aria-label="Swap pictures" title="Swap pictures">
             <Tile tile={small} compact />
@@ -1342,7 +1363,7 @@ export default function CallRoom({ state }) {
 
       <div className="nx-body">
         <main
-          className="nx-stage"
+          className={`nx-stage ${alone ? 'is-alone' : ''}`}
           aria-label="Video"
           onClick={(event) => {
             // Phones: a tap on the pictures (not on a button) hides or brings back the controls.
@@ -1358,11 +1379,16 @@ export default function CallRoom({ state }) {
             </button>
           )}
           {alone && (
-            <div className="nx-ready">
-              <span className="nx-ready-art" aria-hidden="true"><Icon name="people" size={26} /></span>
-              <strong>Your meeting is ready</strong>
+            <div className="nx-ready" role="region" aria-label="Invite people to this meeting">
+              <div className="nx-ready-head">
+                <span className="nx-ready-art" aria-hidden="true"><Icon name="people" size={24} /></span>
+                <span>
+                  <small>Private meeting space</small>
+                  <strong>Your room is ready</strong>
+                </span>
+              </div>
               <ShareLink state={state} intro="Share this link with anyone you want in the meeting. You’ll be asked before guests come in." />
-              <button type="button" className="nx-link" onClick={() => setPanel('people')}>Or ring teammates directly</button>
+              <button type="button" className="nx-link nx-invite-team" onClick={() => setPanel('people')}><Icon name="personAdd" size={16} /> Invite teammates from Nextspace</button>
             </div>
           )}
         </main>
@@ -1439,6 +1465,10 @@ export default function CallRoom({ state }) {
           <DockButton icon="chat" label="Chat" state={panel === 'chat' ? 'on' : ''} badge={panel === 'chat' ? 0 : state.unread} className="nx-only-mobile" onClick={() => togglePanel('chat')} />
           <DockButton icon="moreVert" label="More options" text="More" state={menu === 'more' ? 'on' : ''} badge={0} onClick={() => setMenu(menu === 'more' ? null : 'more')} aria-expanded={menu === 'more'} />
           <span className="nx-ctl-sep nx-only-desktop" aria-hidden="true" />
+          <DockButton icon="info" label="Meeting details" text="Details" state={panel === 'info' ? 'on' : ''} className="flat nx-only-desktop" onClick={() => togglePanel('info')} />
+          <DockButton icon="people" label={`People (${MOD} + Alt + P)`} text="People" state={panel === 'people' ? 'on' : ''} className="flat nx-only-desktop" badge={peopleBadge} onClick={() => togglePanel('people')} />
+          <DockButton icon="chat" label={`Chat (${MOD} + Alt + C)`} text="Chat" state={panel === 'chat' ? 'on' : ''} className="flat nx-only-desktop" badge={panel === 'chat' ? 0 : state.unread} onClick={() => togglePanel('chat')} />
+          <span className="nx-ctl-sep nx-only-desktop" aria-hidden="true" />
           <DockButton icon="callEnd" label="Leave call" state="leave" wide="Leave" onClick={hangUp} />
 
           {menu === 'react' && (
@@ -1474,11 +1504,6 @@ export default function CallRoom({ state }) {
           )}
         </div>
 
-        <div className="nx-bar-side nx-only-desktop">
-          <DockButton icon="info" label="Meeting details" text="Details" state={panel === 'info' ? 'on' : ''} className="flat" onClick={() => togglePanel('info')} />
-          <DockButton icon="people" label={`People (${MOD} + Alt + P)`} text="People" state={panel === 'people' ? 'on' : ''} className="flat" badge={peopleBadge} onClick={() => togglePanel('people')} />
-          <DockButton icon="chat" label={`Chat (${MOD} + Alt + C)`} text="Chat" state={panel === 'chat' ? 'on' : ''} className="flat" badge={panel === 'chat' ? 0 : state.unread} onClick={() => togglePanel('chat')} />
-        </div>
       </footer>
     </div>
   );

@@ -144,10 +144,25 @@ async function openDevices(video, muted = false) {
  * Start using a microphone track. If it stops by itself (headset unplugged, USB mic removed, the
  * browser revoking access), switch to the default microphone instead of going silent.
  */
+/**
+ * Phones stop the camera (and sometimes the microphone) while the call is in the background, e.g.
+ * while someone answers a message in another app. That isn't a device being unplugged: note it,
+ * and turn them back on as soon as the call is on screen again (see `resumeDevices`).
+ */
+const resumeOnReturn = { camera: false, mic: false };
+const inBackground = () => document.visibilityState === 'hidden';
+
 function useMic(track) {
   mic = track;
   track.onended = async () => {
     if (mic !== track || state.phase !== 'in-call') return;
+    if (inBackground()) {
+      resumeOnReturn.mic = true;
+      mic = null;
+      setChannel('audio', null);
+      publishLocal();
+      return;
+    }
     try {
       const next = (await navigator.mediaDevices.getUserMedia({ audio: micOptions() })).getAudioTracks()[0];
       if (mic !== track || state.phase !== 'in-call') return next.stop();
@@ -173,7 +188,8 @@ function useCamera(track) {
     if (camera !== track || state.phase !== 'in-call') return;
     camera = null;
     setChannel('camera', null);
-    set({ notice: 'Your camera was disconnected, so it has been turned off.' });
+    if (inBackground()) resumeOnReturn.camera = true;
+    else set({ notice: 'Your camera was disconnected, so it has been turned off.' });
     publishLocal();
     sendState();
   };
@@ -793,7 +809,14 @@ export async function toggleCamera() {
   sendState();
 }
 
-const canShareScreen = () => Boolean(navigator.mediaDevices?.getDisplayMedia);
+/**
+ * Whether this browser can really share the screen. Phones and tablets are left out on purpose:
+ * Chrome on Android has the function but refuses every request (which looks like nothing happening),
+ * and iPhones/iPads don't have it. They present a photo or screenshot instead (`sharePicture`).
+ */
+const TOUCH_DEVICE = typeof navigator !== 'undefined'
+  && (/Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform)));
+const canShareScreen = () => !TOUCH_DEVICE && Boolean(navigator.mediaDevices?.getDisplayMedia);
 export { canShareScreen };
 
 let screenRedraw = null; // keeps a shared photo's picture flowing (see sharePicture)
@@ -954,7 +977,85 @@ window.addEventListener('offline', () => {
   if (state.phase === 'in-call') set({ notice: OFFLINE_NOTICE });
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') catchUp();
+  if (document.visibilityState !== 'visible') return;
+  catchUp();
+  void resumeDevices();
+});
+
+/** Back on screen: turn on again whatever the phone stopped while the call was in the background. */
+async function resumeDevices() {
+  if (state.phase !== 'in-call') return;
+  // Some phones end the track without telling us: check it too.
+  if (camera?.readyState === 'ended') {
+    camera = null;
+    setChannel('camera', null);
+    resumeOnReturn.camera = true;
+  }
+  if (mic?.readyState === 'ended') {
+    mic = null;
+    setChannel('audio', null);
+    resumeOnReturn.mic = true;
+  }
+  const saved = savedDevices();
+  if (resumeOnReturn.mic && !mic) {
+    resumeOnReturn.mic = false;
+    try {
+      const track = (await navigator.mediaDevices.getUserMedia({ audio: micOptions(state.micDevice || saved.audioinput, false) })).getAudioTracks()[0];
+      if (state.phase !== 'in-call' || mic) track.stop();
+      else {
+        track.enabled = !state.muted;
+        useMic(track);
+        setChannel('audio', track);
+      }
+    } catch (err) {
+      set({ notice: `Your microphone couldn’t restart. ${mediaError(err, 'microphone')}` });
+    }
+  }
+  if (resumeOnReturn.camera && !camera) {
+    resumeOnReturn.camera = false;
+    try {
+      const track = (await navigator.mediaDevices.getUserMedia({ video: cameraOptions(state.cameraDevice || saved.videoinput, false) })).getVideoTracks()[0];
+      if (state.phase !== 'in-call' || camera) track.stop();
+      else {
+        useCamera(track);
+        setChannel('camera', track);
+      }
+    } catch (err) {
+      set({ notice: `Your camera couldn’t restart. ${mediaError(err, 'camera')}` });
+    }
+  }
+  publishLocal();
+  sendState();
+}
+
+/*
+ * The phone's / computer's own call controls (notification shade, lock screen, the browser's media
+ * hub): the meeting's name, mute, camera and hang up, so the call is easy to handle from outside
+ * the page. Browsers that don't know an action simply ignore it.
+ */
+let watchedLive = false;
+function mediaAction(action, handler) {
+  try {
+    navigator.mediaSession?.setActionHandler(action, handler);
+  } catch { /* not supported here */ }
+}
+watchCall(() => {
+  const session = navigator.mediaSession;
+  if (!session) return;
+  const live = state.phase === 'in-call';
+  try {
+    if (live) {
+      const title = state.call?.title || (state.peers.length ? state.peers.map((peer) => peer.name).join(', ') : 'Nextspace call');
+      if (session.metadata?.title !== title && window.MediaMetadata) session.metadata = new window.MediaMetadata({ title, artist: 'Nextspace call', artwork: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }] });
+      session.setMicrophoneActive?.(Boolean(mic) && !state.muted);
+      session.setCameraActive?.(Boolean(camera));
+    } else if (session.metadata?.artist === 'Nextspace call') session.metadata = null;
+  } catch { /* older browsers */ }
+  if (live === watchedLive) return;
+  watchedLive = live;
+  mediaAction('hangup', live ? () => { void hangUp(); } : null);
+  mediaAction('togglemicrophone', live ? () => toggleMute() : null);
+  mediaAction('togglecamera', live ? () => { void toggleCamera(); } : null);
 });
 
 // Some browsers do not fire a track's `ended` event when a USB/Bluetooth device disappears.
