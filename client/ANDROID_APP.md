@@ -34,3 +34,12 @@ keystore, its passwords, `google-services.json`, an APNs key, or Firebase servic
 Native phone-style ringing additionally requires an FCM project and a native incoming-call service;
 the Firebase configuration is deliberately not embedded until those organization-owned credentials
 are supplied.
+
+## Native Android screen sharing
+
+The meeting Share button uses Android MediaProjection inside the installed app. Android always shows
+its own consent picker, foreground notification, and screen-sharing status indicator. The captured
+screen is limited to 960 pixels on its longest edge and eight frames per second before it enters the
+existing WebRTC/SFU screen channel; this keeps bridge memory and phone heat bounded. Android 14+
+allows the user to share either one app or the whole screen. Browser and iOS sessions continue to use
+their normal browser capture or screenshot fallback.

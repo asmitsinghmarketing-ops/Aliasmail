@@ -8,6 +8,7 @@
 import { api, LOGOUT_EVENT } from './api.js';
 import { createCloudflareSfu } from './cloudflareSfu.js';
 import { subscribe as subscribeLive } from './live.js';
+import { canNativeScreenShare, startNativeScreenShare } from './nativeScreenShare.js';
 
 const SLOTS = ['audio', 'camera', 'screen'];
 const CHECK_IN_MS = 15_000;
@@ -932,7 +933,7 @@ export async function toggleCamera() {
  * real capability lets supported phones use the system share picker and leaves the picture fallback
  * for browsers that genuinely cannot capture their screen.
  */
-const canShareScreen = () => Boolean(navigator.mediaDevices?.getDisplayMedia);
+const canShareScreen = () => canNativeScreenShare() || Boolean(navigator.mediaDevices?.getDisplayMedia);
 export { canShareScreen };
 
 let screenRedraw = null; // keeps a shared photo's picture flowing (see sharePicture)
@@ -956,7 +957,9 @@ export async function toggleScreen() {
   }
   if (!canShareScreen()) return false;
   try {
-    const track = (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false })).getVideoTracks()[0];
+    const track = canNativeScreenShare()
+      ? await startNativeScreenShare(() => { if (screen?.nextspaceNativeScreen) stopScreen(); })
+      : (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false })).getVideoTracks()[0];
     if (!track) return false;
     // Keep text sharp rather than motion smooth.
     track.contentHint = 'detail';

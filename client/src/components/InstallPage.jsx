@@ -6,6 +6,7 @@ import { hideBoot } from './Loading.jsx';
 import { Wordmark } from './Logo.jsx';
 
 const standalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+const ANDROID_APK = '/downloads/nextspace-android.apk';
 
 function Steps({ items }) {
   return <ol className="install-steps">{items.map((item, i) => <li key={i}>{item}</li>)}</ol>;
@@ -91,6 +92,7 @@ export default function InstallPage() {
 
   const finished = device === 'installed' || done;
   const canAsk = ['android', 'desktop'].includes(device);
+  const showAndroidDownload = ['android', 'android-in-app'].includes(device);
 
   return (
     <main className="install-page">
@@ -105,7 +107,21 @@ export default function InstallPage() {
         ) : (
           <>
             <h1>Install Nextspace</h1>
+            {showAndroidDownload && (
+              <section className="install-native-app" aria-labelledby="android-app-title">
+                <span className="install-native-icon"><Icon name="phone" size={23} /></span>
+                <div>
+                  <h2 id="android-app-title">Android app</h2>
+                  <p>Includes native phone screen sharing and meeting permissions.</p>
+                </div>
+                <a className="btn btn-primary btn-block install-button" href={ANDROID_APK} download="Nextspace-Android.apk">
+                  <Icon name="download" size={20} /> Download Android app
+                </a>
+                <small>After downloading, open the file. Android may ask you to allow installs from your browser once.</small>
+              </section>
+            )}
             <p className="install-lead">Your team’s mail, tasks, notes and calls, in an app of its own.</p>
+            {showAndroidDownload && <div className="install-choice"><span>or install the web app</span></div>}
             {offered && canAsk ? (
               <button type="button" className="btn btn-primary btn-block install-button" onClick={install}><Icon name="download" size={20} /> Install</button>
             ) : canAsk && !waited && !declined ? (

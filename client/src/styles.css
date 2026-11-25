@@ -3100,6 +3100,15 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .install-note { margin: 0; color: var(--muted); font-size: 13px; }
 .install-skip { justify-self: center; padding: 10px; color: var(--brand); font-size: 14px; font-weight: 600; text-decoration: none; }
 .install-alt .btn { background: none; border-color: var(--border); color: var(--text); }
+.install-native-app { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; padding: 15px; border: 1px solid color-mix(in srgb, var(--brand) 35%, var(--border)); border-radius: 16px; background: color-mix(in srgb, var(--brand) 7%, var(--surface)); }
+.install-native-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: var(--brand); color: #fff; }
+.install-native-app h2 { margin: 1px 0 3px; font-size: 17px; }
+.install-native-app p, .install-native-app small { margin: 0; color: var(--muted); line-height: 1.4; }
+.install-native-app p { font-size: 13px; }
+.install-native-app small { grid-column: 1 / -1; font-size: 12px; }
+.install-native-app .btn { grid-column: 1 / -1; }
+.install-choice { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.install-choice::before, .install-choice::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 .install-foot { margin: 0; color: var(--muted); font-size: 13px; text-align: center; }
 
 /* Phone menu: slides with one easing curve, and closes by swiping. Only transform and opacity change,

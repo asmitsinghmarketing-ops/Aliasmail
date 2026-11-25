@@ -132,6 +132,19 @@ app.use('/api/auth', authRoutes);
 // Health check for the host (GoDaddy pings the site to see that the app started).
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
+// Public Android installer linked from /install. Keep it outside client/dist so Capacitor does not
+// package a copy of the APK inside itself. The stable URL always downloads the current tested build.
+const androidInstaller = path.resolve(config.clientDist, '../../downloads/nextspace-android.apk');
+app.get('/downloads/nextspace-android.apk', (req, res, next) => {
+  if (!fs.existsSync(androidInstaller)) return res.status(404).send('Android app is not available yet.');
+  res.set({
+    'Cache-Control': 'no-cache',
+    'Content-Type': 'application/vnd.android.package-archive',
+    'Content-Disposition': 'attachment; filename="Nextspace-Android.apk"',
+  });
+  return res.sendFile(androidInstaller, (err) => (err ? next(err) : undefined));
+});
+
 // A page that broke in someone's browser (ErrorBoundary) reports where, for the runtime logs.
 // No message content; at most 30 reports a minute so it can't flood the log.
 let clientErrors = { minute: 0, count: 0 };
