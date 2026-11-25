@@ -133,7 +133,34 @@ function toEvents(meetings, recordings) {
   return events.sort((a, b) => a.start - b.start);
 }
 
-const eventClass = (event) => ['cal-event', event.kind, event.live && 'live', event.kind === 'meeting' && event.end < new Date() && !event.live && 'past'].filter(Boolean).join(' ');
+const eventClass = (event, conflicts) => ['cal-event', event.kind, event.live && 'live', event.kind === 'meeting' && event.end < new Date() && !event.live && 'past', conflicts?.has(event.id) && 'clash'].filter(Boolean).join(' ');
+
+/** Meetings that overlap in time: event id → the titles of the meetings it clashes with. */
+function findConflicts(events) {
+  const meetings = events.filter((event) => event.kind === 'meeting').sort((a, b) => a.start - b.start);
+  const clashes = new Map();
+  for (let i = 0; i < meetings.length; i += 1) {
+    for (let j = i + 1; j < meetings.length && meetings[j].start < meetings[i].end; j += 1) {
+      for (const [one, other] of [[meetings[i], meetings[j]], [meetings[j], meetings[i]]]) {
+        if (!clashes.has(one.id)) clashes.set(one.id, []);
+        clashes.get(one.id).push(other.title);
+      }
+    }
+  }
+  return clashes;
+}
+
+/** The first free half hour on `date` between 9:00 and 18:00 (and after now), or null. */
+function nextFreeSlot(date, events, minutes = 30) {
+  const busy = events.filter((event) => event.kind === 'meeting');
+  const soon = Date.now() + 10 * MINUTE;
+  for (let at = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9); at.getHours() < 18; at = new Date(at.getTime() + 30 * MINUTE)) {
+    const end = new Date(at.getTime() + minutes * MINUTE);
+    if (at.getTime() < soon) continue;
+    if (!busy.some((event) => event.start < end && event.end > at)) return at;
+  }
+  return null;
+}
 
 /* ---------------------------------- cards ---------------------------------- */
 
@@ -145,7 +172,7 @@ function DriveNote({ drive }) {
   return null;
 }
 
-function MeetingCard({ meeting, highlighted, onJoin, onEdit, onCancel, onDuplicate }) {
+function MeetingCard({ meeting, highlighted, clashes, onJoin, onEdit, onCancel, onDuplicate }) {
   const [copied, setCopied] = useState(false);
   const [menu, setMenu] = useState(false);
   const menuRef = useRef(null);
@@ -169,7 +196,7 @@ function MeetingCard({ meeting, highlighted, onJoin, onEdit, onCancel, onDuplica
   };
   const others = meeting.invitees.filter((person) => !(meeting.mine && person.address === meeting.host.address));
   return (
-    <article ref={card} className={`meeting-card ${meeting.live ? 'live' : ''} ${ended ? 'ended' : ''} ${highlighted ? 'highlighted' : ''}`}>
+    <article ref={card} className={`meeting-card ${meeting.live ? 'live' : ''} ${ended ? 'ended' : ''} ${highlighted ? 'highlighted' : ''} ${clashes?.length && !ended ? 'clash' : ''}`}>
       <span className="meeting-card-icon"><Icon name="videocam" size={19} /></span>
       <span className="recording-time">
         <strong>{clock(meeting.startAt)}</strong>
@@ -182,6 +209,7 @@ function MeetingCard({ meeting, highlighted, onJoin, onEdit, onCancel, onDuplica
           {others.length ? ` · with ${others.map((person) => person.name).join(', ')}` : ''}
         </span>
         <span className={`meeting-when ${meeting.live ? 'live' : ''}`}>{meeting.live && <i />}{startsIn(meeting)}</span>
+        {clashes?.length > 0 && !ended && <span className="meeting-clash"><Icon name="info" size={14} /> Overlaps with {clashes.join(', ')}</span>}
         {meeting.description && <p className="meeting-note">{meeting.description}</p>}
       </div>
       <div className="recording-actions">
@@ -243,7 +271,7 @@ function RecordingCard({ item, playing, highlighted, onPlay, onDelete }) {
 
 /* ---------------------------------- views ---------------------------------- */
 
-function MonthView({ month, byDay, day, today, onPick, onCreate, onOpenEvent }) {
+function MonthView({ month, byDay, day, today, conflicts, onPick, onCreate, onOpenEvent }) {
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const start = startOfWeek(first);
   const weeks = Math.ceil((((first.getDay() + 6) % 7) + new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()) / 7);
@@ -256,7 +284,8 @@ function MonthView({ month, byDay, day, today, onPick, onCreate, onOpenEvent }) 
         const events = byDay.get(key) || [];
         const shown = events.slice(0, 3);
         const more = events.length - shown.length;
-        const classes = ['cal-cell', !sameMonth(date, month) && 'other', key === day && 'selected', key === today && 'today', events.length && 'has', (date.getDay() + 6) % 7 >= 5 && 'weekend'].filter(Boolean).join(' ');
+        const calls = events.filter((event) => event.kind === 'meeting').length;
+        const classes = ['cal-cell', !sameMonth(date, month) && 'other', key === day && 'selected', key === today && 'today', events.length && 'has', (date.getDay() + 6) % 7 >= 5 && 'weekend', calls >= 3 && 'busy'].filter(Boolean).join(' ');
         const label = `${longDay(date)}${events.length ? `, ${events.length} item${events.length === 1 ? '' : 's'}` : ''}`;
         return (
           <div
@@ -266,23 +295,25 @@ function MonthView({ month, byDay, day, today, onPick, onCreate, onOpenEvent }) 
             aria-label={label}
             tabIndex={key === day ? 0 : -1}
             className={classes}
+            style={{ '--load': Math.min(calls, 6) }}
             onClick={() => onPick(date)}
             onDoubleClick={() => key >= today && onCreate(date)}
             onKeyDown={(event) => { if (event.key === 'Enter') onPick(date); }}
           >
             <span className="cal-cell-head">
               <span className="cal-date">{date.getDate()}</span>
+              {calls > 1 && <span className="cal-calls" title={`${calls} calls`}><Icon name="videocam" size={12} />{calls}</span>}
               {key >= today && <button type="button" className="cal-add" aria-label={`Schedule on ${longDay(date)}`} title="Schedule a meeting this day" onClick={(event) => { event.stopPropagation(); onCreate(date); }}><Icon name="add" size={16} /></button>}
             </span>
             <span className="cal-chips">
               {shown.map((event) => (
-                <button key={event.id} type="button" className={eventClass(event)} title={`${clock(event.start)} ${event.title}`} onClick={(e) => { e.stopPropagation(); onOpenEvent(event); }}>
+                <button key={event.id} type="button" className={eventClass(event, conflicts)} title={`${clock(event.start)} ${event.title}`} onClick={(e) => { e.stopPropagation(); onOpenEvent(event); }}>
                   <i />
                   <time>{clock(event.start)}</time>
                   <span>{event.title}</span>
                 </button>
               ))}
-              {more > 0 && <span className="cal-more-count">+{more} more</span>}
+              {more > 0 && <button type="button" className="cal-more-count" onClick={(e) => { e.stopPropagation(); onPick(date); }}>+{more} more</button>}
             </span>
             {events.length > 0 && (
               <span className="cal-dots" aria-hidden="true">
@@ -321,7 +352,7 @@ function placeDay(events) {
   return placed;
 }
 
-function WeekView({ weekStart, byDay, day, today, onPick, onCreate, onOpenEvent }) {
+function WeekView({ weekStart, byDay, day, today, conflicts, onPick, onCreate, onOpenEvent }) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const scroller = useRef(null);
   const [now, setNow] = useState(() => new Date());
@@ -379,7 +410,7 @@ function WeekView({ weekStart, byDay, day, today, onPick, onCreate, onOpenEvent 
                   <button
                     key={event.id}
                     type="button"
-                    className={`${eventClass(event)} block ${h < 40 ? 'short' : ''}`}
+                    className={`${eventClass(event, conflicts)} block ${h < 40 ? 'short' : ''}`}
                     style={{ top: y, height: h, left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - 4px)` }}
                     onClick={(e) => { e.stopPropagation(); onOpenEvent(event); }}
                     title={`${clock(event.start)}–${clock(event.end)} ${event.title}`}
@@ -393,6 +424,39 @@ function WeekView({ weekStart, byDay, day, today, onPick, onCreate, onOpenEvent 
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/** The picked day's calls on one timeline, overlapping ones side by side. */
+function DayTimeline({ events, conflicts, onOpenEvent }) {
+  const PX = 34;
+  const first = Math.min(...events.map((event) => event.start.getHours()));
+  const last = Math.max(...events.map((event) => Math.min(24, event.end.getHours() + (event.end.getMinutes() ? 1 : 0))), first + 1);
+  const hours = Array.from({ length: last - first }, (_, i) => first + i);
+  const y = (date) => ((date.getHours() - first) * 60 + date.getMinutes()) / 60 * PX;
+  const placed = placeDay(events);
+  const now = new Date();
+  const isToday = dayKey(events[0].start) === dayKey(now);
+  return (
+    <div className="cal-daytl" aria-label="The day at a glance">
+      <div className="cal-daytl-hours">{hours.map((hour) => <span key={hour} style={{ top: (hour - first) * PX }}>{new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: 'numeric' })}</span>)}</div>
+      <div className="cal-daytl-track" style={{ height: hours.length * PX, '--hour': `${PX}px` }}>
+        {placed.map(({ event, lane, lanes }) => (
+          <button
+            key={event.id}
+            type="button"
+            className={`${eventClass(event, conflicts)} block`}
+            style={{ top: y(event.start), height: Math.max(20, y(event.end) - y(event.start) - 2), left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - 4px)` }}
+            onClick={() => onOpenEvent(event)}
+            title={`${clock(event.start)}–${clock(event.end)} ${event.title}`}
+          >
+            <strong>{event.title}</strong>
+            <time>{clock(event.start)}</time>
+          </button>
+        ))}
+        {isToday && now.getHours() >= first && now.getHours() < last && <span className="cal-now" style={{ top: y(now) }} aria-hidden="true" />}
       </div>
     </div>
   );
@@ -508,6 +572,7 @@ export default function Recordings({ me, onClose }) {
       : `${item.title} ${item.recorder?.name || ''}`;
     return haystack.toLowerCase().includes(needle);
   }), [allEvents, kind, mineOnly, needle]);
+  const conflicts = useMemo(() => findConflicts(allEvents), [allEvents]);
   const byDay = useMemo(() => {
     const map = new Map();
     for (const event of events) {
@@ -606,6 +671,8 @@ export default function Recordings({ me, onClose }) {
   const today = dayKey(new Date());
   const shown = (day && byDay.get(day)) || [];
   const shownMeetings = shown.filter((event) => event.kind === 'meeting').map((event) => event.item);
+  // A free half hour that day (working hours), from every meeting, not only the filtered ones.
+  const freeSlot = day && day >= today ? nextFreeSlot(fromKey(day), allEvents.filter((event) => dayKey(event.start) === day)) : null;
   const shownRecordings = shown.filter((event) => event.kind === 'recording').map((event) => event.item);
   const pick = (date) => {
     setDay(dayKey(date));
@@ -674,48 +741,26 @@ export default function Recordings({ me, onClose }) {
         <span className="tasks-divider" />
         <strong>Meet</strong>
         <span className="grow" />
-        <span className="meet-top-status"><i /> Ready to meet</span>
       </header>
 
       <main className="attendance-main">
-        <section className="meet-hub-hero">
-          <div className="meet-hub-intro">
-            <span className="meet-hub-kicker"><i /> Nextspace Meet</span>
-            <h1>Meet, share, and move work forward.</h1>
-            <p>Video calls with chat, reactions and recordings, and one calendar for everything you plan and record.</p>
-            <div className="meet-hub-actions">
-              <button type="button" className="btn meet-start" disabled={starting} onClick={startNow}><Icon name="videocam" size={19} /> Start instant meeting</button>
-              <button type="button" className="btn meet-schedule" onClick={() => create(day && day >= today ? fromKey(day) : new Date())}><Icon name="event" size={19} /> Schedule for later</button>
+        <section className="meet-bar" aria-label="Start or join">
+          <button type="button" className="btn meet-start" disabled={starting} onClick={startNow}><Icon name="videocam" size={19} /> New meeting</button>
+          <button type="button" className="btn meet-schedule" onClick={() => create(day && day >= today ? fromKey(day) : new Date())}><Icon name="event" size={19} /> Schedule</button>
+          <form className="meet-join meet-bar-join" onSubmit={joinWithCode}>
+            <Icon name="keyboard" size={19} />
+            <input id="meeting-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Enter a code or link" aria-label="Meeting code or link" autoComplete="off" spellCheck={false} />
+            <button type="submit" className="btn" disabled={starting || !code.trim()}>Join</button>
+          </form>
+          {next && (
+            <div className={`meet-bar-next ${next.live ? 'live' : ''}`}>
+              <span className="meet-bar-next-text">
+                <small>{next.live ? <><i /> Live now</> : `Up next · ${startsIn(next)}`}</small>
+                <strong>{next.title}</strong>
+              </span>
+              <button type="button" className="btn" onClick={() => join(next)}>{next.live ? 'Join' : 'Open'}</button>
             </div>
-            <form className="meet-join meet-join-hero" onSubmit={joinWithCode}>
-              <span className="meet-join-icon"><Icon name="keyboard" size={19} /></span>
-              <label htmlFor="meeting-code">Have an invite?</label>
-              <input id="meeting-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Paste a meeting link or code" aria-label="Meeting code or link" autoComplete="off" spellCheck={false} />
-              <button type="submit" className="btn" disabled={starting || !code.trim()}>Join</button>
-            </form>
-          </div>
-
-          <div className={`meet-next-card ${next?.live ? 'live' : ''}`}>
-            <div className="meet-next-art" aria-hidden="true">
-              <span className="meet-orbit orbit-one" />
-              <span className="meet-orbit orbit-two" />
-              <span className="meet-next-camera"><Icon name="videocam" size={30} /></span>
-            </div>
-            {next ? (
-              <div className="meet-next-content">
-                <span className="meet-next-label">{next.live ? 'Live now' : 'Up next'} <em>{startsIn(next)}</em></span>
-                <h2>{next.title}</h2>
-                <p>{new Date(next.startAt).toLocaleString([], { weekday: 'long', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
-                <button type="button" className="btn" onClick={() => join(next)}><Icon name="videocam" size={17} /> {next.live ? 'Join now' : 'Open meeting'}</button>
-              </div>
-            ) : (
-              <div className="meet-next-content meet-next-empty">
-                <span className="meet-next-label">Your meeting space</span>
-                <h2>No rush. You’re all clear.</h2>
-                <p>Schedule a conversation when the team is ready.</p>
-              </div>
-            )}
-          </div>
+          )}
         </section>
 
         {data && meetings && (
@@ -771,8 +816,8 @@ export default function Recordings({ me, onClose }) {
                 )}
               </div>
 
-              {view === 'month' && <MonthView month={cursor} byDay={byDay} day={day} today={today} onPick={pick} onCreate={create} onOpenEvent={openEvent} />}
-              {view === 'week' && <WeekView weekStart={weekStart} byDay={byDay} day={day} today={today} onPick={pick} onCreate={create} onOpenEvent={openEvent} />}
+              {view === 'month' && <MonthView month={cursor} byDay={byDay} day={day} today={today} conflicts={conflicts} onPick={pick} onCreate={create} onOpenEvent={openEvent} />}
+              {view === 'week' && <WeekView weekStart={weekStart} byDay={byDay} day={day} today={today} conflicts={conflicts} onPick={pick} onCreate={create} onOpenEvent={openEvent} />}
               {view === 'agenda' && <AgendaView events={events} today={today} query={needle} onPick={(date) => { pick(date); }} onOpenEvent={openEvent} />}
 
               <p className="cal-hint">
@@ -787,6 +832,12 @@ export default function Recordings({ me, onClose }) {
                 <h2>{pickedDate ? (day === today ? `Today · ${pickedDate.toLocaleDateString([], { day: 'numeric', month: 'long' })}` : longDay(pickedDate)) : ''}</h2>
                 {day >= today && <button type="button" className="btn btn-outline" onClick={() => create(fromKey(day))}><Icon name="add" size={17} /> Schedule</button>}
               </div>
+              {freeSlot && shownMeetings.length > 0 && (
+                <button type="button" className="cal-free" onClick={() => create(fromKey(day), freeSlot)}>
+                  <Icon name="clock" size={16} /> Next free: <strong>{clock(freeSlot)}</strong> <span>Schedule there</span>
+                </button>
+              )}
+              {shown.length > 1 && <DayTimeline events={shown} conflicts={conflicts} onOpenEvent={openEvent} />}
 
               {!shown.length && (
                 <div className="recordings-empty">
@@ -804,6 +855,7 @@ export default function Recordings({ me, onClose }) {
                         key={meeting.id}
                         meeting={meeting}
                         highlighted={highlight === `m:${meeting.id}`}
+                        clashes={conflicts.get(`m:${meeting.id}`)}
                         onJoin={join}
                         onEdit={(m) => setEditing({ meeting: m })}
                         onCancel={cancelMeeting}

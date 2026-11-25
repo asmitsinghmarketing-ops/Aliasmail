@@ -3474,48 +3474,12 @@ a.recording-drive:hover { text-decoration: underline; }
 /* ---------- Meet hub 3.0: expressive bento dashboard ---------- */
 .meet-hub { background: #f4f6fb; }
 .meet-hub .attendance-topbar { border-bottom-color: #e8ebf2; background: rgb(255 255 255 / 86%); backdrop-filter: blur(18px); }
-.meet-top-status { display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid #dfe8e4; border-radius: 999px; background: #f5fbf8; color: #31705a; font-size: 11px; font-weight: 700; }
-.meet-top-status i { width: 7px; height: 7px; border-radius: 50%; background: #2cbb82; box-shadow: 0 0 0 4px rgb(44 187 130 / 11%); }
+
 .meet-hub .attendance-main { padding: clamp(18px, 3vw, 38px); }
-.meet-hub-hero { position: relative; max-width: 1240px; min-height: 390px; margin: 0 auto 18px; display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(340px, .82fr); gap: clamp(30px, 5vw, 72px); align-items: center; overflow: hidden; box-sizing: border-box; padding: clamp(30px, 5vw, 68px); border: 1px solid #dfe4f0; border-radius: 32px; background: linear-gradient(145deg, #fff 0%, #f9faff 54%, #f2effd 100%); box-shadow: 0 24px 70px rgb(43 55 91 / 10%); isolation: isolate; }
-.meet-hub-hero::before { position: absolute; z-index: -1; top: -190px; left: -130px; width: 430px; height: 430px; border-radius: 50%; background: radial-gradient(circle, rgb(91 119 235 / 18%), transparent 68%); content: ''; }
-.meet-hub-hero::after { position: absolute; z-index: -1; right: -180px; bottom: -250px; width: 560px; height: 560px; border-radius: 50%; background: radial-gradient(circle, rgb(148 102 217 / 16%), transparent 68%); content: ''; }
-.meet-hub-intro { min-width: 0; }
-.meet-hub-kicker { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 15px; color: #5b68c8; font-size: 12px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
-.meet-hub-kicker i { width: 8px; height: 8px; border-radius: 3px; background: linear-gradient(135deg, #657be8, #8d66d9); transform: rotate(45deg); box-shadow: 0 0 0 5px rgb(105 119 224 / 10%); }
-.meet-hub-intro h1 { max-width: 650px; margin: 0; color: #18233b; font-size: clamp(36px, 4.4vw, 62px); font-weight: 720; line-height: 1.01; letter-spacing: -.055em; }
-.meet-hub-intro > p { max-width: 620px; margin: 20px 0 0; color: #68758c; font-size: clamp(15px, 1.4vw, 18px); line-height: 1.65; }
-.meet-hub-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
-.meet-hub-actions .btn { min-height: 48px; gap: 9px; padding: 0 18px; border-radius: 14px; font-weight: 700; transition: transform .2s cubic-bezier(.22, 1, .36, 1), box-shadow .25s ease, background-color .2s ease; }
-.meet-hub-actions .btn:hover:not(:disabled) { transform: translateY(-2px); }
+
 .meet-start { border: 0; background: linear-gradient(135deg, #5e75e5, #7259d5); color: #fff; box-shadow: 0 12px 28px rgb(89 100 205 / 24%); }
 .meet-start:hover:not(:disabled) { box-shadow: 0 16px 34px rgb(89 100 205 / 30%); }
 .meet-schedule { border: 1px solid #d9dfeb; background: rgb(255 255 255 / 78%); color: #35435e; box-shadow: 0 8px 22px rgb(45 57 89 / 6%); backdrop-filter: blur(10px); }
-.meet-join-hero { width: min(100%, 620px); height: 54px; margin-top: 18px; padding: 0 6px 0 8px; border-color: #dce2ee; border-radius: 15px; box-shadow: 0 10px 28px rgb(45 57 89 / 6%); }
-.meet-join-hero:focus-within { border-color: #8290e5; box-shadow: 0 0 0 4px rgb(104 119 218 / 11%), 0 12px 30px rgb(45 57 89 / 8%); }
-.meet-join-icon { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: #eef0ff; color: #6472da; }
-.meet-join-hero label { flex: none; color: #45536d; font-size: 12px; font-weight: 750; }
-.meet-join-hero input { flex: 1; width: auto; }
-.meet-join-hero .btn { min-width: 65px; min-height: 38px; border: 0; border-radius: 10px; background: #202d47; color: #fff; }
-.meet-join-hero .btn:disabled { opacity: .38; }
-
-.meet-next-card { position: relative; min-height: 292px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 24px; border: 1px solid rgb(255 255 255 / 14%); border-radius: 26px; background: linear-gradient(145deg, #182440 0%, #25335b 52%, #483b72 100%); color: #fff; box-shadow: 0 28px 60px rgb(34 43 73 / 25%), inset 0 1px 0 rgb(255 255 255 / 11%); }
-.meet-next-card.live { background: linear-gradient(145deg, #12382f, #165343 55%, #294f68); }
-.meet-next-art { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-.meet-next-art::before { position: absolute; inset: 0; background-image: linear-gradient(rgb(255 255 255 / 4%) 1px, transparent 1px), linear-gradient(90deg, rgb(255 255 255 / 4%) 1px, transparent 1px); background-size: 32px 32px; mask-image: linear-gradient(to bottom, black, transparent 75%); content: ''; }
-.meet-next-camera { position: absolute; top: 38px; right: 42px; display: grid; place-items: center; width: 76px; height: 76px; border: 1px solid rgb(255 255 255 / 18%); border-radius: 25px; background: rgb(255 255 255 / 12%); color: #fff; box-shadow: 0 18px 44px rgb(4 9 22 / 28%); backdrop-filter: blur(12px); transform: rotate(5deg); }
-.meet-orbit { position: absolute; border: 1px solid rgb(255 255 255 / 12%); border-radius: 50%; }
-.meet-orbit.orbit-one { top: -64px; right: -46px; width: 240px; height: 240px; }
-.meet-orbit.orbit-two { top: -18px; right: 0; width: 150px; height: 150px; }
-.meet-next-content { position: relative; z-index: 1; }
-.meet-next-label { display: flex; align-items: center; gap: 9px; color: #cfd7ff; font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
-.meet-next-label::before { width: 7px; height: 7px; border-radius: 50%; background: #8ba2ff; box-shadow: 0 0 0 5px rgb(139 162 255 / 12%); content: ''; }
-.meet-next-card.live .meet-next-label::before { background: #49dda8; box-shadow: 0 0 0 5px rgb(73 221 168 / 12%); animation: nex-wake-breathe 1.8s ease-in-out infinite; }
-.meet-next-label em { margin-left: auto; padding: 5px 8px; border-radius: 999px; background: rgb(255 255 255 / 10%); color: #e9ecff; font-size: 9px; font-style: normal; letter-spacing: .04em; }
-.meet-next-content h2 { margin: 12px 0 5px; overflow: hidden; font-size: clamp(21px, 2.2vw, 29px); line-height: 1.15; letter-spacing: -.03em; text-overflow: ellipsis; white-space: nowrap; }
-.meet-next-content p { margin: 0; color: #bdc6dc; font-size: 13px; }
-.meet-next-content .btn { min-height: 40px; margin-top: 18px; gap: 7px; border: 1px solid rgb(255 255 255 / 20%); border-radius: 11px; background: #fff; color: #24304b; font-weight: 700; }
-.meet-next-empty { padding-top: 90px; }
 
 .meet-hub-stats { max-width: 1240px; min-height: 78px; margin: 0 auto 22px; display: flex; align-items: center; gap: 8px; padding: 10px; box-sizing: border-box; border: 1px solid #e1e5ed; border-radius: 20px; background: #fff; box-shadow: 0 10px 30px rgb(42 54 86 / 6%); }
 .meet-hub-stats > div { min-width: 142px; display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; align-items: center; column-gap: 10px; padding: 9px 16px; border-right: 1px solid #edf0f5; }
@@ -3549,26 +3513,14 @@ a.recording-drive:hover { text-decoration: underline; }
 .meet-hub .recordings-empty { background: linear-gradient(145deg, #fafbfe, #f7f8fc); }
 
 @media (max-width: 1000px) {
-  .meet-hub-hero { grid-template-columns: 1fr; }
-  .meet-next-card { min-height: 260px; }
   .meet-hub-stats { flex-wrap: wrap; }
   .meet-hub-stats > div { flex: 1; }
   .meet-hub-stats > p { width: 100%; margin: 2px 12px 8px; }
 
 }
 @media (max-width: 700px) {
-  .meet-top-status { padding: 6px 8px; font-size: 0; }
   .meet-hub .attendance-main { padding: 12px 12px 80px; }
-  .meet-hub-hero { min-height: 0; gap: 24px; padding: 26px 20px 20px; border-radius: 24px; }
-  .meet-hub-intro h1 { font-size: clamp(34px, 11vw, 46px); }
-  .meet-hub-intro > p { margin-top: 14px; font-size: 14px; }
-  .meet-hub-actions { display: grid; grid-template-columns: 1fr; }
-  .meet-hub-actions .btn { justify-content: center; }
-  .meet-join-hero { height: auto; min-height: 56px; flex-wrap: wrap; padding: 8px; }
-  .meet-join-hero label { display: none; }
-  .meet-join-hero input { min-width: 120px; }
-  .meet-next-card { min-height: 250px; padding: 20px; border-radius: 21px; }
-  .meet-next-camera { top: 30px; right: 30px; width: 62px; height: 62px; border-radius: 20px; }
+
   .meet-hub-stats { display: grid; grid-template-columns: repeat(3, 1fr); border-radius: 17px; }
   .meet-hub-stats > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: 8px 3px; border-right: 1px solid #edf0f5; text-align: center; }
   .meet-hub-stats > div:nth-child(3) { border-right: 0; }

@@ -12,6 +12,7 @@ import { createRecordingUpload } from '../recordingUpload.js';
 import { hrefFor, LINK } from '../linkify.js';
 import { onlineNow } from '../live.js';
 import Avatar from './Avatar.jsx';
+import { colorFor } from '../format.js';
 import Icon from './Icon.jsx';
 
 const AudioContextClass = () => window.AudioContext || window.webkitAudioContext;
@@ -338,7 +339,8 @@ const Tile = memo(function Tile({ tile, size, compact, onPin, pinned }) {
   return (
     <div
       className={classes}
-      style={size ? { width: size.w, height: size.h } : undefined}
+      // Each person's own colour lights their tile while the camera is off.
+      style={{ '--tile': colorFor(address || name), ...(size && { width: size.w, height: size.h }) }}
       onDoubleClick={onPin}
     >
       {videoOn && stream
@@ -824,18 +826,20 @@ function MutedTalkHint({ stream, muted, onUnmute }) {
 
 /* ---------------------------------- the dock ---------------------------------- */
 
-function DockButton({ icon, label, onClick, state: look, badge, wide, className = '', disabled, ...rest }) {
+/** A dock button: icon, a short name under it (on wide screens), and the full name as its tooltip. */
+function DockButton({ icon, label, text, onClick, state: look, badge, wide, className = '', disabled, ...rest }) {
   return (
     <button
       type="button"
-      className={['nx-ctl', look, wide && 'wide', className].filter(Boolean).join(' ')}
+      className={['nx-ctl', look, wide && 'wide', text && 'labelled', className].filter(Boolean).join(' ')}
       aria-label={label}
       title={label}
       disabled={disabled}
       onClick={onClick}
       {...rest}
     >
-      <Icon name={icon} size={22} />
+      <span className="nx-ctl-icon"><Icon name={icon} size={22} /></span>
+      {text && <span className="nx-ctl-label" aria-hidden="true">{text}</span>}
       {wide && <span className="nx-ctl-text">{wide}</span>}
       {badge > 0 && <span className="nx-badge">{badge > 9 ? '9+' : badge}</span>}
     </button>
@@ -1362,13 +1366,14 @@ export default function CallRoom({ state }) {
         </div>
 
         <div className="nx-dock" ref={menus}>
-          <DockButton icon={micOff ? 'micOff' : 'mic'} label={micLabel} state={micOff ? 'off' : ''} onClick={toggleMute} aria-pressed={micOff} />
-          <DockButton icon={state.cameraOn ? 'videocam' : 'videocamOff'} label={state.cameraOn ? `Turn camera off (${MOD} + E)` : `Turn camera on (${MOD} + E)`} state={state.cameraOn ? '' : 'off'} onClick={toggleCamera} aria-pressed={!state.cameraOn} />
-          {canShareScreen() && <DockButton icon="screenShare" label={state.sharing ? 'Stop presenting' : 'Present your screen'} state={state.sharing ? 'on' : ''} className="nx-only-desktop" onClick={toggleScreen} aria-pressed={state.sharing} />}
-          <DockButton icon="mood" label="Send a reaction" state={menu === 'react' ? 'on' : ''} onClick={() => setMenu(menu === 'react' ? null : 'react')} aria-expanded={menu === 'react'} />
-          <DockButton icon="hand" label={state.hand ? 'Lower hand' : `Raise hand (${MOD} + Alt + H)`} state={state.hand ? 'on hand' : ''} className="nx-only-desktop" onClick={toggleHand} aria-pressed={state.hand} />
+          <DockButton icon={micOff ? 'micOff' : 'mic'} label={micLabel} text={micOff ? 'Unmute' : 'Mic'} state={micOff ? 'off' : ''} onClick={toggleMute} aria-pressed={micOff} />
+          <DockButton icon={state.cameraOn ? 'videocam' : 'videocamOff'} label={state.cameraOn ? `Turn camera off (${MOD} + E)` : `Turn camera on (${MOD} + E)`} text="Camera" state={state.cameraOn ? '' : 'off'} onClick={toggleCamera} aria-pressed={!state.cameraOn} />
+          {canShareScreen() && <DockButton icon="screenShare" label={state.sharing ? 'Stop presenting' : 'Present your screen'} text={state.sharing ? 'Stop' : 'Share'} state={state.sharing ? 'on' : ''} className="nx-only-desktop" onClick={toggleScreen} aria-pressed={state.sharing} />}
+          <DockButton icon="mood" label="Send a reaction" text="React" state={menu === 'react' ? 'on' : ''} onClick={() => setMenu(menu === 'react' ? null : 'react')} aria-expanded={menu === 'react'} />
+          <DockButton icon="hand" label={state.hand ? 'Lower hand' : `Raise hand (${MOD} + Alt + H)`} text={state.hand ? 'Lower' : 'Raise'} state={state.hand ? 'on hand' : ''} className="nx-only-desktop" onClick={toggleHand} aria-pressed={state.hand} />
           <DockButton icon="chat" label="Chat" state={panel === 'chat' ? 'on' : ''} badge={panel === 'chat' ? 0 : state.unread} className="nx-only-mobile" onClick={() => togglePanel('chat')} />
-          <DockButton icon="moreVert" label="More options" state={menu === 'more' ? 'on' : ''} badge={0} onClick={() => setMenu(menu === 'more' ? null : 'more')} aria-expanded={menu === 'more'} />
+          <DockButton icon="moreVert" label="More options" text="More" state={menu === 'more' ? 'on' : ''} badge={0} onClick={() => setMenu(menu === 'more' ? null : 'more')} aria-expanded={menu === 'more'} />
+          <span className="nx-ctl-sep nx-only-desktop" aria-hidden="true" />
           <DockButton icon="callEnd" label="Leave call" state="leave" wide="Leave" onClick={hangUp} />
 
           {menu === 'react' && (
@@ -1401,9 +1406,9 @@ export default function CallRoom({ state }) {
         </div>
 
         <div className="nx-bar-side nx-only-desktop">
-          <DockButton icon="info" label="Meeting details" state={panel === 'info' ? 'on' : ''} className="flat" onClick={() => togglePanel('info')} />
-          <DockButton icon="people" label={`People (${MOD} + Alt + P)`} state={panel === 'people' ? 'on' : ''} className="flat" badge={peopleBadge} onClick={() => togglePanel('people')} />
-          <DockButton icon="chat" label={`Chat (${MOD} + Alt + C)`} state={panel === 'chat' ? 'on' : ''} className="flat" badge={panel === 'chat' ? 0 : state.unread} onClick={() => togglePanel('chat')} />
+          <DockButton icon="info" label="Meeting details" text="Details" state={panel === 'info' ? 'on' : ''} className="flat" onClick={() => togglePanel('info')} />
+          <DockButton icon="people" label={`People (${MOD} + Alt + P)`} text="People" state={panel === 'people' ? 'on' : ''} className="flat" badge={peopleBadge} onClick={() => togglePanel('people')} />
+          <DockButton icon="chat" label={`Chat (${MOD} + Alt + C)`} text="Chat" state={panel === 'chat' ? 'on' : ''} className="flat" badge={panel === 'chat' ? 0 : state.unread} onClick={() => togglePanel('chat')} />
         </div>
       </footer>
     </div>

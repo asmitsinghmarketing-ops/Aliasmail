@@ -2,6 +2,29 @@
    Meet calendar (light, inside the Meet hub): month, week and agenda views, search and
    filters, the selected day's details beside it, and a phone layout.
    ===================================================================================== */
+/* Start, schedule, join with a code, and what's next: one compact bar above the calendar. */
+.meet-bar { max-width: 1240px; margin: 0 auto 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.meet-bar > .btn { min-height: 44px; gap: 8px; padding: 0 16px; border-radius: 12px; font-weight: 700; }
+.meet-bar .meet-start { border: 0; background: linear-gradient(135deg, #5e75e5, #7259d5); color: #fff; box-shadow: 0 8px 20px rgb(89 100 205 / 22%); }
+.meet-bar .meet-schedule { border: 1px solid #d9dfeb; background: #fff; color: #35435e; }
+.meet-bar-join { flex: 1 1 260px; max-width: 420px; height: 44px; padding: 0 4px 0 12px; border-color: #dce2ee; border-radius: 12px; }
+.meet-bar-join input { flex: 1; width: auto; }
+.meet-bar-join .btn { min-height: 34px; border: 0; border-radius: 9px; background: #202d47; color: #fff; }
+.meet-bar-join .btn:disabled { opacity: .35; }
+.meet-bar-next { margin-left: auto; min-width: 0; display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 4px 0 14px; border: 1px solid #dfe4f0; border-radius: 12px; background: #fff; }
+.meet-bar-next.live { border-color: #a9dec9; background: #f2fbf7; }
+.meet-bar-next-text { min-width: 0; display: grid; line-height: 1.2; }
+.meet-bar-next-text small { display: inline-flex; align-items: center; gap: 5px; color: #5466d8; font-size: 11px; font-weight: 700; }
+.meet-bar-next.live small { color: #1f7a45; }
+.meet-bar-next small i { width: 7px; height: 7px; border-radius: 50%; background: #1f9d55; animation: call-record-pulse 1.5s ease-in-out infinite; }
+.meet-bar-next-text strong { overflow: hidden; max-width: 240px; color: #1f2b42; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.meet-bar-next .btn { min-height: 34px; padding: 0 14px; border: 0; border-radius: 9px; background: #5e75e5; color: #fff; }
+@media (max-width: 700px) {
+  .meet-bar > .btn { flex: 1; justify-content: center; }
+  .meet-bar-join, .meet-bar-next { flex: 1 1 100%; max-width: none; margin-left: 0; }
+  .meet-bar-join input { font-size: 16px; }
+}
+
 .cal-layout { max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 380px; align-items: start; gap: 18px; }
 .cal-main { min-width: 0; padding: 16px; border: 1px solid #e0e5ee; border-radius: 22px; background: #fff; box-shadow: 0 10px 30px rgb(42 54 86 / 6%); }
 .cal-side { position: sticky; top: 0; min-width: 0; display: grid; gap: 10px; padding: 18px; border: 1px solid #e0e5ee; border-radius: 22px; background: rgb(255 255 255 / 80%); box-shadow: 0 10px 30px rgb(42 54 86 / 5%); }
@@ -123,6 +146,26 @@
 .cal-menu a:hover, .cal-menu button:hover { background: #f3f5fa; }
 .cal-menu svg { flex: none; color: #6b778c; }
 .cal-menu .danger, .cal-menu .danger svg { color: #c4314b; }
+
+/* several calls: counts, busy days, clashes, the day timeline and the next free slot */
+.cal-calls { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 6px; border-radius: 999px; background: #eef0ff; color: #4a5ed4; font-size: 11px; font-weight: 700; }
+.cal-cell.has:not(.selected) { background: color-mix(in srgb, #6d7ff0 calc(var(--load, 0) * 2.2%), #fff); }
+.cal-cell.busy .cal-calls { background: #5d72e3; color: #fff; }
+.cal-more-count { justify-self: start; padding: 2px 6px; border: 0; border-radius: 6px; background: none; color: #4a5ed4; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.cal-more-count:hover { background: #eef0ff; }
+.cal-event.clash { --c: #e0475a; box-shadow: inset 3px 0 0 #e0475a; }
+.cal-event.block.clash { border-left-color: #e0475a; }
+.meeting-card.clash { border-color: #f3c3ca; }
+.meeting-clash { display: inline-flex; align-items: center; gap: 5px; color: #b4233a !important; font-size: 12px; font-weight: 600; }
+.cal-free { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 40px; padding: 0 12px; border: 1px dashed #b9c2f1; border-radius: 12px; background: #f5f6ff; color: #3f50bf; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.cal-free span { margin-left: auto; font-size: 12px; font-weight: 700; }
+.cal-free:hover { background: #eceeff; }
+.cal-daytl { display: grid; grid-template-columns: 44px minmax(0, 1fr); max-height: 320px; overflow-y: auto; padding: 8px 6px 8px 0; border: 1px solid #e6e9f0; border-radius: 14px; background: #fff; }
+.cal-daytl-hours { position: relative; }
+.cal-daytl-hours span { position: absolute; right: 6px; transform: translateY(-50%); color: #8a96a9; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.cal-daytl-hours span:first-child { transform: none; }
+.cal-daytl-track { position: relative; background: repeating-linear-gradient(to bottom, #edf0f5 0 1px, transparent 1px var(--hour)); }
+.cal-daytl .cal-event.block { padding: 2px 6px; font-size: 11px; }
 
 @media (max-width: 1100px) {
   .cal-layout { grid-template-columns: 1fr; }
