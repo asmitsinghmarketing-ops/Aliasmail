@@ -14,7 +14,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN = { email: 'owner@example.com', password: 'admin-password-123' };
 const HEADERS = { 'Content-Type': 'application/json', 'X-Requested-With': 'AliasMail' };
 const TURN_SECRET = 'turn-test-secret';
-const PEOPLE = ['john', 'mary', 'sara', 'omar', 'lena', 'noah', 'tom'];
+const PEOPLE = ['john', 'mary', 'sara', 'omar', 'lena', 'noah', 'tom', 'uma', 'ivy', 'zane', 'maya', 'liam', 'emma'];
 
 let server;
 let dir;

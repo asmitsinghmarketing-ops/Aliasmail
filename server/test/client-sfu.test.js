@@ -12,10 +12,11 @@ class PeerConnection {
     PeerConnection.instances.push(this);
   }
 
-  addTransceiver(track) {
+  addTransceiver(track, options) {
     const transceiver = {
       mid: String(this.transceivers.length),
       sender: { track, replaceTrack: async (next) => { transceiver.sender.track = next; } },
+      options,
     };
     this.transceivers.push(transceiver);
     return transceiver;
@@ -77,4 +78,7 @@ test('SFU helper only accepts known publication names', () => {
   assert.equal(cloudflareSfuInternals.trackName('camera'), 'camera');
   assert.equal(cloudflareSfuInternals.trackName('screen'), 'screen');
   assert.equal(cloudflareSfuInternals.trackName('../secret'), null);
+  assert.equal(cloudflareSfuInternals.sendEncodings('audio')[0].maxBitrate, 48_000);
+  assert.equal(cloudflareSfuInternals.sendEncodings('camera')[0].maxBitrate, 550_000);
+  assert.equal(cloudflareSfuInternals.sendEncodings('screen')[0].maxBitrate, 1_500_000);
 });

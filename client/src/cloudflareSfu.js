@@ -46,6 +46,13 @@ const requireTracks = (result, expected, action) => {
   return outcomes;
 };
 
+// Bound each publication so larger rooms remain usable on ordinary connections and do not burn
+// through Cloudflare's egress allowance with twelve independent full-bitrate 720p feeds.
+const sendEncodings = (name) => [{
+  maxBitrate: name === 'audio' ? 48_000 : name === 'screen' ? 1_500_000 : 550_000,
+  ...(name !== 'audio' && { maxFramerate: name === 'screen' ? 20 : 24 }),
+}];
+
 export function createCloudflareSfu({ post, peerId, iceServers = [], onCall, onMedia, onState, onError }) {
   const servers = [{ urls: 'stun:stun.cloudflare.com:3478' }, ...iceServers];
   let closed = false;
@@ -72,7 +79,7 @@ export function createCloudflareSfu({ post, peerId, iceServers = [], onCall, onM
     if (!available.length || closed) return;
     const pc = makePeer();
     const transceivers = new Map();
-    for (const name of available) transceivers.set(name, pc.addTransceiver(local[name], { direction: 'sendonly' }));
+    for (const name of available) transceivers.set(name, pc.addTransceiver(local[name], { direction: 'sendonly', sendEncodings: sendEncodings(name) }));
     const value = { pc, sessionId: null, transceivers, published: new Set(), connected: false };
     publisher = value;
     pc.onconnectionstatechange = () => {
@@ -103,7 +110,7 @@ export function createCloudflareSfu({ post, peerId, iceServers = [], onCall, onM
     const current = publisher.transceivers.get(name);
     if (current) return current.sender.replaceTrack(mediaTrack || null);
     if (!mediaTrack || !publisher.sessionId) return undefined;
-    const transceiver = publisher.pc.addTransceiver(mediaTrack, { direction: 'sendonly' });
+    const transceiver = publisher.pc.addTransceiver(mediaTrack, { direction: 'sendonly', sendEncodings: sendEncodings(name) });
     publisher.transceivers.set(name, transceiver);
     await publisher.pc.setLocalDescription(await publisher.pc.createOffer());
     await waitForIce(publisher.pc);
@@ -201,4 +208,4 @@ export function createCloudflareSfu({ post, peerId, iceServers = [], onCall, onM
   };
 }
 
-export const cloudflareSfuInternals = { waitForIce, waitForConnection, trackName };
+export const cloudflareSfuInternals = { waitForIce, waitForConnection, trackName, sendEncodings };

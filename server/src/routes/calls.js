@@ -23,8 +23,9 @@ import { db } from '../store.js';
 const router = Router();
 router.use(requireAuth());
 
-// Everyone sends to everyone else directly, which gets heavy quickly: more than this needs a media server.
-export const MAX_PEOPLE = 6;
+// Cloudflare SFU carries the media. Twelve keeps full-room browser bandwidth and free-tier usage
+// reasonable while allowing a proper team meeting rather than the old six-person P2P ceiling.
+export const MAX_PEOPLE = 12;
 const RING_MS = 60_000;
 // Tests shorten these so reconnect behaviour can be exercised without a minute-long test. Production
 // always uses the conservative values below.
@@ -320,7 +321,9 @@ const createSfuHandlers = (findPeer) => ({
     const { call, peerId, peer } = findPeer(req);
     const media = sfuState(peer);
     const requested = Array.isArray(req.body?.tracks) ? req.body.tracks : [];
-    if (!requested.length || requested.length > 12) throw new HttpError(400, 'Choose SFU tracks');
+    // Cloudflare accepts up to 64 tracks in one request. A 12-person room can subscribe to every
+    // participant's audio, camera and occasional screen share without splitting SDP exchanges.
+    if (!requested.length || requested.length > 64) throw new HttpError(400, 'Choose SFU tracks');
     const local = requested.every((track) => track?.location === 'local');
     const remote = requested.every((track) => track?.location === 'remote');
     if (!local && !remote) throw new HttpError(400, 'SFU tracks must use one direction');
