@@ -309,7 +309,16 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
           ...(tabs ? [['tabs', 'Tabs', 'dashboard']] : []),
           ...(googleOn ? [['google', 'Google apps', 'apps']] : []),
         ].map(([id, label, icon]) => (
-          <button type="button" role="tab" aria-selected={tab === id} key={id} className={`settings-tab ${tab === id ? 'on' : ''}`} onClick={() => setTab(id)}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            key={id}
+            className={`settings-tab ${tab === id ? 'on' : ''}`}
+            // On a phone the row scrolls: keep the open tab in view.
+            ref={tab === id ? (node) => node?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }) : undefined}
+            onClick={() => setTab(id)}
+          >
             <Icon name={icon} size={18} /> {label}
           </button>
         ))}

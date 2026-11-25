@@ -1,12 +1,14 @@
 // Settings → Tabs: choose which tabs show and their order, in the left bar (and the phone's bottom
 // bar) and along the top of the Inbox. Each change applies and is saved straight away.
-import { ordered } from '../tabLayout.js';
+import { ordered, PHONE_TABS } from '../tabLayout.js';
 import Icon from './Icon.jsx';
 
-function TabList({ items, prefs, onChange, keepOne }) {
+function TabList({ items, prefs, onChange, keepOne, phoneSlots = 0 }) {
   const list = ordered(items, prefs);
   const hidden = new Set(prefs?.hidden || []);
   const shownCount = list.filter((item) => item.locked || !hidden.has(item.id)).length;
+  // The first shown ones are also in a phone's bottom bar.
+  const onPhone = new Set(list.filter((item) => item.locked || !hidden.has(item.id)).slice(0, phoneSlots).map((item) => item.id));
   const save = (nextList, nextHidden) => onChange({ order: nextList.map((item) => item.id), hidden: [...nextHidden] });
 
   const move = (index, by) => {
@@ -33,6 +35,7 @@ function TabList({ items, prefs, onChange, keepOne }) {
             <span className="tab-settings-name">
               {item.label}
               {item.locked && <small>Always shown</small>}
+              {onPhone.has(item.id) && <small className="tab-settings-phone"><Icon name="phone" size={13} /> In the phone’s bottom bar</small>}
             </span>
             <span className="tab-settings-move">
               <button type="button" className="icon-btn" disabled={index === 0} aria-label={`Move ${item.label} up`} title="Move up" onClick={() => move(index, -1)}>
@@ -67,8 +70,8 @@ export default function TabSettings({ layout, rail, pinned, inbox, onChange }) {
     <div className="tab-settings">
       <section>
         <h3>Left bar</h3>
-        <p className="muted small">On a phone, the first four of these are in the bar along the bottom.</p>
-        <TabList items={rail} prefs={railPrefs} onChange={saveRail('main', pinned)} />
+        <p className="muted small">On a phone, the first {PHONE_TABS} shown here sit in the bar along the bottom, after Inbox. The rest are under More.</p>
+        <TabList items={rail} prefs={railPrefs} onChange={saveRail('main', pinned)} phoneSlots={PHONE_TABS} />
         {pinned.length > 0 && (
           <>
             <h4>At the bottom of the left bar</h4>

@@ -43,7 +43,11 @@ const IDLE = {
   notice: '',
   endReason: '',
   startedAt: null,
+  chat: [], // in-call messages: { id, from, name, guest, text, at, pending?, failed? }
+  unread: 0, // chat messages that came in while the chat wasn't open
 };
+
+let chatOpen = false;
 
 let state = IDLE;
 const watchers = new Set();
@@ -106,6 +110,10 @@ function saveDevice(kind, deviceId) {
   }
 }
 const deviceOf = (track) => track?.getSettings?.().deviceId || '';
+
+/** Before joining (the join page): the devices picked there, and remembering a new pick. */
+export const rememberedDevices = savedDevices;
+export const rememberDevice = saveDevice;
 
 /** Microphone and (if asked) camera. A missing camera or microphone doesn't stop anyone joining. */
 async function openDevices(video, muted = false) {
@@ -554,7 +562,9 @@ function applyCall(call) {
 
 function onLive(message) {
   if (message.type === 'call-room') applyCall(message.call);
-  else if (message.type === 'call-signal' && message.id === state.call?.id && message.to === state.me) {
+  else if (message.type === 'call-signal' && message.id === state.call?.id && message.to === state.me && message.data?.chat) {
+    addChat([message.data.chat], !chatOpen);
+  } else if (message.type === 'call-signal' && message.id === state.call?.id && message.to === state.me) {
     const connection = connect(message.from);
     connection.work = connection.work.then(() => handleSignal(connection, message.data)).catch(() => {});
   } else if (message.type === 'open' && state.call) {
@@ -575,6 +585,62 @@ function enter({ call, peerId, iceServers: servers }, notice, via, { muted = fal
   applyCall(call);
   sendState();
   keepAwake();
+  loadChat();
+}
+
+/* ---------------------------------- chat and reactions ---------------------------------- */
+
+/** Messages in, oldest first, each once (history and live messages can overlap). */
+function addChat(messages, countUnread = false) {
+  const known = new Set(state.chat.map((message) => message.id));
+  const fresh = messages.filter((message) => message?.id && !known.has(message.id));
+  if (!fresh.length) return;
+  const chat = [...state.chat, ...fresh].sort((a, b) => a.at - b.at);
+  const unread = countUnread ? state.unread + fresh.filter((message) => message.from !== state.me).length : state.unread;
+  set({ chat, unread });
+}
+
+/** What was said before this window joined (or while it was reconnecting). */
+function loadChat() {
+  const call = state.call?.id;
+  transport?.post('/chat/history', { peerId: state.me })
+    .then((result) => { if (state.call?.id === call) addChat(result?.items || []); })
+    .catch(() => {});
+}
+
+/** The chat panel is open (nothing counts as unread) or closed. */
+export function setChatOpen(open) {
+  chatOpen = open;
+  if (open && state.unread) set({ unread: 0 });
+}
+
+export async function sendChat(text) {
+  const clean = String(text || '').trim();
+  if (!clean || state.phase !== 'in-call') return;
+  const draft = { id: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`, from: state.me, name: 'You', text: clean, at: Date.now(), pending: true };
+  set({ chat: [...state.chat, draft] });
+  try {
+    const sent = await transport.post('/chat', { peerId: state.me, text: clean });
+    set({ chat: state.chat.map((message) => (message.id === draft.id ? sent : message)) });
+  } catch (err) {
+    set({ chat: state.chat.map((message) => (message.id === draft.id ? { ...draft, pending: false, failed: err.message || 'Not sent' } : message)) });
+  }
+}
+
+/** Try a message that didn't go again. */
+export function resendChat(id) {
+  const failed = state.chat.find((message) => message.id === id && message.failed);
+  if (!failed) return;
+  set({ chat: state.chat.filter((message) => message.id !== id) });
+  void sendChat(failed.text);
+}
+
+export const REACTIONS = ['👍', '❤️', '😂', '😮', '👏', '🎉', '🙏', '🤔'];
+
+/** A quick emoji everyone sees float up for a moment. */
+export function react(emoji) {
+  if (state.phase !== 'in-call' || !REACTIONS.includes(emoji)) return Promise.resolve();
+  return transport.post('/state', { peerId: state.me, reaction: emoji }).then(applyCall).catch(() => {});
 }
 
 async function begin(video, request, via, { muted = false } = {}) {

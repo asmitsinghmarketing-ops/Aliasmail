@@ -201,23 +201,34 @@ export default function CallCenter() {
   return (
     <>
       {room.phase === 'in-call' && <CallRoom state={room} />}
-      {room.phase === 'joining' && <div className="call-joining" role="status"><Icon name="refresh" size={18} /> Connecting your microphone…</div>}
-      {room.phase === 'ended' && <div className="call-ended-toast" role="status">{room.endReason}</div>}
-      {error && <div className="call-error-toast" role="alert">{error}</div>}
+      {room.phase === 'joining' && <div className="nx-status-toast" role="status"><Icon name="refresh" size={18} className="spin" /> Connecting your microphone…</div>}
+      {room.phase === 'ended' && <div className="nx-status-toast" role="status"><Icon name="callEnd" size={18} /> {room.endReason}</div>}
+      {error && <div className="nx-status-toast error" role="alert">{error}</div>}
       {call && (
-        <div className="call-backdrop" role="dialog" aria-modal="true" aria-label={`Incoming call from ${call.fromName}`}>
-          <section className="incoming-call">
-            <span className="incoming-call-avatar"><Avatar person={{ name: call.fromName, address: call.from }} size="lg" /></span>
-            <span className="incoming-call-pulse" aria-hidden="true" />
-            <p>Incoming {call.video ? 'video' : 'voice'} call</p>
-            <h2>{call.fromName}</h2>
-            {call.invited?.length > 1 && <span className="muted">with {call.invited.length - 1} other{call.invited.length > 2 ? 's' : ''}</span>}
-            {room.phase === 'in-call' && <span className="muted">Answering ends your current call.</span>}
-            <div className="incoming-call-actions">
-              <button type="button" className="call-decline" disabled={busy} onClick={() => answer(call, 'decline')}><Icon name="callEnd" /> Decline</button>
-              <button type="button" className="call-accept" disabled={busy} onClick={() => answer(call, 'accept', call.video)}><Icon name={call.video ? 'videocam' : 'call'} /> Accept</button>
+        <div className="nx-ring-backdrop" role="dialog" aria-modal="true" aria-label={`Incoming call from ${call.fromName}`}>
+          <section className="nx-ring">
+            <div className="nx-ring-avatar">
+              <span className="nx-ring-wave" aria-hidden="true" />
+              <span className="nx-ring-wave two" aria-hidden="true" />
+              <Avatar person={{ name: call.fromName, address: call.from }} size="lg" />
             </div>
-            {call.video && <button type="button" className="incoming-call-alt" disabled={busy} onClick={() => answer(call, 'accept', false)}>Answer without video</button>}
+            <p className="nx-ring-kind"><Icon name={call.video ? 'videocam' : 'call'} size={15} /> Incoming {call.video ? 'video' : 'voice'} call</p>
+            <h2>{call.fromName}</h2>
+            {call.invited?.length > 1 && <span className="nx-ring-note">with {call.invited.length - 1} other{call.invited.length > 2 ? 's' : ''}</span>}
+            {room.phase === 'in-call' && <span className="nx-ring-note">Answering ends your current call.</span>}
+            <div className="nx-ring-actions">
+              <button type="button" className="nx-ring-btn decline" disabled={busy} onClick={() => answer(call, 'decline')}>
+                <span><Icon name="callEnd" /></span>Decline
+              </button>
+              {call.video && (
+                <button type="button" className="nx-ring-btn audio" disabled={busy} onClick={() => answer(call, 'accept', false)}>
+                  <span><Icon name="call" /></span>Audio only
+                </button>
+              )}
+              <button type="button" className="nx-ring-btn accept" disabled={busy} onClick={() => answer(call, 'accept', call.video)}>
+                <span><Icon name={call.video ? 'videocam' : 'call'} /></span>Accept
+              </button>
+            </div>
           </section>
         </div>
       )}

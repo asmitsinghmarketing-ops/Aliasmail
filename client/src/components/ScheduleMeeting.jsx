@@ -19,15 +19,20 @@ function defaultStart(day) {
   return start;
 }
 
-export default function ScheduleMeeting({ me, day, meeting, onSaved, onClose, onEmail, onOpenMeetings }) {
-  const start = meeting ? new Date(meeting.startAt) : defaultStart(day);
+/**
+ * `meeting`: change that meeting. `template`: a new meeting copying its title, length, people and
+ * note (Duplicate). `at`: a new meeting starting exactly then (a slot picked on the calendar).
+ */
+export default function ScheduleMeeting({ me, day, at, template, meeting, onSaved, onClose, onEmail, onOpenMeetings }) {
+  const start = meeting ? new Date(meeting.startAt) : at && at.getTime() > Date.now() ? at : defaultStart(day);
+  const source = meeting || template;
   const [form, setForm] = useState({
-    title: meeting?.title || '',
+    title: source?.title ? `${source.title}${template && !meeting ? ' (copy)' : ''}` : '',
     date: localDate(start),
     time: localTime(start),
-    durationMin: meeting?.durationMin || 30,
-    invitees: new Set((meeting?.invitees || []).map((person) => person.address)),
-    description: meeting?.description || '',
+    durationMin: source?.durationMin || 30,
+    invitees: new Set((source?.invitees || []).map((person) => person.address).filter((address) => address !== me)),
+    description: source?.description || '',
   });
   const [team, setTeam] = useState(null);
   const [busy, setBusy] = useState(false);

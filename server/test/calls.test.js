@@ -118,6 +118,23 @@ test('a call rings, connects, passes connection details between windows, and end
   const updated = await waitFor(john.got, (m) => m.type === 'call-room' && m.call.peers.some((peer) => peer.muted));
   assert.deepEqual(['muted', 'camera', 'sharing', 'hand', 'recording'].map((key) => updated.call.peers.find((peer) => peer.id === joined.peerId)[key]), [true, true, true, true, true]);
 
+  // A reaction reaches the others; anything not on the list is ignored.
+  await call('mary', `/calls/${started.call.id}/state`, { peerId: joined.peerId, reaction: '<script>' });
+  await call('mary', `/calls/${started.call.id}/state`, { peerId: joined.peerId, reaction: '🎉' });
+  const reacted = await waitFor(john.got, (m) => m.type === 'call-room' && m.call.peers.some((peer) => peer.reaction));
+  const reaction = reacted.call.peers.find((peer) => peer.id === joined.peerId).reaction;
+  assert.equal(reaction.emoji, '🎉');
+  assert.ok(Math.abs(reaction.at - Date.now()) < 5_000);
+
+  // Chat: sent to the others, kept for anyone who opens the call's history.
+  assert.equal((await call('mary', `/calls/${started.call.id}/chat`, { peerId: joined.peerId, text: '   ' })).status, 400);
+  const posted = await json('mary', `/calls/${started.call.id}/chat`, { peerId: joined.peerId, text: ' Hello team ' });
+  assert.equal(posted.text, 'Hello team');
+  const heard = await waitFor(john.got, (m) => m.type === 'call-signal' && m.data?.chat);
+  assert.deepEqual([heard.to, heard.from, heard.data.chat.text], [started.peerId, joined.peerId, 'Hello team']);
+  const history = await json('john', `/calls/${started.call.id}/chat/history`, { peerId: started.peerId });
+  assert.deepEqual(history.items.map((item) => item.text), ['Hello team']);
+
   // When one of two leaves, the call is over for the other.
   await call('mary', `/calls/${started.call.id}/leave`, { peerId: joined.peerId });
   const over = await waitFor(john.got, (m) => m.type === 'call-room' && m.call.status === 'ended');

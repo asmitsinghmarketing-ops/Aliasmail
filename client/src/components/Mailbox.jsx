@@ -20,7 +20,7 @@ import { meetingText } from '../meet.js';
 import { meetingLink } from '../calls.js';
 import Pager from './Pager.jsx';
 import NotificationCenter from './NotificationCenter.jsx';
-import { arrange } from '../tabLayout.js';
+import { arrange, PHONE_TABS } from '../tabLayout.js';
 import { lazyPage, MailListSkeleton, OpeningPill, TextSkeleton, whenIdle } from './Loading.jsx';
 
 // Opened on demand, and fetched as soon as the mailbox is idle so that opening them is instant.
@@ -1654,7 +1654,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   ].filter((tab) => !tab.hidden);
   const shownRail = arrange(railTabs, layout.rail);
   // The phone's bottom bar: Inbox, then the first four of the same tabs in the same order, then More.
-  const phoneTabs = shownRail.filter((tab) => ['assistant', 'tasks', 'attendance', 'automations', 'notes'].includes(tab.id)).slice(0, 4);
+  // (Pinned ones such as Settings and Tour stay under More.)
+  const phoneTabs = shownRail.filter((tab) => !tab.pinned).slice(0, PHONE_TABS);
 
   return (
     <div className={`app has-rail ${drawerVisiblyOpen ? 'menu-open' : ''} ${sending.some((m) => m.phase === 'waiting') ? 'has-send-tray' : ''}`}>
@@ -2020,7 +2021,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                     <Icon name={f.icon} />
                     {f.count && counts[f.count] > 0 && <span className="bottom-nav-badge">{counts[f.count] > 99 ? '99+' : counts[f.count]}</span>}
                   </span>
-                  {f.label}
+                  <span className="bottom-nav-label">{f.label}</span>
                 </button>
               );
             })}
@@ -2030,12 +2031,12 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                   <Icon name={tab.icon} />
                   {tab.badge > 0 && <span className="bottom-nav-badge">{tab.badge > 99 ? '99+' : tab.badge}</span>}
                 </span>
-                {tab.label}
+                <span className="bottom-nav-label">{tab.label}</span>
               </button>
             ))}
             <button type="button" className={folder === 'inbox' || notesOpen || assistantOpen ? '' : 'on'} onClick={() => { setAssistantOpen(false); setCollapsed(false); }}>
               <span className="bottom-nav-icon"><Icon name="menu" /></span>
-              More
+              <span className="bottom-nav-label">More</span>
             </button>
           </nav>
         )}

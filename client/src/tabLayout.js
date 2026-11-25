@@ -18,3 +18,6 @@ export function arrange(items, prefs) {
   const shown = ordered(items, prefs).filter((item) => item.locked || !hidden.has(item.id));
   return shown.length ? shown : items;
 }
+
+/** How many of the left bar's tabs (after Inbox) also sit in a phone's bottom bar, before More. */
+export const PHONE_TABS = 4;

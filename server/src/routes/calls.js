@@ -66,6 +66,7 @@ const publicCall = (call, { forGuest = false } = {}) => ({
   peers: [...call.peers].map(([id, peer]) => ({
     id, address: forGuest && !isGuest(peer.address) ? '' : peer.address, name: nameIn(call, peer.address), guest: isGuest(peer.address),
     muted: peer.muted, camera: peer.camera, sharing: peer.sharing, hand: peer.hand, recording: peer.recording,
+    reaction: reactionOf(peer),
   })),
   lobby: forGuest ? [] : [...call.guests.values()].filter((guest) => guest.status === 'waiting').map((guest) => ({ id: guest.id, name: guest.name, since: guest.since })),
 });
@@ -315,7 +316,12 @@ setInterval(() => {
   }
 }, SWEEP_MS).unref?.();
 
-/** Muted, camera on, sharing, hand raised, recording. */
+/** The emoji reactions anyone in a call can send; each shows for a few seconds. */
+export const REACTIONS = ['👍', '❤️', '😂', '😮', '👏', '🎉', '🙏', '🤔'];
+const REACTION_SHOWN_MS = 6_000;
+const REACTION_GAP_MS = 400; // one per this long from each window, so a held key can't flood the call
+
+/** Muted, camera on, sharing, hand raised, recording, and a reaction just sent. */
 function updateState(call, peer, body, { canRecord = true } = {}) {
   let changed = false;
   for (const key of ['muted', 'camera', 'sharing', 'hand', ...(canRecord ? ['recording'] : [])]) {
@@ -324,7 +330,42 @@ function updateState(call, peer, body, { canRecord = true } = {}) {
       changed = true;
     }
   }
+  if (typeof body?.reaction === 'string' && REACTIONS.includes(body.reaction)) {
+    const now = Date.now();
+    if (!peer.reaction || now - peer.reaction.at >= REACTION_GAP_MS) {
+      peer.reaction = { emoji: body.reaction, at: now };
+      changed = true;
+    }
+  }
   if (changed) tell(call);
+}
+
+const reactionOf = (peer, now = Date.now()) => (peer.reaction && now - peer.reaction.at < REACTION_SHOWN_MS ? peer.reaction : null);
+
+/* In-call chat: kept with the call (the latest CHAT_KEEP messages) so someone joining late, or a
+   window that reconnects, can read what was said. Each message goes to the other windows the same
+   way connection details do, so it works for guests too. Gone when the call ends. */
+const CHAT_KEEP = 200;
+const CHAT_MAX_CHARS = 1000;
+const CHAT_BURST = 8; // messages per CHAT_BURST_MS from one window
+const CHAT_BURST_MS = 10_000;
+
+function postChat(call, peerId, peer, body) {
+  const text = typeof body?.text === 'string' ? body.text.replace(/\r\n?/g, '\n').trim() : '';
+  if (!text) throw new HttpError(400, 'Write a message first');
+  if (text.length > CHAT_MAX_CHARS) throw new HttpError(400, `Messages can be up to ${CHAT_MAX_CHARS} characters`);
+  const now = Date.now();
+  peer.chatTimes = (peer.chatTimes || []).filter((at) => now - at < CHAT_BURST_MS);
+  if (peer.chatTimes.length >= CHAT_BURST) throw new HttpError(429, 'Slow down a little before sending more');
+  peer.chatTimes.push(now);
+  const message = { id: crypto.randomUUID(), from: peerId, name: nameIn(call, peer.address), guest: isGuest(peer.address), text, at: now };
+  call.chat ||= [];
+  call.chat.push(message);
+  if (call.chat.length > CHAT_KEEP) call.chat.splice(0, call.chat.length - CHAT_KEEP);
+  for (const [id, other] of call.peers) {
+    if (id !== peerId) callEvents.emit('signal', other.address, { id: call.id, from: peerId, to: id, data: { chat: message } });
+  }
+  return message;
 }
 
 /** Connection details for one other window in the same call, passed on without being read. */
@@ -485,6 +526,16 @@ router.post('/:id/state', (req, res) => {
   res.json(publicCall(call));
 });
 
+router.post('/:id/chat', (req, res) => {
+  const { call, peerId, peer } = peerFor(req);
+  res.status(201).json(postChat(call, peerId, peer, req.body));
+});
+
+router.post('/:id/chat/history', (req, res) => {
+  const { call } = peerFor(req);
+  res.json({ items: call.chat || [] });
+});
+
 router.post('/:id/signal', (req, res) => {
   const { call, peerId } = peerFor(req);
   relay(call, peerId, req.body);
@@ -589,6 +640,16 @@ guestRouter.post('/:code/state', (req, res) => {
   const { call, peer } = guestPeer(req);
   updateState(call, peer, req.body, { canRecord: false });
   res.json(publicCall(call, { forGuest: true }));
+});
+
+guestRouter.post('/:code/chat', (req, res) => {
+  const { call, peerId, peer } = guestPeer(req);
+  res.status(201).json(postChat(call, peerId, peer, req.body));
+});
+
+guestRouter.post('/:code/chat/history', (req, res) => {
+  const { call } = guestPeer(req);
+  res.json({ items: call.chat || [] });
 });
 
 guestRouter.post('/:code/signal', (req, res) => {
