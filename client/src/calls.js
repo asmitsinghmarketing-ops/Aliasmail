@@ -10,6 +10,7 @@ import { subscribe as subscribeLive } from './live.js';
 
 const SLOTS = ['audio', 'camera', 'screen'];
 const CHECK_IN_MS = 15_000;
+const NETWORK_SAMPLE_MS = 4_000;
 const RECONNECT_AFTER_MS = 5_000;
 // Still not connected after this long: it's not going to work by itself, so say why.
 const STUCK_AFTER_MS = 20_000;
@@ -45,6 +46,7 @@ const IDLE = {
   startedAt: null,
   chat: [], // in-call messages: { id, from, name, guest, text, at, pending?, failed? }
   unread: 0, // chat messages that came in while the chat wasn't open
+  networkQuality: 'unknown', // unknown | good | fair | poor
 };
 
 let chatOpen = false;
@@ -71,6 +73,7 @@ let camera = null;
 let screen = null;
 let stopLive = null;
 let checkIn = null;
+let networkSampler = null;
 let endedTimer = null;
 let attempt = 0; // Bumped to abandon a call still being set up.
 let rejoining = false;
@@ -318,9 +321,50 @@ function tuneSenders() {
   const cameraLimit = CAMERA_BITRATE[Math.min(connections.size, CAMERA_BITRATE.length - 1)];
   for (const connection of connections.values()) {
     const transceivers = connection.pc.getTransceivers();
-    limitBitrate(transceivers[SLOTS.indexOf('camera')]?.sender, cameraLimit);
-    limitBitrate(transceivers[SLOTS.indexOf('screen')]?.sender, SCREEN_BITRATE);
+    const factor = connection.network?.quality === 'poor' ? 0.45 : connection.network?.quality === 'fair' ? 0.7 : 1;
+    limitBitrate(transceivers[SLOTS.indexOf('camera')]?.sender, Math.round(cameraLimit * factor));
+    limitBitrate(transceivers[SLOTS.indexOf('screen')]?.sender, Math.round(SCREEN_BITRATE * Math.max(0.65, factor)));
   }
+}
+
+/**
+ * Read WebRTC counters and reduce video before a weak connection starts freezing. Audio is left
+ * alone because intelligible speech matters more than a sharp picture on a constrained network.
+ */
+async function sampleConnection(connection) {
+  if (connection.pc.connectionState !== 'connected' || !connection.pc.getStats) return;
+  const reports = await connection.pc.getStats();
+  let pair = null;
+  let received = 0;
+  let lost = 0;
+  for (const report of reports.values()) {
+    if (report.type === 'transport' && report.selectedCandidatePairId) pair = reports.get(report.selectedCandidatePairId) || pair;
+    if (report.type === 'candidate-pair' && report.state === 'succeeded' && (report.nominated || report.selected)) pair ||= report;
+    if (report.type === 'inbound-rtp' && !report.isRemote) {
+      received += Number(report.packetsReceived) || 0;
+      lost += Math.max(0, Number(report.packetsLost) || 0);
+    }
+  }
+  const previous = connection.networkTotals;
+  connection.networkTotals = { received, lost };
+  const receivedDelta = previous ? Math.max(0, received - previous.received) : 0;
+  const lostDelta = previous ? Math.max(0, lost - previous.lost) : 0;
+  const loss = receivedDelta + lostDelta ? lostDelta / (receivedDelta + lostDelta) : 0;
+  const rttMs = Math.round((Number(pair?.currentRoundTripTime) || 0) * 1000);
+  const quality = loss >= 0.08 || rttMs >= 600 ? 'poor' : loss >= 0.03 || rttMs >= 300 ? 'fair' : 'good';
+  connection.network = { quality, loss, rttMs };
+}
+
+async function sampleNetwork() {
+  if (state.phase !== 'in-call') return;
+  await Promise.all([...connections.values()].map((connection) => sampleConnection(connection).catch(() => {})));
+  tuneSenders();
+  const qualities = [...connections.values()]
+    .filter((connection) => connection.pc.connectionState === 'connected')
+    .map((connection) => connection.network?.quality || 'unknown');
+  const networkQuality = qualities.includes('poor') ? 'poor' : qualities.includes('fair') ? 'fair' : qualities.includes('good') ? 'good' : 'unknown';
+  publishPeers();
+  if (state.networkQuality !== networkQuality) set({ networkQuality });
 }
 
 function limitBitrate(sender, maxBitrate) {
@@ -458,6 +502,9 @@ function publishPeers() {
       ...peer,
       connection: connection?.pc.connectionState || 'new',
       stuck,
+      networkQuality: connection?.network?.quality || 'unknown',
+      networkRttMs: connection?.network?.rttMs || 0,
+      packetLoss: connection?.network?.loss || 0,
       audio: connection?.media.audio || null,
       cameraStream: connection?.media.camera || null,
       screenStream: connection?.media.screen || null,
@@ -532,6 +579,8 @@ function tearDown() {
   letSleep();
   clearInterval(checkIn);
   checkIn = null;
+  clearInterval(networkSampler);
+  networkSampler = null;
   stopLive?.();
   stopLive = null;
   [...connections.keys()].forEach(disconnect);
@@ -582,6 +631,7 @@ function enter({ call, peerId, iceServers: servers }, notice, via, { muted = fal
   publishLocal();
   stopLive = transport.subscribe(onLive);
   checkIn = setInterval(checkInNow, CHECK_IN_MS);
+  networkSampler = setInterval(sampleNetwork, NETWORK_SAMPLE_MS);
   applyCall(call);
   sendState();
   keepAwake();
@@ -751,8 +801,10 @@ let screenRedraw = null; // keeps a shared photo's picture flowing (see sharePic
 function stopScreen() {
   clearInterval(screenRedraw);
   screenRedraw = null;
-  screen?.stop();
+  const active = screen;
   screen = null;
+  active?.stop();
+  active?.nextspaceRelease?.();
   setChannel('screen', null);
   publishLocal();
   sendState();
@@ -787,9 +839,33 @@ export async function sharePicture(file) {
     return;
   }
   let picture;
+  let released = false;
+  let releasePicture = () => { released = true; };
   try {
-    picture = await createImageBitmap(file);
+    if (typeof createImageBitmap === 'function') {
+      picture = await createImageBitmap(file);
+      releasePicture = () => {
+        if (released) return;
+        released = true;
+        picture.close?.();
+      };
+    }
+    else {
+      const url = URL.createObjectURL(file);
+      releasePicture = () => {
+        if (released) return;
+        released = true;
+        URL.revokeObjectURL(url);
+      };
+      picture = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = url;
+      });
+    }
   } catch {
+    releasePicture();
     set({ notice: 'That file isn’t a picture this browser can open. Choose a photo or screenshot.' });
     return;
   }
@@ -802,9 +878,19 @@ export async function sharePicture(file) {
   draw();
   const track = canvas.captureStream(5).getVideoTracks()[0];
   track.contentHint = 'detail';
+  track.nextspaceRelease = releasePicture;
+  const previousEnded = track.onended;
+  track.onended = () => {
+    previousEnded?.();
+    releasePicture();
+    if (screen === track) stopScreen();
+  };
   if (screen) stopScreen();
   // A still picture produces no new frames by itself; some browsers then show the others nothing.
-  screenRedraw = setInterval(draw, 500);
+  screenRedraw = setInterval(() => {
+    draw();
+    track.requestFrame?.();
+  }, 500);
   screen = track;
   setChannel('screen', track);
   publishLocal();

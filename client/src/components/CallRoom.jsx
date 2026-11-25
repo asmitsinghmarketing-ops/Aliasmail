@@ -33,7 +33,15 @@ function Video({ stream, className, contain = false }) {
   const element = useRef(null);
   const [fit, setFit] = useState(false);
   useEffect(() => {
-    if (element.current && element.current.srcObject !== stream) element.current.srcObject = stream;
+    const video = element.current;
+    if (!video) return undefined;
+    if (video.srcObject !== stream) video.srcObject = stream;
+    // A video element is replaced when the room becomes mini (or expands again). Explicit play
+    // makes that hand-off reliable in browsers that do not always honour autoplay on a remount.
+    const play = () => video.play().catch(() => {});
+    play();
+    video.addEventListener('loadedmetadata', play);
+    return () => video.removeEventListener('loadedmetadata', play);
   }, [stream]);
   // Phones turn sideways and windows resize: check again whenever either shape changes.
   useEffect(() => {
@@ -883,6 +891,7 @@ export default function CallRoom({ state }) {
   const [recordError, setRecordError] = useState('');
   const [confirmRecord, setConfirmRecord] = useState(false);
   const [recordStatus, setRecordStatus] = useState(null); // null | 'saving' | 'saved'
+  const [mobileShareHelp, setMobileShareHelp] = useState(false);
   const [recordingStartedAt, setRecordingStartedAt] = useState(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [audioError, setAudioError] = useState('');
@@ -1108,14 +1117,19 @@ export default function CallRoom({ state }) {
   if (speaker && speaker !== me) lastSpoke.current = speaker;
 
   const ringing = call.invited.filter((invite) => invite.status === 'ringing');
-  const presenter = peers.find((peer) => peer.sharing && peer.screenStream) || null;
+  const myPeer = call.peers.find((peer) => peer.id === me);
+  const remotePresenter = peers.find((peer) => peer.sharing && peer.screenStream) || null;
+  // Local screen share is a separate WebRTC channel. Treat it exactly like a remote presenter so
+  // the sharer gets a preview in the main stage and in the persistent mini meeting window.
+  const presenter = state.sharing && state.localScreen
+    ? { id: me, name: 'You', address: myPeer?.address, sharing: true, screenStream: state.localScreen, isMe: true }
+    : remotePresenter;
   const title = call.title
     ? call.title
     : peers.length
       ? peers.map((peer) => peer.name).join(', ')
       : ringing.length ? `Calling ${ringing.map((invite) => invite.name).join(', ')}…` : call.code ? 'Your meeting' : 'Waiting for others…';
 
-  const myPeer = call.peers.find((peer) => peer.id === me);
   const tiles = [
     {
       key: me, isMe: true, name: myPeer?.name || 'You', address: myPeer?.address, stream: state.localCamera, videoOn: state.cameraOn,
@@ -1176,7 +1190,7 @@ export default function CallRoom({ state }) {
   function share() {
     setMenu(null);
     if (state.sharing || canShareScreen()) return void toggleScreen();
-    picturePicker.current?.click();
+    setMobileShareHelp(true);
     return undefined;
   }
 
@@ -1185,11 +1199,12 @@ export default function CallRoom({ state }) {
       ? { key: 'screen', name: `${presenter.name} is presenting`, address: presenter.address, stream: presenter.screenStream, videoOn: true }
       : leading;
     return (
-      <div className="nx-mini" role="region" aria-label="Call in progress">
+      <div className={`nx-mini ${presenter ? 'presenting' : ''}`} role="region" aria-label="Call in progress">
         {voicesPlayed}
         <button type="button" className="nx-mini-picture" aria-label="Back to the call" onClick={() => setMinimized(false)}>
           <Tile tile={shown} />
           <span className="nx-mini-expand"><Icon name="expand" size={16} /></span>
+          {presenter && <span className="nx-mini-mode"><Icon name="screenShare" size={13} />{presenter.isMe ? 'You are presenting' : `${presenter.name} is presenting`}</span>}
           {state.unread > 0 && <span className="nx-mini-unread"><Icon name="chat" size={14} />{state.unread}</span>}
         </button>
         <div className="nx-mini-bar">
@@ -1201,6 +1216,10 @@ export default function CallRoom({ state }) {
           <button type="button" className={`nx-mini-btn ${micOff ? 'off' : ''}`} aria-label={micLabel} title={micLabel} onClick={toggleMute}>
             <Icon name={micOff ? 'micOff' : 'mic'} size={19} />
           </button>
+          <button type="button" className={`nx-mini-btn ${state.cameraOn ? 'on' : 'off'}`} aria-label={state.cameraOn ? 'Turn camera off' : 'Turn camera on'} title={state.cameraOn ? 'Turn camera off' : 'Turn camera on'} onClick={toggleCamera}>
+            <Icon name={state.cameraOn ? 'videocam' : 'videocamOff'} size={19} />
+          </button>
+          {state.sharing && <button type="button" className="nx-mini-btn sharing" aria-label="Stop presenting" title="Stop presenting" onClick={share}><Icon name="screenShare" size={19} /></button>}
           <button type="button" className="nx-mini-btn leave" aria-label="Leave call" title="Leave call" onClick={hangUp}><Icon name="callEnd" size={19} /></button>
         </div>
       </div>
@@ -1288,6 +1307,11 @@ export default function CallRoom({ state }) {
               <Elapsed since={state.startedAt} fallback={call.video ? 'Video call' : 'Voice call'} />
               <em>·</em>{call.peers.length} {call.peers.length === 1 ? 'person' : 'people'}
               {call.code && <><em>·</em><Icon name="lock" size={12} /> Protected</>}
+              {state.networkQuality !== 'unknown' && (
+                <span className={`nx-quality ${state.networkQuality}`} title={`Connection quality: ${state.networkQuality}`}>
+                  <i />{state.networkQuality}
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -1386,6 +1410,18 @@ export default function CallRoom({ state }) {
             </div>
           </div>
         )}
+
+        {mobileShareHelp && !state.sharing && (
+          <div className="nx-dialog nx-mobile-share" role="dialog" aria-labelledby="nx-mobile-share-title">
+            <span className="nx-dialog-icon"><Icon name="screenShare" size={22} /></span>
+            <strong id="nx-mobile-share-title">Present from your phone</strong>
+            <p>This mobile browser cannot broadcast your device screen live. Take a screenshot first, then present it to everyone while your camera and microphone keep running.</p>
+            <div className="nx-dialog-actions">
+              <button type="button" className="nx-btn" onClick={() => setMobileShareHelp(false)}>Cancel</button>
+              <button type="button" className="nx-btn primary" autoFocus onClick={() => { setMobileShareHelp(false); picturePicker.current?.click(); }}><Icon name="image" size={17} />Choose screen capture</button>
+            </div>
+          </div>
+        )}
       </div>
 
       <footer className="nx-bar">
@@ -1397,7 +1433,7 @@ export default function CallRoom({ state }) {
         <div className="nx-dock" ref={menus}>
           <DockButton icon={micOff ? 'micOff' : 'mic'} label={micLabel} text={micOff ? 'Unmute' : 'Mic'} state={micOff ? 'off' : ''} onClick={toggleMute} aria-pressed={micOff} />
           <DockButton icon={state.cameraOn ? 'videocam' : 'videocamOff'} label={state.cameraOn ? `Turn camera off (${MOD} + E)` : `Turn camera on (${MOD} + E)`} text="Camera" state={state.cameraOn ? '' : 'off'} onClick={toggleCamera} aria-pressed={!state.cameraOn} />
-          <DockButton icon="screenShare" label={state.sharing ? 'Stop presenting' : canShareScreen() ? 'Share your screen' : 'Show a photo or screenshot'} text={state.sharing ? 'Stop' : 'Share'} state={state.sharing ? 'on' : ''} onClick={share} aria-pressed={state.sharing} />
+          <DockButton icon="screenShare" label={state.sharing ? 'Stop presenting' : canShareScreen() ? 'Share your screen' : 'Present a screen capture'} text={state.sharing ? 'Stop' : canShareScreen() ? 'Share' : 'Present'} state={state.sharing ? 'on' : ''} onClick={share} aria-pressed={state.sharing} />
           <DockButton icon="mood" label="Send a reaction" text="React" className="nx-only-desktop" state={menu === 'react' ? 'on' : ''} onClick={() => setMenu(menu === 'react' ? null : 'react')} aria-expanded={menu === 'react'} />
           <DockButton icon="hand" label={state.hand ? 'Lower hand' : `Raise hand (${MOD} + Alt + H)`} text={state.hand ? 'Lower' : 'Raise'} state={state.hand ? 'on hand' : ''} className="nx-only-desktop" onClick={toggleHand} aria-pressed={state.hand} />
           <DockButton icon="chat" label="Chat" state={panel === 'chat' ? 'on' : ''} badge={panel === 'chat' ? 0 : state.unread} className="nx-only-mobile" onClick={() => togglePanel('chat')} />

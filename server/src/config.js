@@ -181,6 +181,10 @@ const config = {
     // Cloudflare Realtime TURN (dashboard → Realtime → TURN Server): used instead of CALL_TURN_* when set.
     cloudflareTurnKeyId: env('CLOUDFLARE_TURN_KEY_ID'),
     cloudflareTurnToken: env('CLOUDFLARE_TURN_API_TOKEN'),
+    // Realtime SFU app credentials. CALLS_APP_* are Cloudflare's example-project names; the
+    // explicit names make their purpose clearer on hosting dashboards. Never send the secret.
+    cloudflareSfuAppId: env('CLOUDFLARE_SFU_APP_ID', env('CALLS_APP_ID')),
+    cloudflareSfuAppSecret: env('CLOUDFLARE_SFU_APP_SECRET', env('CALLS_APP_SECRET')),
     turnTtlSeconds: Math.max(600, Number(env('CALL_TURN_TTL_SECONDS', '14400')) || 14400),
     // Call recordings kept in the app (database or data folder): oldest go first past either limit.
     recordingKeepDays: Math.max(1, Number(env('RECORDING_KEEP_DAYS', '15')) || 15),

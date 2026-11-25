@@ -27,7 +27,7 @@
 
 .cal-layout { max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 380px; align-items: start; gap: 18px; }
 .cal-main { min-width: 0; padding: 16px; border: 1px solid #e0e5ee; border-radius: 22px; background: #fff; box-shadow: 0 10px 30px rgb(42 54 86 / 6%); }
-.cal-side { position: sticky; top: 0; min-width: 0; display: grid; gap: 10px; padding: 18px; border: 1px solid #e0e5ee; border-radius: 22px; background: rgb(255 255 255 / 80%); box-shadow: 0 10px 30px rgb(42 54 86 / 5%); }
+.cal-side { position: sticky; top: 0; min-width: 0; display: grid; gap: 10px; padding: 18px; border: 1px solid #dbe1eb; border-radius: 22px; background: #fff; box-shadow: 0 10px 30px rgb(42 54 86 / 6%); }
 .cal-side .recordings-day-head { margin: 0; }
 .cal-side .recordings-day-head h2 { margin: 0; color: #202c44; font-size: 18px; letter-spacing: -.01em; }
 .cal-side .recordings-section { margin: 6px 0 2px; }
@@ -45,18 +45,18 @@
 /* toolbar */
 .cal-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .cal-nav { min-width: 0; display: flex; align-items: center; gap: 4px; }
-.cal-nav h2 { margin: 0 0 0 8px; overflow: hidden; color: #1b2740; font-size: 20px; font-weight: 650; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
+.cal-nav h2 { margin: 0 0 0 8px; overflow: hidden; color: #17243c; font-size: 20px; font-weight: 700; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
 .cal-today { min-height: 36px; padding: 0 14px; border-radius: 10px; }
 .cal-views { display: flex; gap: 2px; padding: 3px; border: 1px solid #e0e5ee; border-radius: 12px; background: #f4f6fb; }
-.cal-views button { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #5d6a80; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color .15s ease, color .15s ease; }
+.cal-views button { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #4f5e75; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color .15s ease, color .15s ease; }
 .cal-views button.on { background: #fff; color: #263452; box-shadow: 0 2px 8px rgb(42 54 86 / 12%); }
 .cal-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
-.cal-search { flex: 1 1 240px; min-width: 0; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px 0 12px; border: 1px solid #dfe4ee; border-radius: 12px; background: #f8f9fc; color: #7b879a; }
+.cal-search { flex: 1 1 240px; min-width: 0; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px 0 12px; border: 1px solid #d7dee9; border-radius: 12px; background: #f8f9fc; color: #617087; }
 .cal-search:focus-within { border-color: #8191e6; background: #fff; box-shadow: 0 0 0 3px rgb(104 119 218 / 12%); }
 .cal-search input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: none; color: #1f2b42; font: inherit; }
 .cal-search .icon-btn { width: 28px; height: 28px; }
 .cal-chips-filter { display: flex; flex-wrap: wrap; gap: 6px; }
-.cal-chips-filter button { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid #dfe4ee; border-radius: 999px; background: #fff; color: #4e5b72; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.cal-chips-filter button { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid #d8dee9; border-radius: 999px; background: #fff; color: #435168; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .cal-chips-filter button.on { border-color: #6b7de6; background: #eef0ff; color: #4357cf; }
 .cal-chips-filter i { width: 8px; height: 8px; border-radius: 50%; }
 .cal-chips-filter .meeting i { background: #5d72e3; }
@@ -76,12 +76,12 @@
 
 /* month */
 .cal-month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid #e6e9f0; border-radius: 16px; background: #e6e9f0; }
-.cal-weekday { padding: 9px 10px; background: #f7f8fb; color: #7a879b; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.cal-weekday { padding: 9px 10px; background: #f5f7fa; color: #58677d; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .cal-cell { position: relative; min-width: 0; min-height: 112px; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: #fff; cursor: pointer; outline: 0; transition: background-color .15s ease; }
 .cal-cell:hover { background: #f8f9ff; }
 .cal-cell.weekend { background: #fcfcfe; }
 .cal-cell.other { background: #fafbfc; }
-.cal-cell.other .cal-date { color: #b4bccb; }
+.cal-cell.other .cal-date { color: #8f9bae; }
 .cal-cell.selected { background: #f3f4ff; box-shadow: inset 0 0 0 2px #7383e8; }
 .cal-cell:focus-visible { box-shadow: inset 0 0 0 2px #4f63d8; }
 .cal-cell-head { display: flex; align-items: center; justify-content: space-between; }
@@ -90,7 +90,7 @@
 .cal-add { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 8px; background: #eef0ff; color: #4d61d6; opacity: 0; cursor: pointer; transition: opacity .15s ease; }
 .cal-cell:hover .cal-add, .cal-cell.selected .cal-add, .cal-add:focus-visible { opacity: 1; }
 .cal-chips { min-width: 0; display: grid; gap: 3px; }
-.cal-chips .cal-event { height: 22px; padding: 0 6px; border-radius: 6px; font-size: 11.5px; }
+.cal-chips .cal-event { height: 23px; padding: 0 6px; border-radius: 6px; font-size: 12px; }
 .cal-chips .cal-event time { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; }
 .cal-chips .cal-event span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-more-count { padding-left: 6px; color: #6b778c; font-size: 11px; font-weight: 600; }

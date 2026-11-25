@@ -3476,14 +3476,18 @@ a.recording-drive:hover { text-decoration: underline; }
 }
 
 /* ---------- Meet hub 3.0: expressive bento dashboard ---------- */
-.meet-hub { background: #f4f6fb; }
-.meet-hub .attendance-topbar { border-bottom-color: #e8ebf2; background: rgb(255 255 255 / 86%); backdrop-filter: blur(18px); }
+.meet-hub {
+  background: #f3f5f9;
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-synthesis: none;
+}
+.meet-hub .attendance-topbar { border-bottom-color: #dfe4ec; background: #fff; backdrop-filter: none; }
 
 .meet-hub .attendance-main { padding: clamp(18px, 3vw, 38px); }
 
 .meet-start { border: 0; background: linear-gradient(135deg, #5e75e5, #7259d5); color: #fff; box-shadow: 0 12px 28px rgb(89 100 205 / 24%); }
 .meet-start:hover:not(:disabled) { box-shadow: 0 16px 34px rgb(89 100 205 / 30%); }
-.meet-schedule { border: 1px solid #d9dfeb; background: rgb(255 255 255 / 78%); color: #35435e; box-shadow: 0 8px 22px rgb(45 57 89 / 6%); backdrop-filter: blur(10px); }
+.meet-schedule { border: 1px solid #d3dae6; background: #fff; color: #2f3d56; box-shadow: 0 6px 16px rgb(45 57 89 / 7%); backdrop-filter: none; }
 
 .meet-hub-stats { max-width: 1240px; min-height: 78px; margin: 0 auto 22px; display: flex; align-items: center; gap: 8px; padding: 10px; box-sizing: border-box; border: 1px solid #e1e5ed; border-radius: 20px; background: #fff; box-shadow: 0 10px 30px rgb(42 54 86 / 6%); }
 .meet-hub-stats > div { min-width: 142px; display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; align-items: center; column-gap: 10px; padding: 9px 16px; border-right: 1px solid #edf0f5; }
@@ -3492,8 +3496,8 @@ a.recording-drive:hover { text-decoration: underline; }
 .meet-stat-icon.blue { background: #eaf2ff; color: #4c75d5; }
 .meet-stat-icon.coral { background: #fff0ed; color: #d66a57; }
 .meet-hub-stats strong { color: #202c44; font-size: 17px; line-height: 1; }
-.meet-hub-stats small { color: #7b879a; font-size: 11px; }
-.meet-hub-stats > p { margin: 0 12px 0 auto; display: flex; align-items: center; gap: 7px; color: #7b879a; font-size: 11px; }
+.meet-hub-stats small { color: #59677c; font-size: 12px; font-weight: 500; }
+.meet-hub-stats > p { margin: 0 12px 0 auto; display: flex; align-items: center; gap: 7px; color: #59677c; font-size: 12px; font-weight: 500; }
 .meet-hub-stats > p svg { color: #6e7bd3; }
 
 .meet-hub .upcoming, .meet-hub .recording, .meet-hub .meeting-card { border-color: #e0e5ee; box-shadow: 0 10px 30px rgb(42 54 86 / 6%); }
@@ -3514,6 +3518,11 @@ a.recording-drive:hover { text-decoration: underline; }
 .meet-hub .meeting-card .recording-time { width: 54px; text-align: left; }
 .meet-hub .recording { border-radius: 16px; }
 .meet-hub .recording-row { padding: 16px; }
+.meet-hub .recording-info > strong { color: #1d293d; font-weight: 600; }
+.meet-hub .recording-info > span { color: #56657a; font-size: 13px; }
+.meet-hub .recording-time small { color: #647287; font-size: 12px; }
+.meet-hub .recordings-section { color: #536176; font-size: 12px; }
+.meet-hub input::placeholder { color: #657287; opacity: 1; }
 .meet-hub .recordings-empty { background: linear-gradient(145deg, #fafbfe, #f7f8fc); }
 
 @media (max-width: 1000px) {
