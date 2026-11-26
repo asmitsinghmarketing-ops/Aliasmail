@@ -10,6 +10,7 @@ import { HttpError } from './errors.js';
 import { seal, unseal } from './secret-box.js';
 import { isVisibleTo } from './aliases.js';
 import { mailEvents, noteEvents } from './mail-events.js';
+import { sendFirebase } from './firebase-push.js';
 
 const PURPOSE = 'nextspace-push-key';
 const MAX_DEVICES = 10; // per person
@@ -18,10 +19,13 @@ const FRESH_MS = 30 * 60e3; // only mail that arrived in the last half hour (not
 // How notifications are sent; tests swap in their own.
 let send = (...args) => webpush.sendNotification(...args);
 export const useSender = (fn) => { send = fn; };
+let sendNative = sendFirebase;
+export const useNativeSender = (fn) => { sendNative = fn; };
 
 const state = () => {
   const p = (db().push ||= {});
   p.subscriptions ||= [];
+  p.nativeSubscriptions ||= [];
   return p;
 };
 
@@ -45,6 +49,48 @@ export const publicKey = () => keys().publicKey;
 const contact = () => (config.appUrl ? config.appUrl : `mailto:${config.mailbox || 'admin@localhost'}`);
 
 const view = (s) => ({ id: s.id, device: s.device, createdAt: s.createdAt, mail: s.mail, notes: s.notes, tasks: s.tasks, calls: s.calls });
+
+const cleanToken = (value) => {
+  const token = String(value || '').trim();
+  if (!/^[A-Za-z0-9_:\-.]{40,4096}$/.test(token)) throw new HttpError(400, 'Invalid Android notification token');
+  return token;
+};
+
+/** Register or update the installed Android app's Firebase token. */
+export function subscribeNative(person, input = {}) {
+  const token = cleanToken(input.token);
+  const p = state();
+  p.nativeSubscriptions = p.nativeSubscriptions.filter((s) => s.token !== token);
+  const entry = {
+    id: crypto.randomUUID(), person, token,
+    device: String(input.device || 'Nextspace Android app').slice(0, 80),
+    createdAt: new Date().toISOString(),
+    mail: input.mail !== false, notes: input.notes !== false,
+    tasks: input.tasks !== false, calls: input.calls !== false,
+  };
+  p.nativeSubscriptions.push(entry);
+  const mine = p.nativeSubscriptions.filter((s) => s.person === person);
+  for (const old of mine.slice(0, Math.max(0, mine.length - MAX_DEVICES))) p.nativeSubscriptions.splice(p.nativeSubscriptions.indexOf(old), 1);
+  save();
+  return view(entry);
+}
+
+export const nativeDeviceFor = (person, token) => state().nativeSubscriptions.find((s) => s.person === person && s.token === token);
+
+export function unsubscribeNative(person, token) {
+  const clean = cleanToken(token);
+  const p = state();
+  p.nativeSubscriptions = p.nativeSubscriptions.filter((s) => !(s.person === person && s.token === clean));
+  save();
+}
+
+export function updateNativeDevice(person, token, prefs = {}) {
+  const s = nativeDeviceFor(person, cleanToken(token));
+  if (!s) throw new HttpError(404, 'This Android app does not get notifications');
+  for (const kind of ['mail', 'notes', 'tasks', 'calls']) if (kind in prefs) s[kind] = Boolean(prefs[kind]);
+  save();
+  return view(s);
+}
 
 /** This browser allows notifications: { subscription: { endpoint, keys: { p256dh, auth } }, device }. */
 export function subscribe(person, input = {}) {
@@ -104,7 +150,8 @@ export const deviceFor = (person, endpoint) => state().subscriptions.find((s) =>
 /** Send one notification to every device of `person` that wants this kind. */
 export async function notify(person, kind, payload) {
   const targets = state().subscriptions.filter((s) => s.person === person && s[kind] !== false);
-  if (!targets.length) return 0;
+  const nativeTargets = state().nativeSubscriptions.filter((s) => s.person === person && s[kind] !== false);
+  if (!targets.length && !nativeTargets.length) return 0;
   const { publicKey: pub, privateKey } = keys();
   let sent = 0;
   await Promise.all(targets.map(async (s) => {
@@ -126,6 +173,18 @@ export async function notify(person, kind, payload) {
       }
     }
   }));
+  await Promise.all(nativeTargets.map(async (s) => {
+    try {
+      if (await sendNative(s.token, payload)) sent++;
+    } catch (err) {
+      if (err.gone) {
+        state().nativeSubscriptions = state().nativeSubscriptions.filter((x) => x !== s);
+        save();
+      } else {
+        console.warn(`[push] native Android delivery failed: ${String(err.message).slice(0, 160)}`);
+      }
+    }
+  }));
   return sent;
 }
 
@@ -144,7 +203,7 @@ const senderName = (m) => m.from?.name || m.from?.address || 'Someone';
 export function notifyNewMail(records) {
   const fresh = records.filter((r) => !r.arrivedAt || Date.now() - Date.parse(r.arrivedAt) < FRESH_MS);
   if (!fresh.length || fresh.length > 50) return; // nothing new, or a mailbox import: no flood
-  const people = [...new Set(state().subscriptions.filter((s) => s.mail !== false).map((s) => s.person))];
+  const people = [...new Set([...state().subscriptions, ...state().nativeSubscriptions].filter((s) => s.mail !== false).map((s) => s.person))];
   for (const person of people) {
     const theirs = fresh.filter((m) => isVisibleTo(m, person) && m.from?.address !== person && (m.category || 'primary') === 'primary');
     if (!theirs.length) continue;

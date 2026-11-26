@@ -29,6 +29,17 @@ const OWNER_COLOR = '#e8590c';
 
 export default function App() {
   const [joinCode, setJoinCode] = useState(joinCodeOf);
+  useEffect(() => {
+    if (!joinCode) return undefined;
+    const onBack = (event) => {
+      if (document.querySelector('.dialog-backdrop, .nx-room')) return;
+      event.preventDefault();
+      window.history.replaceState(null, '', '/');
+      setJoinCode(null);
+    };
+    window.addEventListener('nextspace:native-back', onBack);
+    return () => window.removeEventListener('nextspace:native-back', onBack);
+  }, [joinCode]);
   if (isInstallPage()) return <Suspense fallback={null}><InstallPage /></Suspense>;
   // A teammate who joined from the link carries on in the app, with the call on screen.
   if (joinCode) {
@@ -63,6 +74,24 @@ function Screen() {
     setActiveMailbox(address);
     setShared(address);
   };
+
+  useEffect(() => {
+    const onBack = (event) => {
+      if (document.querySelector('.dialog-backdrop, .nx-room')) return;
+      if (adminView !== 'mail') {
+        event.preventDefault();
+        setAdminView('mail');
+      } else if (workspace !== 'mail') {
+        event.preventDefault();
+        setWorkspace('mail');
+      } else if (shared) {
+        event.preventDefault();
+        switchMailbox(null);
+      }
+    };
+    window.addEventListener('nextspace:native-back', onBack);
+    return () => window.removeEventListener('nextspace:native-back', onBack);
+  }, [adminView, workspace, shared]); // eslint-disable-line react-hooks/exhaustive-deps
   // Roles can change while someone is signed in; refresh the list of switchable mailboxes.
   const refreshAccount = () => api('/auth/me').then((me) => setUser((u) => (u ? { ...u, mailboxes: me.mailboxes } : u))).catch(() => {});
 

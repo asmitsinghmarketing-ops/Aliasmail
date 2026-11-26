@@ -35,6 +35,31 @@ Native phone-style ringing additionally requires an FCM project and a native inc
 the Firebase configuration is deliberately not embedded until those organization-owned credentials
 are supplied.
 
+### Background incoming calls
+
+The Android project includes an FCM receiver and a high-priority incoming-call notification with
+Accept and Decline actions. To activate it, create a Firebase Android app for
+`com.nexternconsultancy.nextspace`, download `google-services.json` into `android/app/`, and set the
+matching service-account values on the server:
+
+```env
+FIREBASE_PROJECT_ID=your-firebase-project
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-...@your-firebase-project.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+```
+
+Neither file belongs in Git. Each user then opens **Settings → Notifications** once and taps
+**Turn on notifications**. Calls can subsequently ring through Android while Nextspace is in the
+background or its activity has been closed. Android may require the user to allow full-screen call
+notifications in system settings; otherwise the same incoming call appears as a heads-up alert.
+
+## Android navigation and system bars
+
+The native Back button first closes the active dialog, meeting panel, message or compose layer. In
+a team meeting it then minimizes the call; at the app root it moves Nextspace to the background so
+the call is not ended accidentally. The Android activity also applies status-bar, display-cutout and
+gesture-navigation insets around the WebView, and resizes it above the keyboard.
+
 ## Native Android screen sharing
 
 The meeting Share button uses Android MediaProjection inside the installed app. Android always shows

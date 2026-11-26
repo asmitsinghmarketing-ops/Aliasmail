@@ -190,6 +190,13 @@ const config = {
     recordingKeepDays: Math.max(1, Number(env('RECORDING_KEEP_DAYS', '15')) || 15),
     recordingMaxMb: Math.max(100, Number(env('RECORDING_MAX_MB', '5000')) || 5000),
   },
+  // Firebase Cloud Messaging wakes the installed Android app for incoming calls. These are the
+  // three fields from a Firebase service-account JSON file; keep the private key in server env.
+  firebase: {
+    projectId: env('FIREBASE_PROJECT_ID'),
+    clientEmail: env('FIREBASE_CLIENT_EMAIL'),
+    privateKey: env('FIREBASE_PRIVATE_KEY').replace(/\\n/g, '\n'),
+  },
   appUrl: env('APP_URL').replace(/\/$/, ''),
   // Approximate sign-in locations via ipapi.co (sends the visitor's IP there). IP_LOCATION=off disables it.
   ipLocation: env('IP_LOCATION', 'on').toLowerCase() !== 'off',

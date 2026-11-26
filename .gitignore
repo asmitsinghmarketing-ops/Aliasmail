@@ -21,6 +21,8 @@ aliasmail-settings.php
 *.pem
 *.key
 *.p12
+google-services.json
+*firebase*service-account*.json
 
 # Zips in the project root can bundle private settings (deploy/ holds the vetted packages)
 /*.zip

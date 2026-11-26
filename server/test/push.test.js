@@ -13,10 +13,15 @@ const { db } = await import('../src/store.js');
 const { noteEvents } = await import('../src/mail-events.js');
 
 const sent = [];
+const nativeSent = [];
 let fail = null;
 push.useSender(async (sub, body) => {
   if (fail) throw fail;
   sent.push({ endpoint: sub.endpoint, ...JSON.parse(body) });
+});
+push.useNativeSender(async (token, payload) => {
+  nativeSent.push({ token, ...payload });
+  return true;
 });
 const flush = () => new Promise((r) => setTimeout(r, 20));
 const device = (n) => ({ subscription: { endpoint: `https://push.example/${n}`, keys: { p256dh: `key${n}`, auth: `auth${n}` } }, device: `Phone ${n}` });
@@ -89,4 +94,18 @@ test('task and call notification preferences are delivered independently', async
   sent.length = 0;
   assert.equal(await push.notify('sara@example.com', 'tasks', { title: 'Task' }), 0);
   assert.equal(await push.notify('sara@example.com', 'calls', { title: 'Call' }), 0);
+});
+
+test('installed Android apps receive native call pushes and keep independent preferences', async () => {
+  const token = `native:${'a'.repeat(80)}`;
+  push.subscribeNative('nina@example.com', { token, device: 'Nextspace Android app' });
+  nativeSent.length = 0;
+  assert.equal(await push.notify('nina@example.com', 'calls', { kind: 'call', callId: 'call-1', title: 'Incoming call' }), 1);
+  assert.deepEqual(nativeSent.map((item) => [item.token, item.kind, item.callId]), [[token, 'call', 'call-1']]);
+
+  push.updateNativeDevice('nina@example.com', token, { calls: false });
+  nativeSent.length = 0;
+  assert.equal(await push.notify('nina@example.com', 'calls', { kind: 'call', callId: 'call-2' }), 0);
+  push.unsubscribeNative('nina@example.com', token);
+  assert.equal(push.nativeDeviceFor('nina@example.com', token), undefined);
 });

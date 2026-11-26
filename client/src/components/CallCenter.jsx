@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api } from '../api.js';
 import { callState, joinCall, watchCall } from '../calls.js';
 import { subscribe } from '../live.js';
+import { dismissNativeCall, watchNativeCallActions } from '../nativeCalls.js';
 import Avatar from './Avatar.jsx';
 import CallRoom from './CallRoom.jsx';
 import Icon from './Icon.jsx';
@@ -155,6 +156,7 @@ export default function CallCenter() {
     setError('');
     setCall(null); // stop ringing the instant Accept or Decline is pressed
     closeDesktopRing(active.id);
+    void dismissNativeCall(active.id);
     try {
       if (choice === 'accept') await joinCall(active.id, { video });
       else await api(`/calls/${active.id}/respond`, { method: 'POST', body: { answer: 'decline' } });
@@ -186,17 +188,32 @@ export default function CallCenter() {
     showFromUrl(window.location.href);
     const onWorker = (event) => event.data?.type === 'open' && showFromUrl(event.data.url);
     navigator.serviceWorker?.addEventListener('message', onWorker);
+    let stopNative = () => {};
+    void watchNativeCallActions(async ({ action, callId }) => {
+      try {
+        const found = await api(`/calls/${encodeURIComponent(callId)}`);
+        if (!found.ringingForMe) return void dismissNativeCall(callId);
+        if (action === 'accept') await answer(found, 'accept', found.video);
+        else if (action === 'decline') await answer(found, 'decline');
+        else setCall(found);
+      } catch {
+        void dismissNativeCall(callId);
+      }
+      return undefined;
+    }).then((stopNativeListener) => { stopNative = stopNativeListener; });
     const stop = subscribe((message) => {
       if (message.type === 'incoming-call') {
         setCall(message.call);
         desktopRing(message.call);
       } else if (message.type === 'call-ended') {
         closeDesktopRing(message.id);
+        void dismissNativeCall(message.id);
         if (message.id === current.current?.id) setCall(null);
       }
     });
     return () => {
       navigator.serviceWorker?.removeEventListener('message', onWorker);
+      stopNative();
       stop();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

@@ -1097,6 +1097,38 @@ export default function CallRoom({ state }) {
     else room.current?.requestFullscreen?.().catch(() => {});
   }, []);
 
+  // Android Back behaves like a phone app: close the nearest meeting surface first, then make a
+  // team call small so work can continue. A second Back is left to Android to background the app.
+  useEffect(() => {
+    const onBack = (event) => {
+      if (document.querySelector('.dialog-backdrop')) return;
+      if (document.fullscreenElement) {
+        event.preventDefault();
+        document.exitFullscreen().catch(() => {});
+      } else if (menu) {
+        event.preventDefault();
+        setMenu(null);
+      } else if (confirmRecord) {
+        event.preventDefault();
+        setConfirmRecord(false);
+      } else if (mobileShareHelp) {
+        event.preventDefault();
+        setMobileShareHelp(false);
+      } else if (panel) {
+        event.preventDefault();
+        setPanel(null);
+      } else if (readyOpen) {
+        event.preventDefault();
+        setReadyOpen(false);
+      } else if (!minimized && !state.guest) {
+        event.preventDefault();
+        setMinimized(true);
+      }
+    };
+    window.addEventListener('nextspace:native-back', onBack);
+    return () => window.removeEventListener('nextspace:native-back', onBack);
+  }, [menu, confirmRecord, mobileShareHelp, panel, readyOpen, minimized, state.guest]);
+
   // Keyboard shortcuts, and holding Space to talk while muted.
   const holding = useRef(false);
   useEffect(() => {

@@ -4,7 +4,7 @@ import { Router } from 'express';
 import { requireAuth } from '../auth.js';
 import { HttpError } from '../errors.js';
 import { personOf } from '../team.js';
-import { deviceFor, devicesOf, notify, publicKey, subscribe, unsubscribe, updateDevice } from '../push.js';
+import { deviceFor, devicesOf, nativeDeviceFor, notify, publicKey, subscribe, subscribeNative, unsubscribe, unsubscribeNative, updateDevice, updateNativeDevice } from '../push.js';
 
 const router = Router();
 router.use(requireAuth());
@@ -31,6 +31,25 @@ router.post('/unsubscribe', (req, res) => {
 
 router.patch('/device', (req, res) => {
   res.json(updateDevice(personOf(req.user), String(req.body?.endpoint || ''), req.body ?? {}));
+});
+
+router.post('/native/status', (req, res) => {
+  const token = String(req.body?.token || '');
+  const device = token ? nativeDeviceFor(personOf(req.user), token) : null;
+  res.json({ device: device ? { mail: device.mail, notes: device.notes, tasks: device.tasks, calls: device.calls } : null });
+});
+
+router.post('/native/subscribe', (req, res) => {
+  res.status(201).json(subscribeNative(personOf(req.user), req.body ?? {}));
+});
+
+router.post('/native/unsubscribe', (req, res) => {
+  unsubscribeNative(personOf(req.user), req.body?.token);
+  res.json({ ok: true });
+});
+
+router.patch('/native/device', (req, res) => {
+  res.json(updateNativeDevice(personOf(req.user), req.body?.token, req.body ?? {}));
 });
 
 /** A test notification to every device of the signed-in person. */

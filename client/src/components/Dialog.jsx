@@ -40,6 +40,16 @@ export function DialogHost() {
     return () => window.removeEventListener('keydown', onKey, true);
   });
 
+  useEffect(() => {
+    if (!dialog) return undefined;
+    const onBack = (event) => {
+      event.preventDefault();
+      finish(false);
+    };
+    window.addEventListener('nextspace:native-back', onBack);
+    return () => window.removeEventListener('nextspace:native-back', onBack);
+  });
+
   if (!dialog) return null;
   const { title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', danger, input } = dialog;
 
