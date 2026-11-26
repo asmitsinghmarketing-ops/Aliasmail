@@ -111,8 +111,10 @@ test('a call rings, connects, passes connection details between windows, and end
 
   // If any endpoint cannot negotiate the SFU, the whole room moves to the same tested backup path.
   const fallback = await json('john', `/calls/${started.call.id}/media/fallback`, { peerId: started.peerId });
-  assert.equal(fallback.media, 'p2p');
-  await waitFor(mary.got, (m) => m.type === 'call-room' && m.call.id === started.call.id && m.call.media === 'p2p');
+  assert.equal(fallback.call.media, 'p2p');
+  assert.ok(fallback.iceServers.some((server) => String(server.urls).includes('turn:')));
+  const fallbackRoom = await waitFor(mary.got, (m) => m.type === 'call-room' && m.call.id === started.call.id && m.call.media === 'p2p');
+  assert.ok(fallbackRoom.iceServers.some((server) => String(server.urls).includes('turn:')));
 
   const sent = await call('john', `/calls/${started.call.id}/signal`, { peerId: started.peerId, to: joined.peerId, data: { description: { type: 'offer', sdp: 'x' } } });
   assert.equal(sent.status, 204);

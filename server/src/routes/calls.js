@@ -98,11 +98,11 @@ export function iceServersFor(who, settings = config.calls, now = Date.now()) {
 }
 
 /** Tell everyone in the call how it stands now. Windows work out what changed from this. */
-function tell(call) {
+function tell(call, { refreshIce = false } = {}) {
   const view = publicCall(call);
   const guestView = publicCall(call, { forGuest: true });
   for (const address of new Set([...call.peers.values()].map((peer) => peer.address))) {
-    callEvents.emit('room', address, isGuest(address) ? guestView : view);
+    callEvents.emit('room', address, isGuest(address) ? guestView : view, refreshIce ? iceServersFor(address) : undefined);
   }
 }
 
@@ -652,12 +652,14 @@ router.post('/:id/state', (req, res) => {
 
 /** An SFU negotiation failed for one endpoint: every participant must move to the same topology. */
 router.post('/:id/media/fallback', (req, res) => {
-  const { call } = peerFor(req);
+  const { call, me } = peerFor(req);
   if (call.media === 'sfu') {
     call.media = 'p2p';
-    tell(call);
+    // Every participant must rebuild the P2P backup with a current relay sign-in. The ICE list
+    // captured when they joined may predate TURN startup or be old after a long-running call.
+    tell(call, { refreshIce: true });
   }
-  res.json(publicCall(call));
+  res.json({ call: publicCall(call), iceServers: iceServersFor(me) });
 });
 
 router.post('/:id/chat', (req, res) => {
@@ -753,7 +755,7 @@ guestRouter.get('/:code/events', (req, res) => {
   const write = (message) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(message)}\n\n${pad}`); };
   res.write(`retry: 3000\n\n${pad}`);
   const listeners = {
-    room: (to, view) => to === address && write({ type: 'call-room', call: view }),
+    room: (to, view, iceServers) => to === address && write({ type: 'call-room', call: view, ...(iceServers && { iceServers }) }),
     signal: (to, signal) => to === address && write({ type: 'call-signal', ...signal }),
     lobby: (to, payload) => {
       if (to !== address) return;
@@ -783,12 +785,12 @@ guestRouter.post('/:code/state', (req, res) => {
 });
 
 guestRouter.post('/:code/media/fallback', (req, res) => {
-  const { call } = guestPeer(req);
+  const { call, peer } = guestPeer(req);
   if (call.media === 'sfu') {
     call.media = 'p2p';
-    tell(call);
+    tell(call, { refreshIce: true });
   }
-  res.json(publicCall(call, { forGuest: true }));
+  res.json({ call: publicCall(call, { forGuest: true }), iceServers: iceServersFor(peer.address) });
 });
 
 guestRouter.post('/:code/chat', (req, res) => {

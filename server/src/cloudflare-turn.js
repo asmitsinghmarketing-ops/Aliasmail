@@ -63,7 +63,10 @@ export function cloudflareTurnServers(now = Date.now()) {
 
 /** Get the first sign-in at startup and keep it fresh. */
 export function startCloudflareTurn() {
-  if (!cloudflareTurnEnabled()) return;
-  renewCloudflareTurn();
+  if (!cloudflareTurnEnabled()) return null;
+  const first = renewCloudflareTurn();
   setInterval(() => renewCloudflareTurn(), 30 * 60_000).unref();
+  // Let startup wait for the first credential. Without this, an immediate call receives STUN only
+  // even though TURN is configured, and cannot use the relay if SFU later needs its backup path.
+  return first;
 }

@@ -103,7 +103,7 @@ export function attachLive(server) {
     const onNotification = (to, notification) => to === who && send(ws, { type: 'notification', notification });
     notificationEvents.on('notification', onNotification);
     const onCall = (to, call) => to === who && send(ws, { type: 'incoming-call', call });
-    const onCallRoom = (to, call) => to === who && send(ws, { type: 'call-room', call });
+    const onCallRoom = (to, call, iceServers) => to === who && send(ws, { type: 'call-room', call, ...(iceServers && { iceServers }) });
     const onCallSignal = (to, signal) => to === who && send(ws, { type: 'call-signal', ...signal });
     const onCallEnded = (to, response) => to === who && send(ws, { type: 'call-ended', ...response });
     callEvents.on('call', onCall);

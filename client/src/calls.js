@@ -84,6 +84,8 @@ let sfu = null;
 let sfuMedia = new Map(); // peer id -> { audio, camera, screen }
 let sfuProblemShown = false;
 let sfuNetwork = new WeakMap();
+let sfuRetryCount = 0;
+let sfuRetryTimer = null;
 
 const tracks = { audio: () => mic, camera: () => camera, screen: () => screen };
 
@@ -103,11 +105,35 @@ function receiveSfuTrack(peerId, name, track) {
 }
 
 function reportSfuError(err) {
-  if (sfuProblemShown || state.phase !== 'in-call') return;
+  if (state.phase !== 'in-call') return;
+  // A short network handoff or one failed renegotiation should not move every participant away
+  // from SFU. Recreate this endpoint once; only a repeated failure changes the room topology.
+  if (!sfuRetryCount && navigator.onLine !== false) {
+    sfuRetryCount = 1;
+    set({ notice: 'Reconnecting media…' });
+    sfu?.close();
+    sfu = null;
+    sfuMedia = new Map();
+    clearTimeout(sfuRetryTimer);
+    sfuRetryTimer = setTimeout(() => {
+      sfuRetryTimer = null;
+      if (state.phase !== 'in-call' || !usesSfu()) return;
+      ensureSfu();
+      sfu?.sync(state.call).catch(() => {});
+    }, 1200);
+    return;
+  }
+  if (navigator.onLine === false) {
+    sfu?.close();
+    sfu = null;
+    set({ notice: OFFLINE_NOTICE });
+    return;
+  }
+  if (sfuProblemShown) return;
   sfuProblemShown = true;
   set({ notice: 'Cloudflare media couldn’t connect, so this meeting is switching to its backup connection.' });
   transport?.post('/media/fallback', { peerId: state.me, reason: String(err?.message || '').slice(0, 160) })
-    .then(applyCall)
+    .then((result) => applyCall(result.call || result, result.iceServers))
     .catch(() => {});
 }
 
@@ -119,7 +145,10 @@ function ensureSfu() {
     iceServers,
     onCall: applyCall,
     onMedia: receiveSfuTrack,
-    onState: publishPeers,
+    onState: () => {
+      if (state.notice === 'Reconnecting media…' && sfu?.peerConnections().some((pc) => pc.connectionState === 'connected')) set({ notice: '' });
+      publishPeers();
+    },
     onError: reportSfuError,
   });
   sfu.start({ audio: mic, camera, screen }).catch(() => {});
@@ -340,6 +369,9 @@ async function rejoin() {
   sfu = null;
   sfuMedia = new Map();
   sfuProblemShown = false;
+  sfuRetryCount = 0;
+  clearTimeout(sfuRetryTimer);
+  sfuRetryTimer = null;
   sfuNetwork = new WeakMap();
   if (joined.iceServers) iceServers = joined.iceServers;
   set({ me: joined.peerId, notice: '' });
@@ -625,8 +657,11 @@ function publishPeers() {
       screenStream: connection?.media.screen || null,
     };
   });
+  const backupRecovered = peers.some((peer) => peer.connection === 'connected')
+    && state.notice === 'Cloudflare media couldn’t connect, so this meeting is switching to its backup connection.';
   set({
     peers,
+    ...(backupRecovered && { notice: '' }),
     ...(stuckNames.length && {
       notice: `Can’t connect to ${stuckNames.join(', ')}. A network (often office Wi-Fi, a mobile hotspot or a VPN) is blocking a direct connection. Try another network, or ask your administrator to set up a call relay (TURN).`,
     }),
@@ -662,6 +697,10 @@ function catchUp() {
   if (state.notice === OFFLINE_NOTICE) set({ notice: '' });
   sendState();
   transport?.refresh?.().then(applyCall).catch(() => {});
+  if (usesSfu() && !sfu) {
+    ensureSfu();
+    sfu?.sync(state.call).catch(() => {});
+  }
   for (const connection of connections.values()) {
     if (!['connected', 'new'].includes(connection.pc.connectionState)) recover(connection);
   }
@@ -704,6 +743,9 @@ function tearDown() {
   sfu = null;
   sfuMedia = new Map();
   sfuProblemShown = false;
+  sfuRetryCount = 0;
+  clearTimeout(sfuRetryTimer);
+  sfuRetryTimer = null;
   sfuNetwork = new WeakMap();
   stopDevices();
   transport = null;
@@ -717,9 +759,10 @@ function finish(reason) {
 }
 
 /** The server's view of the call: connect to whoever is new, drop whoever has gone. */
-function applyCall(call) {
+function applyCall(call, servers) {
   if (state.phase !== 'in-call' || call.id !== state.call?.id) return;
   if (call.status === 'ended') return finish(call.reason);
+  if (Array.isArray(servers) && servers.length) iceServers = servers;
   const others = call.peers.filter((peer) => peer.id !== state.me);
   const ids = new Set(others.map((peer) => peer.id));
   for (const id of [...connections.keys()]) if (!ids.has(id)) disconnect(id);
@@ -743,7 +786,7 @@ function applyCall(call) {
 }
 
 function onLive(message) {
-  if (message.type === 'call-room') applyCall(message.call);
+  if (message.type === 'call-room') applyCall(message.call, message.iceServers);
   else if (message.type === 'call-signal' && message.id === state.call?.id && message.to === state.me && message.data?.chat) {
     addChat([message.data.chat], !chatOpen);
   } else if (message.type === 'call-signal' && message.id === state.call?.id && message.to === state.me) {

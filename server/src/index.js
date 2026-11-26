@@ -193,13 +193,15 @@ app.use((err, req, res, next) => {
   res.status([502, 503, 504].includes(status) ? 500 : status).json({ error: message || 'Something went wrong' });
 });
 
+// Fetch the first short-lived TURN sign-in before accepting calls. A failed provider request is
+// logged by cloudflare-turn and startup continues, so the rest of Nextspace remains available.
+await startCloudflareTurn();
 const server = app.listen(config.port, () => console.log(`Nextspace API running on http://localhost:${config.port}`));
 // Live WebSocket for the mailbox: mail changes, instant notes, who is online and typing.
 attachLive(server);
 // Notifications for new mail and instant notes.
 startPush();
 startEmailAutomations();
-startCloudflareTurn();
 checkDeployment();
 
 if (config.configured) {
