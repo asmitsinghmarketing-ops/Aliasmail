@@ -32,7 +32,7 @@ public class NativeCallsPlugin extends Plugin {
     @Override
     public void load() {
         active = new WeakReference<>(this);
-        emitPending();
+        if (MainActivity.isForeground()) emitPending();
     }
 
     static void saveToken(Context context, String token) {
@@ -48,6 +48,14 @@ public class NativeCallsPlugin extends Plugin {
     static void deliver(Context context, String action, String callId) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(ACTION, action).putString(CALL_ID, callId).apply();
+        NativeCallsPlugin plugin = active.get();
+        // Opening the camera or microphone while the Activity is still backgrounded is rejected
+        // by recent Android versions. Keep the answer until onResume, then let JavaScript join
+        // with the media type that was attached to the call.
+        if (plugin != null && MainActivity.isForeground()) plugin.emitPending();
+    }
+
+    static void onForeground() {
         NativeCallsPlugin plugin = active.get();
         if (plugin != null) plugin.emitPending();
     }
@@ -115,6 +123,12 @@ public class NativeCallsPlugin extends Plugin {
 
     @PluginMethod
     public void consumeAction(PluginCall call) {
+        // The JavaScript listener is installed while the WebView is booting, before onResume.
+        // Leave the action queued until Android has actually foregrounded the Activity.
+        if (!MainActivity.isForeground()) {
+            call.resolve(new JSObject());
+            return;
+        }
         String action = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ACTION, "");
         String callId = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(CALL_ID, "");
         getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(ACTION).remove(CALL_ID).apply();

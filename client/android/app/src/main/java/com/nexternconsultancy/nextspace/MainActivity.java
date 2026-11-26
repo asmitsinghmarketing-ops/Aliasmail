@@ -11,6 +11,12 @@ import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    private static volatile boolean foreground = false;
+
+    static boolean isForeground() {
+        return foreground;
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NativeScreenSharePlugin.class);
@@ -53,5 +59,18 @@ public class MainActivity extends BridgeActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         NativeCallsPlugin.acceptIntent(this, intent);
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        foreground = true;
+        NativeCallsPlugin.onForeground();
+    }
+
+    @Override
+    public void onPause() {
+        foreground = false;
+        super.onPause();
     }
 }

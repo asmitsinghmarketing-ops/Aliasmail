@@ -937,6 +937,7 @@ const canShareScreen = () => canNativeScreenShare() || Boolean(navigator.mediaDe
 export { canShareScreen };
 
 let screenRedraw = null; // keeps a shared photo's picture flowing (see sharePicture)
+let screenStarting = false; // two quick taps must not open two Android/browser capture prompts
 
 function stopScreen() {
   clearInterval(screenRedraw);
@@ -955,12 +956,20 @@ export async function toggleScreen() {
     stopScreen();
     return true;
   }
+  if (screenStarting) return true;
   if (!canShareScreen()) return false;
+  screenStarting = true;
   try {
     const track = canNativeScreenShare()
       ? await startNativeScreenShare(() => { if (screen?.nextspaceNativeScreen) stopScreen(); })
       : (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false })).getVideoTracks()[0];
     if (!track) return false;
+    // The permission sheet can outlive a call. Do not start a ghost share after it has ended.
+    if (state.phase !== 'in-call') {
+      track.stop();
+      await track.nextspaceRelease?.();
+      return false;
+    }
     // Keep text sharp rather than motion smooth.
     track.contentHint = 'detail';
     track.onended = stopScreen; // The browser's own "Stop sharing" button.
@@ -972,6 +981,8 @@ export async function toggleScreen() {
   } catch (err) {
     if (err?.name !== 'NotAllowedError') set({ notice: mediaError(err, 'screen') });
     return false;
+  } finally {
+    screenStarting = false;
   }
 }
 

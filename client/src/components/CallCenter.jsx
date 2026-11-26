@@ -4,13 +4,14 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api } from '../api.js';
 import { callState, joinCall, watchCall } from '../calls.js';
 import { subscribe } from '../live.js';
-import { dismissNativeCall, watchNativeCallActions } from '../nativeCalls.js';
+import { dismissNativeCall, nativeCallsAvailable, watchNativeCallActions } from '../nativeCalls.js';
 import Avatar from './Avatar.jsx';
 import CallRoom from './CallRoom.jsx';
 import Icon from './Icon.jsx';
 
 let audioContext = null;
 let audioUnlocked = false;
+const desktopRingTimers = new Map();
 
 function contextForCall() {
   const Audio = window.AudioContext || window.webkitAudioContext;
@@ -102,30 +103,55 @@ function startCallVibration() {
 }
 
 function desktopRing(call) {
-  if (document.visibilityState === 'visible' || !('Notification' in window) || Notification.permission !== 'granted') return;
-  navigator.serviceWorker?.ready.then((worker) => worker.showNotification(`Incoming call from ${call.fromName}`, {
-    body: 'Open Nextspace to answer the call.',
-    tag: `call-${call.id}`,
-    renotify: true,
-    requireInteraction: true,
-    silent: false,
-    vibrate: [700, 250, 700, 350, 1100],
-    timestamp: Date.now(),
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
-    data: { url: `/?call=${encodeURIComponent(call.id)}`, callId: call.id },
-    actions: [
-      { action: 'accept-call', title: 'Accept' },
-      { action: 'decline-call', title: 'Decline' },
-    ],
-  })).catch(() => {});
+  // The installed Android app has its own FCM call notification. Creating a browser notification
+  // from its WebView as well would show the same call twice.
+  if (nativeCallsAvailable() || document.visibilityState === 'visible' || !('Notification' in window) || Notification.permission !== 'granted') return;
+  clearTimeout(desktopRingTimers.get(call.id));
+  // Web Push normally arrives too. Give it a moment, then create a notification only as a fallback
+  // if the push service did not already create one with this call's tag.
+  desktopRingTimers.set(call.id, setTimeout(async () => {
+    desktopRingTimers.delete(call.id);
+    if (document.visibilityState === 'visible') return;
+    try {
+      const worker = await navigator.serviceWorker.ready;
+      const tag = `call-${call.id}`;
+      if ((await worker.getNotifications({ tag })).length) return;
+      await worker.showNotification(`Incoming call from ${call.fromName}`, {
+        body: 'Open Nextspace to answer the call.', tag, renotify: false, requireInteraction: true, silent: false,
+        vibrate: [700, 250, 700, 350, 1100], timestamp: Date.now(), icon: '/icon-192.png', badge: '/icon-192.png',
+        data: { url: `/?call=${encodeURIComponent(call.id)}`, callId: call.id },
+        actions: [{ action: 'accept-call', title: 'Accept' }, { action: 'decline-call', title: 'Decline' }],
+      });
+    } catch { /* system notifications are a best-effort fallback */ }
+  }, 1200));
 }
 
 function closeDesktopRing(id) {
+  clearTimeout(desktopRingTimers.get(id));
+  desktopRingTimers.delete(id);
   navigator.serviceWorker?.ready
     .then((worker) => worker.getNotifications({ tag: `call-${id}` }))
     .then((notifications) => notifications.forEach((notification) => notification.close()))
     .catch(() => {});
+}
+
+function waitForForeground() {
+  if (document.visibilityState === 'visible') return Promise.resolve();
+  return new Promise((resolve) => {
+    let timer;
+    const done = () => {
+      document.removeEventListener('visibilitychange', visible);
+      clearTimeout(timer);
+      resolve();
+    };
+    const visible = () => {
+      if (document.visibilityState === 'visible') done();
+    };
+    document.addEventListener('visibilitychange', visible);
+    // A notification click normally foregrounds the app immediately. Do not leave the action
+    // stuck forever if a browser reports visibility late or refuses to focus its existing tab.
+    timer = setTimeout(done, 5000);
+  });
 }
 
 export default function CallCenter() {
@@ -134,6 +160,7 @@ export default function CallCenter() {
   const [busy, setBusy] = useState(false);
   const room = useSyncExternalStore(watchCall, callState);
   const current = useRef(null);
+  const answering = useRef(new Set());
   current.current = call;
 
   useEffect(() => {
@@ -152,18 +179,28 @@ export default function CallCenter() {
   }, []);
 
   const answer = async (active, choice, video) => {
+    // A native intent, a service-worker message and the on-screen button can converge on the
+    // same call as the app returns to the foreground. Only the first response may join/decline.
+    if (answering.current.has(active.id)) return;
+    answering.current.add(active.id);
     setBusy(true);
     setError('');
     setCall(null); // stop ringing the instant Accept or Decline is pressed
     closeDesktopRing(active.id);
     void dismissNativeCall(active.id);
     try {
-      if (choice === 'accept') await joinCall(active.id, { video });
+      if (choice === 'accept') {
+        // Android and mobile browsers reject camera/microphone capture while still backgrounded.
+        // The notification opens Nextspace; begin the selected voice/video mode once it is visible.
+        await waitForForeground();
+        await joinCall(active.id, { video });
+      }
       else await api(`/calls/${active.id}/respond`, { method: 'POST', body: { answer: 'decline' } });
     } catch (err) {
       setError(err.message);
       setTimeout(() => setError(''), 6000);
     } finally {
+      answering.current.delete(active.id);
       setBusy(false);
     }
   };

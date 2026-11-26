@@ -73,11 +73,13 @@ self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
     // Nextspace is open and in front: it shows its own pop-up, so don't ring twice.
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    if (!['test', 'call'].includes(data.kind) && windows.some((w) => w.focused && w.visibilityState === 'visible')) return;
+    if (data.kind !== 'test' && windows.some((w) => w.focused && w.visibilityState === 'visible')) return;
     await self.registration.showNotification(data.title || 'Nextspace', {
       body: data.body || '',
       tag: data.tag || undefined,
-      renotify: Boolean(data.tag),
+      // Retries or a live-connection fallback can reuse a tag. Replace silently instead of
+      // vibrating/ringing twice for the same event.
+      renotify: false,
       icon: '/icon-192.png',
       badge: '/icon-192.png',
       data: { url: data.url || '/', callId: data.callId || null },

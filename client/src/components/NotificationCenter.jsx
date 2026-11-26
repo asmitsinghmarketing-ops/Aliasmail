@@ -20,15 +20,25 @@ export default function NotificationCenter({ onNavigate }) {
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState('');
   const root = useRef(null);
+  const known = useRef(new Set());
 
-  const load = () => api('/notifications').then((data) => { setItems(data.items); setUnread(data.unread); }).catch(() => {});
+  const load = () => api('/notifications').then((data) => {
+    known.current = new Set(data.items.map((item) => item.id));
+    setItems(data.items);
+    setUnread(data.unread);
+  }).catch(() => {});
 
   useEffect(() => {
     load();
     const stop = subscribe((message) => {
       if (message.type !== 'notification' || !message.notification) return;
+      // A refresh and the live event can finish in either order. Only a genuinely new item may
+      // increase the badge; the item list already de-duplicates by the server notification id.
+      if (!known.current.has(message.notification.id)) {
+        known.current.add(message.notification.id);
+        setUnread((count) => count + 1);
+      }
       setItems((current) => [message.notification, ...current.filter((item) => item.id !== message.notification.id)].slice(0, 50));
-      setUnread((count) => count + 1);
     });
     const focus = () => load();
     window.addEventListener('focus', focus);
