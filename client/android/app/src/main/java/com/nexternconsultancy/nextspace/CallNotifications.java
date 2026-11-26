@@ -13,6 +13,7 @@ import androidx.core.app.Person;
 
 final class CallNotifications {
     private static final String CALLS = "nextspace_incoming_calls";
+    private static final String ONGOING_CALLS = "nextspace_ongoing_calls";
     private static final String MESSAGES = "nextspace_notifications";
     private CallNotifications() {}
 
@@ -27,6 +28,12 @@ final class CallNotifications {
         calls.enableVibration(true);
         calls.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build());
         manager.createNotificationChannel(calls);
+        NotificationChannel ongoing = new NotificationChannel(ONGOING_CALLS, "Ongoing calls", NotificationManager.IMPORTANCE_LOW);
+        ongoing.setDescription("Calls currently active in Nextspace");
+        ongoing.setSound(null, null);
+        ongoing.enableVibration(false);
+        ongoing.setShowBadge(false);
+        manager.createNotificationChannel(ongoing);
         manager.createNotificationChannel(new NotificationChannel(MESSAGES, "Nextspace notifications", NotificationManager.IMPORTANCE_DEFAULT));
     }
 
@@ -36,9 +43,9 @@ final class CallNotifications {
         return PendingIntent.getBroadcast(context, id(callId) + offset, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
-    private static PendingIntent open(Context context, String callId) {
+    private static PendingIntent open(Context context, String callId, String action) {
         Intent intent = new Intent(context, MainActivity.class)
-            .putExtra("nextspace_call_action", "open").putExtra("nextspace_call_id", callId)
+            .putExtra("nextspace_call_action", action).putExtra("nextspace_call_id", callId)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         return PendingIntent.getActivity(context, id(callId) + 3, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
@@ -47,7 +54,7 @@ final class CallNotifications {
         channels(context);
         PendingIntent accept = action(context, callId, "accept", 1);
         PendingIntent decline = action(context, callId, "decline", 2);
-        PendingIntent open = open(context, callId);
+        PendingIntent open = open(context, callId, "open");
         Person caller = new Person.Builder().setName(title.replaceFirst("^Incoming (video|voice) call from ", "")).setImportant(true).build();
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, CALLS)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -59,6 +66,23 @@ final class CallNotifications {
             .setTimeoutAfter(90_000)
             .setContentIntent(open).setFullScreenIntent(open, true)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, decline, accept));
+        context.getSystemService(NotificationManager.class).notify(id(callId), notification.build());
+    }
+
+    static void ongoing(Context context, String callId, String title, boolean video, long startedAt) {
+        channels(context);
+        PendingIntent resume = open(context, callId, "resume");
+        NotificationCompat.Builder notification = new NotificationCompat.Builder(context, ONGOING_CALLS)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title == null || title.isEmpty() ? "Nextspace call" : title)
+            .setContentText((video ? "Video" : "Voice") + " call in progress · Tap to return")
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true).setSilent(true)
+            .setAutoCancel(false).setOngoing(true)
+            .setContentIntent(resume);
+        if (startedAt > 0) notification.setWhen(startedAt).setUsesChronometer(true).setShowWhen(true);
         context.getSystemService(NotificationManager.class).notify(id(callId), notification.build());
     }
 

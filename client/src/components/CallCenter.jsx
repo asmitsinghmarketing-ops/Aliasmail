@@ -160,8 +160,10 @@ export default function CallCenter() {
   const [busy, setBusy] = useState(false);
   const room = useSyncExternalStore(watchCall, callState);
   const current = useRef(null);
+  const currentRoom = useRef(room);
   const answering = useRef(new Set());
   current.current = call;
+  currentRoom.current = room;
 
   useEffect(() => {
     if (audioUnlocked) return undefined;
@@ -227,6 +229,14 @@ export default function CallCenter() {
     navigator.serviceWorker?.addEventListener('message', onWorker);
     let stopNative = () => {};
     void watchNativeCallActions(async ({ action, callId }) => {
+      if (action === 'resume') {
+        const active = currentRoom.current;
+        if (active.phase === 'in-call' && active.call?.id === callId) {
+          window.dispatchEvent(new CustomEvent('nextspace:resume-call', { detail: { callId } }));
+        }
+        void dismissNativeCall(callId);
+        return;
+      }
       try {
         const found = await api(`/calls/${encodeURIComponent(callId)}`);
         if (!found.ringingForMe) return void dismissNativeCall(callId);

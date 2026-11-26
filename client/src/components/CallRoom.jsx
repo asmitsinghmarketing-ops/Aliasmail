@@ -11,6 +11,7 @@ import { createCallRecorder, downloadRecording, recordingSupported } from '../ca
 import { createRecordingUpload } from '../recordingUpload.js';
 import { hrefFor, LINK } from '../linkify.js';
 import { onlineNow } from '../live.js';
+import { dismissNativeCall, showNativeOngoingCall } from '../nativeCalls.js';
 import Avatar from './Avatar.jsx';
 import { colorFor } from '../format.js';
 import Icon from './Icon.jsx';
@@ -957,6 +958,7 @@ const readLayout = () => {
 
 export default function CallRoom({ state }) {
   const [minimized, setMinimized] = useState(false);
+  const [miniHidden, setMiniHidden] = useState(false);
   const [panel, setPanel] = useState(null); // 'people' | 'chat' | 'info' | 'devices'
   const [menu, setMenu] = useState(null); // 'react' | 'more'
   const [chromeHidden, setChromeHidden] = useState(false); // phones: tap the picture to hide the controls
@@ -1247,6 +1249,34 @@ export default function CallRoom({ state }) {
       ? peers.map((peer) => personName(peer.name)).join(', ')
       : ringing.length ? `Calling ${ringing.map((invite) => invite.name).join(', ')}…` : call.code ? 'Your meeting' : 'Waiting for others…';
 
+  // A hidden app, or a mini window the person explicitly closes, keeps one quiet Android
+  // notification. Tapping it returns to the full call without creating another call session.
+  useEffect(() => {
+    const syncNotification = () => {
+      if (miniHidden || document.visibilityState === 'hidden') {
+        void showNativeOngoingCall({ callId: call.id, title, video: call.video, startedAt: state.startedAt });
+      } else {
+        void dismissNativeCall(call.id);
+      }
+    };
+    syncNotification();
+    document.addEventListener('visibilitychange', syncNotification);
+    return () => {
+      document.removeEventListener('visibilitychange', syncNotification);
+      void dismissNativeCall(call.id);
+    };
+  }, [miniHidden, call.id, call.video, state.startedAt, title]);
+
+  useEffect(() => {
+    const resume = (event) => {
+      if (event.detail?.callId !== call.id) return;
+      setMiniHidden(false);
+      setMinimized(false);
+    };
+    window.addEventListener('nextspace:resume-call', resume);
+    return () => window.removeEventListener('nextspace:resume-call', resume);
+  }, [call.id]);
+
   const tiles = [
     {
       key: me, isMe: true, name: personName(myPeer?.name) || 'You', address: myPeer?.address, stream: state.localCamera, videoOn: state.cameraOn,
@@ -1358,6 +1388,8 @@ export default function CallRoom({ state }) {
     return () => window.removeEventListener('resize', keepInView);
   }, [minimized, Boolean(miniPosition)]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  if (miniHidden) return voicesPlayed;
+
   if (minimized) {
     const shown = presenter
       ? { key: 'screen', name: `${presenter.name} is presenting`, address: presenter.address, stream: presenter.screenStream, videoOn: true }
@@ -1382,6 +1414,9 @@ export default function CallRoom({ state }) {
           onPointerCancel={stopMiniDrag}
           onDoubleClick={() => setMiniPosition(null)}
         ><span /></div>
+        <button type="button" className="nx-mini-close" aria-label="Hide call popup" title="Hide call popup" onClick={() => setMiniHidden(true)}>
+          <Icon name="close" size={17} />
+        </button>
         <button type="button" className="nx-mini-picture" aria-label="Back to the call" onClick={() => setMinimized(false)}>
           <Tile tile={shown} />
           <span className="nx-mini-expand"><Icon name="expand" size={16} /></span>

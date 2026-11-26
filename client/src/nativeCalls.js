@@ -8,6 +8,11 @@ export const nativeCallsAvailable = () => Capacitor.isNativePlatform() && Capaci
 export const nativeCallStatus = () => NativeCalls.getStatus();
 export const requestNativeCallPermission = () => NativeCalls.requestPermission();
 export const dismissNativeCall = (callId) => (nativeCallsAvailable() ? NativeCalls.dismiss({ callId }).catch(() => {}) : Promise.resolve());
+export const showNativeOngoingCall = ({ callId, title, video, startedAt }) => (
+  nativeCallsAvailable()
+    ? NativeCalls.showOngoing({ callId, title, video: Boolean(video), startedAt: startedAt || Date.now() }).catch(() => {})
+    : Promise.resolve()
+);
 
 export async function watchNativeCallActions(listener) {
   if (!nativeCallsAvailable()) return () => {};
@@ -15,8 +20,12 @@ export async function watchNativeCallActions(listener) {
   const deliver = (event) => {
     if (!event?.action || !event?.callId) return;
     const key = `${event.action}:${event.callId}`;
-    if (seen.has(key)) return;
-    seen.add(key);
+    // Answer/decline are one-shot. Resume may legitimately happen repeatedly when someone hides
+    // the floating call, reopens it from Android, then hides it again.
+    if (event.action !== 'resume') {
+      if (seen.has(key)) return;
+      seen.add(key);
+    }
     listener(event);
   };
   const handle = await NativeCalls.addListener('callAction', async () => {

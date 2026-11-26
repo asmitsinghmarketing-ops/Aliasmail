@@ -423,7 +423,9 @@
 .nx-mini-picture .nx-tile-face .avatar { width: 60px; font-size: 24px; }
 .nx-mini-picture .nx-tile-face .nx-tile-ring { width: 76px; }
 .nx-mini-picture .nx-tile-pin { display: none; }
-.nx-mini-expand { position: absolute; z-index: 5; top: 8px; right: 8px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--nx-bg); color: #fff; }
+.nx-mini-expand { position: absolute; z-index: 5; top: 8px; right: 48px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--nx-bg); color: #fff; }
+.nx-mini-close { position: absolute; z-index: 9; top: 8px; right: 8px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 10px; background: rgb(8 8 8 / 86%); color: #fff; }
+.nx-mini-close:active { transform: scale(.92); }
 .nx-mini-mode { position: absolute; z-index: 5; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: 8px; background: var(--nx-accent); color: #fff; font-size: 11px; font-weight: 700; }
 .nx-mini-unread { position: absolute; z-index: 5; top: 8px; left: 8px; display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 9px; border-radius: 8px; background: var(--nx-accent); color: #fff; font-size: 12px; font-weight: 700; }
 .nx-mini-bar { display: flex; align-items: center; gap: 6px; padding: 10px; }

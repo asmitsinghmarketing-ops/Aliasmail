@@ -146,4 +146,18 @@ public class NativeCallsPlugin extends Plugin {
         ((NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE)).cancel(CallNotifications.id(callId));
         call.resolve();
     }
+
+    @PluginMethod
+    public void showOngoing(PluginCall call) {
+        String callId = call.getString("callId", "");
+        if (callId.isEmpty()) {
+            call.reject("callId is required");
+            return;
+        }
+        String title = call.getString("title", "Nextspace call");
+        Boolean video = call.getBoolean("video", false);
+        Long startedAt = call.getLong("startedAt", System.currentTimeMillis());
+        CallNotifications.ongoing(getContext(), callId, title, Boolean.TRUE.equals(video), startedAt == null ? System.currentTimeMillis() : startedAt);
+        call.resolve();
+    }
 }
