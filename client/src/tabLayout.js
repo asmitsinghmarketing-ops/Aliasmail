@@ -19,5 +19,5 @@ export function arrange(items, prefs) {
   return shown.length ? shown : items;
 }
 
-/** How many of the left bar's tabs (after Inbox) also sit in a phone's bottom bar, before More. */
-export const PHONE_TABS = 4;
+/** How many left-bar tabs join Inbox and More in the phone bar (five destinations total). */
+export const PHONE_TABS = 3;

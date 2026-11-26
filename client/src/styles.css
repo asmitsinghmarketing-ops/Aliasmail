@@ -1067,7 +1067,7 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
     flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 0 1px;
     border: 0; background: none; color: #444746; font-size: 12px; font-weight: 600;
   }
-  /* Six buttons on a 360px phone: icons shrink to fit and long names end in "…" instead of overlapping. */
+  /* Five primary destinations keep labels readable and touch targets comfortably separated. */
   .bottom-nav-icon {
     position: relative; display: grid; place-items: center; width: min(60px, 100%); height: 30px; border-radius: 16px;
     transition: background-color 0.2s var(--ease);
@@ -2843,15 +2843,22 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .notification-error { padding: 8px 14px; background: #fff0ef; color: var(--red); font-size: 12px; }
 
 @media (max-width: 800px) {
-  .tasks-topbar { flex-wrap: wrap; padding: 8px 12px; gap: 8px; }
-  .tasks-brand .wordmark, .tasks-divider, .tasks-topbar > strong { display: none; }
-  .tasks-search { width: auto; min-width: 100px; flex: 1; margin-left: 0; }
-  .tasks-topbar > .btn { width: 38px; height: 38px; padding: 0; }
+  .tasks-topbar { flex-wrap: nowrap; min-height: 60px; padding: max(8px, env(safe-area-inset-top)) 12px 8px; gap: 6px; }
+  .tasks-brand, .tasks-divider, .tasks-topbar > strong { display: none; }
+  .tasks-back, .tasks-topbar > .icon-btn { width: 44px; height: 44px; flex: none; }
+  .tasks-search { width: auto; min-width: 72px; height: 44px; flex: 1; margin-left: 0; }
+  .tasks-topbar > .btn { width: 44px; height: 44px; padding: 0; flex: none; }
   .tasks-topbar > .btn span { display: none; }
+  .tasks-app > .tasks-topbar > .task-create-btn {
+    position: fixed; z-index: 12; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom));
+    width: 56px; height: 56px; border-radius: 18px;
+    box-shadow: 0 3px 6px rgb(0 0 0 / 16%), 0 8px 24px rgb(0 0 0 / 18%);
+  }
   .tasks-layout { display: flex; flex-direction: column; }
-  .tasks-sidebar { flex: none; overflow-x: auto; overflow-y: hidden; padding: 8px 10px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .tasks-sidebar { flex: none; overflow-x: auto; overflow-y: hidden; padding: 8px 10px; border-right: 0; border-bottom: 1px solid var(--border); scrollbar-width: none; scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
+  .tasks-sidebar::-webkit-scrollbar { display: none; }
   .tasks-sidebar > nav { display: flex; width: max-content; }
-  .tasks-sidebar nav > button { width: auto; white-space: nowrap; }
+  .tasks-sidebar nav > button { width: auto; min-height: 44px; white-space: nowrap; scroll-snap-align: start; }
   .tasks-sidebar-head, .tasks-sidebar-empty { display: none !important; }
   .task-projects { display: flex !important; width: max-content; margin-top: 6px; }
   .task-projects > div > button:first-child { width: auto; min-width: 150px; }

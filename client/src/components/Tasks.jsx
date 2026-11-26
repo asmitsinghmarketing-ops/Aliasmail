@@ -270,7 +270,7 @@ export default function Tasks({ user, startTask, onClose }) {
         </div>
         <input ref={spreadsheetPicker} className="task-spreadsheet-input" type="file" accept=".xlsx,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/tab-separated-values" onChange={chooseSpreadsheet} />
         <button type="button" className="btn btn-outline task-import-btn" onClick={() => data.projects.length ? setImportOpen(true) : createProject()}><Icon name="upload" size={18} /><span>Import</span></button>
-        <button type="button" className="btn btn-primary" onClick={() => openNew()}><Icon name="add" size={18} /><span>New task</span></button>
+        <button type="button" className="btn btn-primary task-create-btn" onClick={() => openNew()} aria-label="New task"><Icon name="add" size={22} /><span>New task</span></button>
       </header>
 
       <div className="tasks-layout">

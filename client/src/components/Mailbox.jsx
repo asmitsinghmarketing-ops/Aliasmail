@@ -1653,7 +1653,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
     { id: 'settings', label: 'Settings', icon: 'settings', pinned: true, locked: true, onClick: () => { setSettingsTab('profile'); setModal('settings'); }, hidden: shared },
   ].filter((tab) => !tab.hidden);
   const shownRail = arrange(railTabs, layout.rail);
-  // The phone's bottom bar: Inbox, then the first four of the same tabs in the same order, then More.
+  // The phone's bottom bar: Inbox, then the first three of the same tabs in the same order, then More.
   // (Pinned ones such as Settings and Tour stay under More.)
   const phoneTabs = shownRail.filter((tab) => !tab.pinned).slice(0, PHONE_TABS);
 
