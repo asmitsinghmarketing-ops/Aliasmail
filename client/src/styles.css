@@ -849,6 +849,19 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
   .topbar { padding-top: max(12px, env(safe-area-inset-top)); }
 }
 
+/* Android's native container owns its system-bar insets. Retain the small intentional spacing but
+   remove the duplicated blank strips above the app bar and below the bottom navigation. */
+@media (max-width: 800px) {
+  html.native-android .topbar,
+  html.native-android .app:not(.admin-app) .topbar { padding-top: 8px; }
+  html.native-android .app:not(.admin-app) .topbar::before { top: 8px; }
+  html.native-android .sidebar { padding-top: 12px; }
+  html.native-android .content { padding-bottom: 0; }
+  html.native-android .bottom-nav { padding-bottom: 6px; }
+  html.native-android .compose-fab { bottom: 80px; }
+  html.native-android .app:has(.viewer) .viewer > .toolbar { padding-top: 4px; }
+}
+
 /* Admin uses a persistent tab bar on phones, not the mailbox drawer. */
 @media (max-width: 800px) {
   .admin-app .brand { width: auto; flex: 1; gap: 8px; }
@@ -876,7 +889,11 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
 @media (max-width: 800px) {
   .topbar { gap: 8px; }
   .topbar .brand { width: 44px; flex: none; }
-  .mobile-menu-toggle { position: relative; z-index: 41; width: 44px; height: 44px; flex: none; color: #444746; }
+  .mobile-menu-toggle {
+    position: relative; z-index: 41; width: 44px; height: 44px; flex: none; border: 1px solid #dce3ed;
+    border-radius: 14px; color: var(--navy); background: #fff; box-shadow: 0 2px 8px rgb(32 45 66 / 10%);
+  }
+  .mobile-menu-toggle:active { transform: scale(.96); background: #eaf0f8; }
   .mobile-menu-toggle svg { display: block; }
   .menu-open .mobile-menu-toggle { display: none; }
   .mobile-drawer-head { display: flex; align-items: center; justify-content: space-between; min-height: 44px; }
@@ -895,6 +912,14 @@ code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size
   .topbar .search .icon-btn { width: 32px; height: 32px; }
   .topbar .account { flex: none; }
   .topbar .account > .admin-switch { display: none; }
+  .nav-section-toggle {
+    width: 100%; min-height: 40px; display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 16px; border: 0; background: transparent; color: var(--muted);
+    font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;
+  }
+  .nav-section-toggle svg { transition: transform .18s ease; }
+  .nav-section-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
+  .mobile-folder-collapsed { display: none !important; }
 }
 
 @media (max-width: 800px) {
@@ -2002,6 +2027,8 @@ button, input, select, textarea { font-family: inherit; }
   .compose-btn:hover { background: var(--brand-dark); }
   .sidebar.collapsed .compose-btn { align-self: center; margin: 0 0 6px; padding: 12px; }
   .nav-section { padding: 14px 14px 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .nav-section-toggle { width: 100%; border: 0; background: transparent; text-align: left; cursor: default; }
+  .nav-section-toggle svg { display: none; }
   .sidebar.collapsed .nav-section { display: none; }
   .nav-item { margin: 0 4px; padding: 7px 12px; border-radius: 8px; gap: 12px; font-size: 14px; width: auto; }
   .nav-item.active { background: #e8f0fd; color: var(--navy); font-weight: 600; }
@@ -2822,7 +2849,8 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .notification-menu > header > div { display: flex; align-items: baseline; gap: 8px; }
 .notification-menu h2 { font-size: 18px; }
 .notification-menu > header span { color: var(--muted); font-size: 11px; }
-.notification-menu > header .link { margin-left: auto; padding: 6px 0; }
+.notification-menu > header .link { padding: 6px 0; }
+.notification-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 .notification-list { max-height: min(520px, calc(100vh - 130px)); overflow-y: auto; }
 .notification-item {
   position: relative; width: 100%; display: grid; grid-template-columns: 38px minmax(0, 1fr) 8px; gap: 10px; align-items: start;

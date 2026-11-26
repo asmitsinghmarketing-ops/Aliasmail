@@ -14,6 +14,9 @@ const SLOTS = ['audio', 'camera', 'screen'];
 const CHECK_IN_MS = 15_000;
 const NETWORK_SAMPLE_MS = 4_000;
 const RECONNECT_AFTER_MS = 5_000;
+// After a repaired SFU endpoint stays healthy for this long, a later network handoff gets its own
+// repair attempt instead of immediately moving the whole room to the peer-to-peer backup.
+const SFU_STABLE_MS = 15_000;
 // Still not connected after this long: it's not going to work by itself, so say why.
 const STUCK_AFTER_MS = 20_000;
 const ENDED_NOTICE_MS = 3_000;
@@ -86,6 +89,7 @@ let sfuProblemShown = false;
 let sfuNetwork = new WeakMap();
 let sfuRetryCount = 0;
 let sfuRetryTimer = null;
+let sfuStableTimer = null;
 
 const tracks = { audio: () => mic, camera: () => camera, screen: () => screen };
 
@@ -106,6 +110,8 @@ function receiveSfuTrack(peerId, name, track) {
 
 function reportSfuError(err) {
   if (state.phase !== 'in-call') return;
+  clearTimeout(sfuStableTimer);
+  sfuStableTimer = null;
   // A short network handoff or one failed renegotiation should not move every participant away
   // from SFU. Recreate this endpoint once; only a repeated failure changes the room topology.
   if (!sfuRetryCount && navigator.onLine !== false) {
@@ -146,7 +152,18 @@ function ensureSfu() {
     onCall: applyCall,
     onMedia: receiveSfuTrack,
     onState: () => {
-      if (state.notice === 'Reconnecting media…' && sfu?.peerConnections().some((pc) => pc.connectionState === 'connected')) set({ notice: '' });
+      const connected = sfu?.peerConnections().some((pc) => pc.connectionState === 'connected');
+      if (state.notice === 'Reconnecting media…' && connected) set({ notice: '' });
+      if (connected && sfuRetryCount && !sfuStableTimer) {
+        const repaired = sfu;
+        sfuStableTimer = setTimeout(() => {
+          sfuStableTimer = null;
+          if (sfu === repaired && repaired.peerConnections().some((pc) => pc.connectionState === 'connected')) sfuRetryCount = 0;
+        }, SFU_STABLE_MS);
+      } else if (!connected && sfuStableTimer) {
+        clearTimeout(sfuStableTimer);
+        sfuStableTimer = null;
+      }
       publishPeers();
     },
     onError: reportSfuError,
@@ -372,6 +389,8 @@ async function rejoin() {
   sfuRetryCount = 0;
   clearTimeout(sfuRetryTimer);
   sfuRetryTimer = null;
+  clearTimeout(sfuStableTimer);
+  sfuStableTimer = null;
   sfuNetwork = new WeakMap();
   if (joined.iceServers) iceServers = joined.iceServers;
   set({ me: joined.peerId, notice: '' });
@@ -659,12 +678,15 @@ function publishPeers() {
   });
   const backupRecovered = peers.some((peer) => peer.connection === 'connected')
     && state.notice === 'Cloudflare media couldn’t connect, so this meeting is switching to its backup connection.';
+  const relayAvailable = iceServers.some(({ urls }) => (Array.isArray(urls) ? urls : [urls])
+    .some((url) => /^turns?:/i.test(String(url || ''))));
+  const stuckNotice = relayAvailable
+    ? `Can’t establish a media path to ${stuckNames.join(', ')}, even with the call relay available. The call is retrying. A firewall, VPN, or unstable network may be interrupting WebRTC; try another network if this continues.`
+    : `Can’t connect to ${stuckNames.join(', ')}. A network (often office Wi-Fi, a mobile hotspot or a VPN) is blocking a direct connection. Try another network, or ask your administrator to set up a call relay (TURN).`;
   set({
     peers,
     ...(backupRecovered && { notice: '' }),
-    ...(stuckNames.length && {
-      notice: `Can’t connect to ${stuckNames.join(', ')}. A network (often office Wi-Fi, a mobile hotspot or a VPN) is blocking a direct connection. Try another network, or ask your administrator to set up a call relay (TURN).`,
-    }),
+    ...(stuckNames.length && { notice: stuckNotice }),
   });
 }
 
@@ -746,6 +768,8 @@ function tearDown() {
   sfuRetryCount = 0;
   clearTimeout(sfuRetryTimer);
   sfuRetryTimer = null;
+  clearTimeout(sfuStableTimer);
+  sfuStableTimer = null;
   sfuNetwork = new WeakMap();
   stopDevices();
   transport = null;
@@ -778,6 +802,8 @@ function applyCall(call, servers) {
       sfu = null;
       sfuMedia = new Map();
       sfuNetwork = new WeakMap();
+      clearTimeout(sfuStableTimer);
+      sfuStableTimer = null;
     }
     others.forEach((peer) => connect(peer.id));
     tuneSenders();
@@ -1002,8 +1028,9 @@ export async function toggleScreen() {
   if (screenStarting) return true;
   if (!canShareScreen()) return false;
   screenStarting = true;
+  const nativeScreen = canNativeScreenShare();
   try {
-    const track = canNativeScreenShare()
+    const track = nativeScreen
       ? await startNativeScreenShare(() => { if (screen?.nextspaceNativeScreen) stopScreen(); })
       : (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false })).getVideoTracks()[0];
     if (!track) return false;
@@ -1022,7 +1049,9 @@ export async function toggleScreen() {
     sendState();
     return true;
   } catch (err) {
-    if (err?.name !== 'NotAllowedError') set({ notice: mediaError(err, 'screen') });
+    // The mobile dialog offers a screenshot immediately after native capture fails. Do not cover it
+    // with a second generic error; desktop browsers still get their normal capture error notice.
+    if (!nativeScreen && err?.name !== 'NotAllowedError') set({ notice: mediaError(err, 'screen') });
     return false;
   } finally {
     screenStarting = false;

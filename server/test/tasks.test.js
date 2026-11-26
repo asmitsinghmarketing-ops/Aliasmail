@@ -92,6 +92,9 @@ test('team projects and tasks validate ownership, assignment and status changes'
   assert.equal((await (await admin('/notifications')).json()).unread, 0);
   assert.equal((await mary('/notifications/read', { method: 'POST', body: JSON.stringify({ ids: assignedNotifications.items.map((item) => item.id) }) })).status, 200);
   assert.equal((await (await mary('/notifications')).json()).unread, 0);
+  const clearedNotifications = await mary('/notifications/read', { method: 'DELETE' });
+  assert.deepEqual(await clearedNotifications.json(), { ok: true, changed: 2 });
+  assert.deepEqual(await (await mary('/notifications')).json(), { items: [], unread: 0 });
 
   assert.equal((await john('/tasks/items', { method: 'POST', body: JSON.stringify({ projectId: project.id, title: 'Bad assignment', assignee: 'outside@example.net' }) })).status, 400);
   assert.equal((await john(`/tasks/items/${task.id}`, { method: 'PATCH', body: JSON.stringify({ dueDate: '2026-02-30' }) })).status, 400);

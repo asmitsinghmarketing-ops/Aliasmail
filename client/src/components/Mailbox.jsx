@@ -479,6 +479,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   const [modal, setModal] = useState(null); // 'settings' | 'shortcuts'
   // Phones hide the drawer; tablets and small laptops start with the icon rail so the list has room.
   const [collapsed, setCollapsed] = useState(() => window.matchMedia('(max-width: 1100px)').matches);
+  const [foldersOpen, setFoldersOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -1842,10 +1843,20 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             {(() => {
               const shown = FOLDERS.filter((f) => !f.hidden && (!f.onlyWhenUsed || shownCounts[f.count] > 0 || folder === f.id));
               return shown.flatMap((f, i) => [
-                ...(f.section && f.section !== shown[i - 1]?.section ? [<div key={`section-${f.section}`} className="nav-section">{f.section}</div>] : []),
+                ...(f.section && f.section !== shown[i - 1]?.section ? [
+                  <button
+                    key={`section-${f.section}`}
+                    type="button"
+                    className="nav-section nav-section-toggle"
+                    aria-expanded={phone ? foldersOpen : undefined}
+                    onClick={() => phone && setFoldersOpen((value) => !value)}
+                  >
+                    <span>{f.section}</span><Icon name="arrowDrop" size={20} />
+                  </button>,
+                ] : []),
                 <button
                   key={f.id}
-                  className={`nav-item ${folder === f.id ? 'active' : ''}`}
+                  className={`nav-item mobile-folder ${foldersOpen ? '' : 'mobile-folder-collapsed'} ${folder === f.id ? 'active' : ''}`}
                   onPointerEnter={() => prefetchMailboxList(listPath(f.id, 1, '', f.id === 'inbox' ? category : 'primary'))}
                   onFocus={() => prefetchMailboxList(listPath(f.id, 1, '', f.id === 'inbox' ? category : 'primary'))}
                   onClick={() => goTo(f.id)}
@@ -1861,7 +1872,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                   ? inboxTabs.map((t) => (
                       <button
                         key={`category-${t.id}`}
-                        className={`nav-item nav-sub mobile-only ${folder === 'inbox' && !search && category === t.id ? 'active' : ''}`}
+                        className={`nav-item nav-sub mobile-only mobile-folder ${foldersOpen ? '' : 'mobile-folder-collapsed'} ${folder === 'inbox' && !search && category === t.id ? 'active' : ''}`}
                         onPointerEnter={() => prefetchMailboxList(listPath('inbox', 1, '', t.id))}
                         onFocus={() => prefetchMailboxList(listPath('inbox', 1, '', t.id))}
                         onClick={() => {

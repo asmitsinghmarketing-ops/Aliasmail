@@ -12,10 +12,5 @@ public class CallActionReceiver extends BroadcastReceiver {
         if (action == null || callId == null) return;
         NativeCallsPlugin.deliver(context, action, callId);
         ((android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE)).cancel(CallNotifications.id(callId));
-        Intent open = new Intent(context, MainActivity.class)
-            .putExtra("nextspace_call_action", action)
-            .putExtra("nextspace_call_id", callId)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        context.startActivity(open);
     }
 }

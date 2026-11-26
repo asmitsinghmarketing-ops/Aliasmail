@@ -644,6 +644,14 @@
   .nx-join-card h1 { font-size: 24px; }
 }
 
+/* Full-screen calls use the same single inset owner inside the Android app. */
+@media (max-width: 760px) {
+  html.native-android .nx-room { padding-top: 0; padding-right: 0; padding-left: 0; }
+  html.native-android .nx-bar { padding-bottom: 12px; }
+  html.native-android .nx-room.chrome-hidden .nx-top { top: 0; }
+  html.native-android .nx-room.chrome-hidden .nx-body { padding-bottom: 8px; }
+}
+
 /* =====================================================================================
    Motion
    ===================================================================================== */

@@ -72,6 +72,23 @@ export default function NotificationCenter({ onNavigate }) {
     catch (err) { setError(err.message); load(); }
   };
 
+  const clearRead = async () => {
+    const previous = items;
+    const kept = items.filter((item) => !item.readAt);
+    setItems(kept);
+    known.current = new Set(kept.map((item) => item.id));
+    setError('');
+    try { await api('/notifications/read', { method: 'DELETE' }); }
+    catch (err) {
+      setItems(previous);
+      known.current = new Set(previous.map((item) => item.id));
+      setError(err.message);
+      load();
+    }
+  };
+
+  const hasRead = items.some((item) => item.readAt);
+
   return (
     <div className="notification-center" ref={root}>
       <button type="button" className={`icon-btn notification-bell ${open ? 'on' : ''}`} aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`} title="Notifications" onClick={() => setOpen(!open)}>
@@ -80,7 +97,13 @@ export default function NotificationCenter({ onNavigate }) {
       </button>
       {open && (
         <section className="notification-menu" aria-label="Notifications">
-          <header><div><h2>Notifications</h2>{unread > 0 && <span>{unread} unread</span>}</div>{unread > 0 && <button type="button" className="link small" onClick={markAll}>Mark all read</button>}</header>
+          <header>
+            <div><h2>Notifications</h2>{unread > 0 && <span>{unread} unread</span>}</div>
+            <span className="notification-actions">
+              {unread > 0 && <button type="button" className="link small" onClick={markAll}>Mark all read</button>}
+              {hasRead && <button type="button" className="link small" onClick={clearRead}>Clear read</button>}
+            </span>
+          </header>
           {error && <div className="notification-error">{error}</div>}
           <div className="notification-list">
             {items.map((item) => (

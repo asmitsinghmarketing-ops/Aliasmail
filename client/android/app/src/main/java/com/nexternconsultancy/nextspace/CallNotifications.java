@@ -10,6 +10,7 @@ import android.media.RingtoneManager;
 import android.os.Build;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.Person;
+import androidx.core.graphics.drawable.IconCompat;
 
 final class CallNotifications {
     private static final String CALLS = "nextspace_incoming_calls";
@@ -37,27 +38,36 @@ final class CallNotifications {
         manager.createNotificationChannel(new NotificationChannel(MESSAGES, "Nextspace notifications", NotificationManager.IMPORTANCE_DEFAULT));
     }
 
-    private static PendingIntent action(Context context, String callId, String action, int offset) {
+    private static PendingIntent backgroundAction(Context context, String callId, String action, int offset) {
         Intent intent = new Intent(context, CallActionReceiver.class)
+            .setAction("com.nexternconsultancy.nextspace.CALL_" + action.toUpperCase())
             .putExtra("nextspace_call_action", action).putExtra("nextspace_call_id", callId);
         return PendingIntent.getBroadcast(context, id(callId) + offset, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
-    private static PendingIntent open(Context context, String callId, String action) {
+    private static PendingIntent open(Context context, String callId, String action, int offset) {
         Intent intent = new Intent(context, MainActivity.class)
+            .setAction("com.nexternconsultancy.nextspace.CALL_" + action.toUpperCase())
             .putExtra("nextspace_call_action", action).putExtra("nextspace_call_id", callId)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        return PendingIntent.getActivity(context, id(callId) + 3, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        return PendingIntent.getActivity(context, id(callId) + offset, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     static void incoming(Context context, String callId, String title, String body) {
         channels(context);
-        PendingIntent accept = action(context, callId, "accept", 1);
-        PendingIntent decline = action(context, callId, "decline", 2);
-        PendingIntent open = open(context, callId, "open");
-        Person caller = new Person.Builder().setName(title.replaceFirst("^Incoming (video|voice) call from ", "")).setImportant(true).build();
+        // Android 12+ blocks notification trampolines (a BroadcastReceiver starting an
+        // Activity). Accept must therefore target MainActivity directly so the WebView is
+        // foreground before it requests microphone/camera access and joins the call.
+        PendingIntent accept = open(context, callId, "accept", 1);
+        PendingIntent decline = backgroundAction(context, callId, "decline", 2);
+        PendingIntent open = open(context, callId, "open", 3);
+        Person caller = new Person.Builder()
+            .setName(title.replaceFirst("^Incoming (video|voice) call from ", ""))
+            .setIcon(IconCompat.createWithResource(context, R.mipmap.ic_launcher))
+            .setImportant(true)
+            .build();
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, CALLS)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification_nextspace)
             .setContentTitle(title).setContentText(body)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -71,9 +81,9 @@ final class CallNotifications {
 
     static void ongoing(Context context, String callId, String title, boolean video, long startedAt) {
         channels(context);
-        PendingIntent resume = open(context, callId, "resume");
+        PendingIntent resume = open(context, callId, "resume", 4);
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, ONGOING_CALLS)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification_nextspace)
             .setContentTitle(title == null || title.isEmpty() ? "Nextspace call" : title)
             .setContentText((video ? "Video" : "Voice") + " call in progress · Tap to return")
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -91,7 +101,7 @@ final class CallNotifications {
         Intent intent = new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent open = PendingIntent.getActivity(context, 40001, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, MESSAGES)
-            .setSmallIcon(R.mipmap.ic_launcher).setContentTitle(title).setContentText(body)
+            .setSmallIcon(R.drawable.ic_notification_nextspace).setContentTitle(title).setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT).setAutoCancel(true).setContentIntent(open);
         context.getSystemService(NotificationManager.class).notify(40001, notification.build());
     }

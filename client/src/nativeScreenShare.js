@@ -1,6 +1,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
 const NativeScreenShare = registerPlugin('NativeScreenShare');
+const FIRST_FRAME_TIMEOUT_MS = 8_000;
 
 export const canNativeScreenShare = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 
@@ -23,6 +24,14 @@ export async function startNativeScreenShare(onStopped) {
   let pending = null;
   let frameHandle;
   let stopHandle;
+  let nativeStarted = false;
+  let firstFrameReady = false;
+  let resolveFirstFrame;
+  let rejectFirstFrame;
+  const firstFrame = new Promise((resolve, reject) => {
+    resolveFirstFrame = resolve;
+    rejectFirstFrame = reject;
+  });
 
   const drawNext = () => {
     if (released || drawing || !pending) return;
@@ -38,6 +47,10 @@ export async function startNativeScreenShare(onStopped) {
         }
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
         track.requestFrame?.();
+        if (!firstFrameReady) {
+          firstFrameReady = true;
+          resolveFirstFrame();
+        }
       }
       drawing = false;
       drawNext();
@@ -63,14 +76,24 @@ export async function startNativeScreenShare(onStopped) {
     drawNext();
   });
   stopHandle = await NativeScreenShare.addListener('stopped', () => {
+    if (!firstFrameReady) rejectFirstFrame(new Error('Android screen capture stopped before video was available.'));
     void release(false);
     if (track.readyState !== 'ended') track.stop();
     onStopped?.();
   });
   try {
     await NativeScreenShare.start();
+    nativeStarted = true;
+    let timeout;
+    await Promise.race([
+      firstFrame,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Android screen capture did not produce video.')), FIRST_FRAME_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timeout));
+    if (released || track.readyState === 'ended') throw new Error('Android screen capture stopped during startup.');
   } catch (error) {
-    await release(false);
+    await release(nativeStarted);
     track.stop();
     throw error;
   }

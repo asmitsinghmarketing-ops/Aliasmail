@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../auth.js';
 import { personOf } from '../team.js';
-import { markNotificationsRead, notificationsFor } from '../notifications.js';
+import { clearReadNotifications, markNotificationsRead, notificationsFor } from '../notifications.js';
 
 const router = Router();
 router.use(requireAuth());
@@ -14,6 +14,10 @@ router.get('/', (req, res) => {
 router.post('/read', (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 100) : null;
   res.json({ ok: true, changed: markNotificationsRead(personOf(req.user), ids) });
+});
+
+router.delete('/read', (req, res) => {
+  res.json({ ok: true, changed: clearReadNotifications(personOf(req.user)) });
 });
 
 export default router;

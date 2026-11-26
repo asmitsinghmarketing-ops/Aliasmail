@@ -50,3 +50,16 @@ export function markNotificationsRead(person, ids = null) {
   if (changed) save();
   return changed;
 }
+
+export function clearReadNotifications(person) {
+  let changed = 0;
+  for (let index = store().length - 1; index >= 0; index--) {
+    const item = store()[index];
+    if (item.to === person && item.readAt) {
+      store().splice(index, 1);
+      changed++;
+    }
+  }
+  if (changed) save();
+  return changed;
+}
