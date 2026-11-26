@@ -11,7 +11,7 @@ import { createCallRecorder, downloadRecording, recordingSupported } from '../ca
 import { createRecordingUpload } from '../recordingUpload.js';
 import { hrefFor, LINK } from '../linkify.js';
 import { onlineNow } from '../live.js';
-import { dismissNativeCall, showNativeOngoingCall } from '../nativeCalls.js';
+import { dismissNativeCall, nativeCallsAvailable, showNativeOngoingCall } from '../nativeCalls.js';
 import Avatar from './Avatar.jsx';
 import { colorFor } from '../format.js';
 import Icon from './Icon.jsx';
@@ -34,6 +34,29 @@ const SPEAKER_HOLD_MS = 900; // keep the highlight on someone through short paus
 const REACTION_FLOAT_MS = 4200;
 const LAYOUT_KEY = 'nextspace:call-layout';
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+const ongoingTag = (callId) => `ongoing-call-${callId}`;
+
+async function showDesktopOngoingCall({ callId, title, video, startedAt }) {
+  if (nativeCallsAvailable() || !('Notification' in window) || Notification.permission !== 'granted' || !navigator.serviceWorker) return;
+  try {
+    const worker = await navigator.serviceWorker.ready;
+    await worker.showNotification(title || 'Nextspace call', {
+      body: `${video ? 'Video' : 'Voice'} call in progress · Click to return`,
+      tag: ongoingTag(callId), renotify: false, requireInteraction: true, silent: true,
+      timestamp: startedAt || Date.now(), icon: '/icon-192.png', badge: '/icon-192.png',
+      data: { url: `/?resumeCall=${encodeURIComponent(callId)}`, callId },
+    });
+  } catch { /* Desktop notifications are an optional companion to the in-app call dock. */ }
+}
+
+function closeDesktopOngoingCall(callId) {
+  if (nativeCallsAvailable() || !navigator.serviceWorker) return;
+  navigator.serviceWorker.ready
+    .then((worker) => worker.getNotifications({ tag: ongoingTag(callId) }))
+    .then((notifications) => notifications.forEach((notification) => notification.close()))
+    .catch(() => {});
+}
 const MOD = IS_MAC ? '⌘' : 'Ctrl';
 
 /* ---------------------------------- media ---------------------------------- */
@@ -1249,14 +1272,17 @@ export default function CallRoom({ state }) {
       ? peers.map((peer) => personName(peer.name)).join(', ')
       : ringing.length ? `Calling ${ringing.map((invite) => invite.name).join(', ')}…` : call.code ? 'Your meeting' : 'Waiting for others…';
 
-  // A hidden app, or a mini window the person explicitly closes, keeps one quiet Android
+  // A hidden app, or a mini window the person explicitly closes, keeps one quiet system
   // notification. Tapping it returns to the full call without creating another call session.
   useEffect(() => {
     const syncNotification = () => {
       if (miniHidden || document.visibilityState === 'hidden') {
-        void showNativeOngoingCall({ callId: call.id, title, video: call.video, startedAt: state.startedAt });
+        const details = { callId: call.id, title, video: call.video, startedAt: state.startedAt };
+        void showNativeOngoingCall(details);
+        void showDesktopOngoingCall(details);
       } else {
         void dismissNativeCall(call.id);
+        closeDesktopOngoingCall(call.id);
       }
     };
     syncNotification();
@@ -1264,6 +1290,7 @@ export default function CallRoom({ state }) {
     return () => {
       document.removeEventListener('visibilitychange', syncNotification);
       void dismissNativeCall(call.id);
+      closeDesktopOngoingCall(call.id);
     };
   }, [miniHidden, call.id, call.video, state.startedAt, title]);
 
@@ -1388,7 +1415,21 @@ export default function CallRoom({ state }) {
     return () => window.removeEventListener('resize', keepInView);
   }, [minimized, Boolean(miniPosition)]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (miniHidden) return voicesPlayed;
+  if (miniHidden && nativeCallsAvailable()) return voicesPlayed;
+
+  if (miniHidden) return (
+    <aside className="nx-call-dock" role="region" aria-label="Call in progress">
+      {voicesPlayed}
+      <button type="button" className="nx-call-dock-main" onClick={() => { setMiniHidden(false); setMinimized(false); }} aria-label="Return to call">
+        <span className="nx-call-dock-icon"><Icon name={call.video ? 'videocam' : 'call'} size={19} /></span>
+        <span><strong>{title}</strong><small><Elapsed since={state.startedAt} fallback="Calling…" /> · Click to return</small></span>
+      </button>
+      <button type="button" className={`nx-mini-btn ${micOff ? 'off' : ''}`} aria-label={micLabel} title={micLabel} onClick={toggleMute}>
+        <Icon name={micOff ? 'micOff' : 'mic'} size={18} />
+      </button>
+      <button type="button" className="nx-mini-btn leave" aria-label="Leave call" title="Leave call" onClick={hangUp}><Icon name="callEnd" size={18} /></button>
+    </aside>
+  );
 
   if (minimized) {
     const shown = presenter

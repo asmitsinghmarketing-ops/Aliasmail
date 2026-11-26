@@ -210,6 +210,16 @@ export default function CallCenter() {
   useEffect(() => {
     const showFromUrl = (href) => {
       const url = new URL(href, window.location.origin);
+      const resumeId = url.searchParams.get('resumeCall');
+      if (resumeId) {
+        const active = currentRoom.current;
+        if (active.phase === 'in-call' && active.call?.id === resumeId) {
+          window.dispatchEvent(new CustomEvent('nextspace:resume-call', { detail: { callId: resumeId } }));
+        }
+        url.searchParams.delete('resumeCall');
+        window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+        return;
+      }
       const id = url.searchParams.get('call');
       if (!id) return;
       const accept = url.searchParams.has('answer');
