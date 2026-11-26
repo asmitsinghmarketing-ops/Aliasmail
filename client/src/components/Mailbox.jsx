@@ -1891,6 +1891,31 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                   : []),
               ]);
             })()}
+            {shownRail.filter((tab) => !tab.pinned && !phoneTabs.some((phoneTab) => phoneTab.id === tab.id)).length > 0 && (
+              <>
+                <div className="nav-section mobile-only">Workspace</div>
+                {shownRail
+                  .filter((tab) => !tab.pinned && !phoneTabs.some((phoneTab) => phoneTab.id === tab.id))
+                  .map((tab) => (
+                    <button
+                      key={`mobile-workspace-${tab.id}`}
+                      type="button"
+                      className={`nav-item mobile-only ${tab.on ? 'active' : ''}`}
+                      onClick={() => {
+                        setCollapsed(true);
+                        tab.onClick();
+                      }}
+                      title={tab.title || tab.label}
+                    >
+                      <span className="nav-icon" style={{ '--c': 'var(--brand)' }}>
+                        <Icon name={tab.icon} size={18} />
+                      </span>
+                      <span className="nav-label">{tab.label}</span>
+                      {tab.badge > 0 && <span className="count">{tab.badge > 99 ? '99+' : tab.badge}</span>}
+                    </button>
+                  ))}
+              </>
+            )}
             {onOpenAdmin && (
               <button
                 className="nav-item admin-mobile-item"
