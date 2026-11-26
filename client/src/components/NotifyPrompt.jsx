@@ -24,9 +24,9 @@ export default function NotifyPrompt({ onOpenSettings }) {
   useEffect(() => {
     if (dismissedRecently()) return setShow(false);
     if (isIos() && !installed()) return setShow('ios');
-    if (!supported() || Notification.permission === 'denied') return setShow(false);
+    if (!supported()) return setShow(false);
     status()
-      .then((s) => setShow(s.on ? false : 'offer'))
+      .then((s) => setShow(s.on || s.permission === 'denied' ? false : 'offer'))
       .catch(() => setShow(false));
   }, []);
 

@@ -152,12 +152,14 @@ export async function notify(person, kind, payload) {
   const targets = state().subscriptions.filter((s) => s.person === person && s[kind] !== false);
   const nativeTargets = state().nativeSubscriptions.filter((s) => s.person === person && s[kind] !== false);
   if (!targets.length && !nativeTargets.length) return 0;
-  const { publicKey: pub, privateKey } = keys();
+  // Native FCM delivery does not need VAPID. Keeping it independent means an Android call can
+  // still ring even if browser-push key storage is temporarily unavailable.
+  const vapid = targets.length ? keys() : null;
   let sent = 0;
   await Promise.all(targets.map(async (s) => {
     try {
       await send({ endpoint: s.endpoint, keys: s.keys }, JSON.stringify(payload), {
-        vapidDetails: { subject: contact(), publicKey: pub, privateKey },
+        vapidDetails: { subject: contact(), publicKey: vapid.publicKey, privateKey: vapid.privateKey },
         TTL: kind === 'mail' ? 6 * 3600 : kind === 'calls' ? 90 : 3600,
         urgency: 'high',
         topic: payload.tag?.replace(/[^\w-]/g, '').slice(0, 32) || undefined,

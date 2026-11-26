@@ -5,6 +5,8 @@ import config from './config.js';
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
+const RETRY_DELAYS = [500, 1500];
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 let cached = null;
 
 const encoded = (value) => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url');
@@ -36,24 +38,39 @@ const dataValues = (payload) => Object.fromEntries(Object.entries(payload || {})
 
 export async function sendFirebase(token, payload) {
   if (!firebaseEnabled()) return false;
-  const bearer = await accessToken();
   const call = payload?.kind === 'call';
-  const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(config.firebase.projectId)}/messages:send`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: {
-        token,
-        data: dataValues(payload),
-        android: { priority: call ? 'HIGH' : 'NORMAL', ttl: call ? '90s' : '3600s', collapse_key: String(payload?.tag || payload?.kind || 'nextspace').slice(0, 64) },
-      },
-    }),
-    signal: AbortSignal.timeout(12_000),
+  const body = JSON.stringify({
+    message: {
+      token,
+      data: dataValues(payload),
+      android: { priority: call ? 'HIGH' : 'NORMAL', ttl: call ? '90s' : '3600s', collapse_key: String(payload?.tag || payload?.kind || 'nextspace').slice(0, 64) },
+    },
   });
-  if (response.ok) return true;
-  const result = await response.json().catch(() => ({}));
-  const status = result?.error?.status || '';
-  const error = new Error(`Firebase delivery failed (${response.status}${status ? ` ${status}` : ''})`);
-  error.gone = response.status === 404 || status === 'UNREGISTERED';
-  throw error;
+  let lastError;
+  for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+    let response;
+    try {
+      const bearer = await accessToken();
+      response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(config.firebase.projectId)}/messages:send`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(12_000),
+      });
+    } catch (error) {
+      lastError = error;
+    }
+    if (response?.ok) return true;
+    if (response) {
+      const result = await response.json().catch(() => ({}));
+      const status = result?.error?.status || '';
+      const error = new Error(`Firebase delivery failed (${response.status}${status ? ` ${status}` : ''})`);
+      error.gone = response.status === 404 || status === 'UNREGISTERED';
+      if (error.gone || (!RETRYABLE_STATUS.has(response.status) && response.status !== 401)) throw error;
+      if (response.status === 401) cached = null; // refresh an unexpectedly expired/revoked OAuth token
+      lastError = error;
+    }
+    if (attempt < RETRY_DELAYS.length) await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS[attempt]));
+  }
+  throw lastError;
 }
