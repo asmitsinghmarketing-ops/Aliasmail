@@ -179,9 +179,14 @@ app.get('/downloads/nextspace-android.apk', (req, res, next) => {
 
 // Native Windows desktop installer. It remains separate from the web bundle and uses a stable URL.
 const windowsInstaller = path.resolve(config.clientDist, '../desktop/Nextspace-Desktop-1.0.0-Setup.exe');
+const windowsInstallerFallback = 'https://media.githubusercontent.com/media/asmitsinghmarketing-ops/Aliasmail/148ab7965058e1591ebfb13359c71da0d25a2489/client/desktop/Nextspace-Desktop-1.0.0-Setup.exe';
 
-app.get('/downloads/nextspace-desktop.exe', (req, res, next) => {
-  if (!fs.existsSync(windowsInstaller)) return res.status(404).send('Windows app is not available yet.');
+app.get('/downloads/nextspace-desktop.exe', async (req, res, next) => {
+  const localSize = await fs.promises.stat(windowsInstaller).then((stat) => stat.size).catch(() => 0);
+  if (localSize < 1_000_000) {
+    res.set('Cache-Control', 'no-cache');
+    return res.redirect(302, windowsInstallerFallback);
+  }
   res.set({
     'Cache-Control': 'no-cache',
     'Content-Type': 'application/vnd.microsoft.portable-executable',
