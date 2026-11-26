@@ -14,6 +14,35 @@ export const showNativeOngoingCall = ({ callId, title, video, startedAt }) => (
     : Promise.resolve()
 );
 
+export const setNativeActiveCall = ({ callId, title, video }) => (
+  nativeCallsAvailable()
+    ? NativeCalls.setActiveCall({ callId, title, video: Boolean(video) }).catch(() => ({ supported: false, active: false }))
+    : Promise.resolve({ supported: false, active: false })
+);
+
+export const clearNativeActiveCall = (callId) => (
+  nativeCallsAvailable() ? NativeCalls.clearActiveCall({ callId }).catch(() => {}) : Promise.resolve()
+);
+
+export const enterNativePictureInPicture = () => (
+  nativeCallsAvailable() ? NativeCalls.enterPictureInPicture().catch(() => ({ entered: false })) : Promise.resolve({ entered: false })
+);
+
+export const installedNativeAppInfo = () => (
+  nativeCallsAvailable() ? NativeCalls.getInstalledAppInfo() : Promise.resolve(null)
+);
+
+export const startNativeAppUpdate = ({ url, sha256 }) => NativeCalls.startAppUpdate({ url, sha256 });
+export const nativeAppUpdateDownloadStatus = (sha256) => NativeCalls.getAppUpdateDownloadStatus({ sha256 });
+export const installNativeAppUpdate = () => NativeCalls.installAppUpdate();
+
+export async function watchNativePictureInPicture(listener) {
+  if (!nativeCallsAvailable()) return () => {};
+  const handle = await NativeCalls.addListener('pictureInPictureChanged', listener);
+  listener(await NativeCalls.getPictureInPictureStatus().catch(() => ({ supported: false, active: false })));
+  return () => handle.remove();
+}
+
 export async function watchNativeCallActions(listener) {
   if (!nativeCallsAvailable()) return () => {};
   const seen = new Set();

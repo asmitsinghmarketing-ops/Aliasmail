@@ -1,0 +1,41 @@
+{
+  "name": "nextspace-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nextspace native desktop client",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist:win": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.nexternconsultancy.nextspace.desktop",
+    "productName": "Nextspace",
+    "artifactName": "Nextspace-Desktop-${version}-Setup.${ext}",
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "package.json",
+      "assets/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/nextspace.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nextspace"
+    }
+  }
+}

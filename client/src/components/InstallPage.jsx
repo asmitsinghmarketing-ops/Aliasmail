@@ -7,6 +7,7 @@ import { Wordmark } from './Logo.jsx';
 
 const standalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 const ANDROID_APK = '/downloads/nextspace-android.apk';
+const WINDOWS_INSTALLER = '/downloads/nextspace-desktop.exe';
 
 function Steps({ items }) {
   return <ol className="install-steps">{items.map((item, i) => <li key={i}>{item}</li>)}</ol>;
@@ -93,6 +94,7 @@ export default function InstallPage() {
   const finished = device === 'installed' || done;
   const canAsk = ['android', 'desktop'].includes(device);
   const showAndroidDownload = ['android', 'android-in-app'].includes(device);
+  const showWindowsDownload = ['desktop', 'desktop-firefox'].includes(device) && /Windows/i.test(navigator.userAgent);
 
   return (
     <main className="install-page">
@@ -120,8 +122,21 @@ export default function InstallPage() {
                 <small>After downloading, open the file. Android may ask you to allow installs from your browser once.</small>
               </section>
             )}
+            {showWindowsDownload && (
+              <section className="install-native-app" aria-labelledby="windows-app-title">
+                <span className="install-native-icon"><Icon name="monitor" size={23} /></span>
+                <div>
+                  <h2 id="windows-app-title">Windows desktop app</h2>
+                  <p>Keeps calls available in the system tray and shows native incoming-call actions.</p>
+                </div>
+                <a className="btn btn-primary btn-block install-button" href={WINDOWS_INSTALLER} download="Nextspace-Desktop-Setup.exe">
+                  <Icon name="download" size={20} /> Download Windows app
+                </a>
+                <small>Windows may show a security confirmation because this first build is not code-signed.</small>
+              </section>
+            )}
             <p className="install-lead">Your team’s mail, tasks, notes and calls, in an app of its own.</p>
-            {showAndroidDownload && <div className="install-choice"><span>or install the web app</span></div>}
+            {(showAndroidDownload || showWindowsDownload) && <div className="install-choice"><span>or install the web app</span></div>}
             {offered && canAsk ? (
               <button type="button" className="btn btn-primary btn-block install-button" onClick={install}><Icon name="download" size={20} /> Install</button>
             ) : canAsk && !waited && !declined ? (

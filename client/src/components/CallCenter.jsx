@@ -103,6 +103,14 @@ function startCallVibration() {
 }
 
 function desktopRing(call) {
+  if (window.nextspaceDesktop?.isDesktop) {
+    window.nextspaceDesktop.showIncomingCall({
+      id: call.id,
+      fromName: call.fromName,
+      video: Boolean(call.video),
+    });
+    return;
+  }
   // The installed Android app has its own FCM call notification. Creating a browser notification
   // from its WebView as well would show the same call twice.
   if (nativeCallsAvailable() || document.visibilityState === 'visible' || !('Notification' in window) || Notification.permission !== 'granted') return;
@@ -127,6 +135,7 @@ function desktopRing(call) {
 }
 
 function closeDesktopRing(id) {
+  window.nextspaceDesktop?.dismissIncomingCall?.(id);
   clearTimeout(desktopRingTimers.get(id));
   desktopRingTimers.delete(id);
   navigator.serviceWorker?.ready
@@ -223,20 +232,30 @@ export default function CallCenter() {
       const id = url.searchParams.get('call');
       if (!id) return;
       const accept = url.searchParams.has('answer');
+      const decline = url.searchParams.has('decline');
       api(`/calls/${encodeURIComponent(id)}`)
         .then((found) => {
           if (!found.ringingForMe) return;
           if (accept) answer(found, 'accept', found.video);
+          else if (decline) answer(found, 'decline');
           else setCall(found);
         })
         .catch(() => {});
       url.searchParams.delete('call');
       url.searchParams.delete('answer');
+      url.searchParams.delete('decline');
       window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     };
     showFromUrl(window.location.href);
+    const pendingDesktopOpen = window.nextspaceDesktop?.consumeOpen?.();
+    if (pendingDesktopOpen) showFromUrl(pendingDesktopOpen);
     const onWorker = (event) => event.data?.type === 'open' && showFromUrl(event.data.url);
+    const onDesktop = (event) => {
+      window.nextspaceDesktop?.consumeOpen?.();
+      if (event.detail) showFromUrl(event.detail);
+    };
     navigator.serviceWorker?.addEventListener('message', onWorker);
+    window.addEventListener('nextspace:desktop-open', onDesktop);
     let stopNative = () => {};
     void watchNativeCallActions(async ({ action, callId }) => {
       if (action === 'resume') {
@@ -270,6 +289,7 @@ export default function CallCenter() {
     });
     return () => {
       navigator.serviceWorker?.removeEventListener('message', onWorker);
+      window.removeEventListener('nextspace:desktop-open', onDesktop);
       stopNative();
       stop();
     };

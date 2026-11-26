@@ -11,7 +11,10 @@ import { createCallRecorder, downloadRecording, recordingSupported } from '../ca
 import { createRecordingUpload } from '../recordingUpload.js';
 import { hrefFor, LINK } from '../linkify.js';
 import { onlineNow } from '../live.js';
-import { dismissNativeCall, nativeCallsAvailable, showNativeOngoingCall } from '../nativeCalls.js';
+import {
+  clearNativeActiveCall, dismissNativeCall, nativeCallsAvailable, setNativeActiveCall,
+  showNativeOngoingCall, watchNativePictureInPicture,
+} from '../nativeCalls.js';
 import Avatar from './Avatar.jsx';
 import { colorFor } from '../format.js';
 import Icon from './Icon.jsx';
@@ -982,6 +985,7 @@ const readLayout = () => {
 export default function CallRoom({ state }) {
   const [minimized, setMinimized] = useState(false);
   const [miniHidden, setMiniHidden] = useState(false);
+  const [nativePictureInPicture, setNativePictureInPicture] = useState(false);
   const [panel, setPanel] = useState(null); // 'people' | 'chat' | 'info' | 'devices'
   const [menu, setMenu] = useState(null); // 'react' | 'more'
   const [chromeHidden, setChromeHidden] = useState(false); // phones: tap the picture to hide the controls
@@ -1272,6 +1276,25 @@ export default function CallRoom({ state }) {
       ? peers.map((peer) => personName(peer.name)).join(', ')
       : ringing.length ? `Calling ${ringing.map((invite) => invite.name).join(', ')}…` : call.code ? 'Your meeting' : 'Waiting for others…';
 
+  useEffect(() => {
+    if (!nativeCallsAvailable()) return undefined;
+    let disposed = false;
+    let stop = () => {};
+    void setNativeActiveCall({ callId: call.id, title, video: call.video })
+      .then((status) => { if (!disposed) setNativePictureInPicture(Boolean(status.active)); });
+    void watchNativePictureInPicture((status) => {
+      if (!disposed) setNativePictureInPicture(Boolean(status.active));
+    }).then((remove) => {
+      if (disposed) remove();
+      else stop = remove;
+    });
+    return () => {
+      disposed = true;
+      stop();
+      void clearNativeActiveCall(call.id);
+    };
+  }, [call.id, call.video]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // A hidden app, or a mini window the person explicitly closes, keeps one quiet system
   // notification. Tapping it returns to the full call without creating another call session.
   useEffect(() => {
@@ -1414,6 +1437,18 @@ export default function CallRoom({ state }) {
     window.addEventListener('resize', keepInView);
     return () => window.removeEventListener('resize', keepInView);
   }, [minimized, Boolean(miniPosition)]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (nativePictureInPicture) {
+    const shown = presenter
+      ? { key: 'screen', name: `${presenter.name} is presenting`, address: presenter.address, stream: presenter.screenStream, videoOn: true }
+      : leading;
+    return (
+      <div className="nx-native-pip" role="region" aria-label="Call in progress">
+        {voicesPlayed}
+        <Tile tile={shown} compact />
+      </div>
+    );
+  }
 
   if (miniHidden && nativeCallsAvailable()) return voicesPlayed;
 

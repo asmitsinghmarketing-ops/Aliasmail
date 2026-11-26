@@ -49,6 +49,7 @@ export default function App() {
           <JoinMeeting code={joinCode} onJoinedAsMember={() => { window.history.replaceState(null, '', '/'); setJoinCode(null); }} />
         </Suspense>
         <DialogHost />
+        <UpdateNotice />
       </>
     );
   }

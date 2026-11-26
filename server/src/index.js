@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import compression from 'compression';
 import express from 'express';
@@ -135,6 +136,37 @@ app.get('/api/health', (req, res) => res.json({ ok: true }));
 // Public Android installer linked from /install. Keep it outside client/dist so Capacitor does not
 // package a copy of the APK inside itself. The stable URL always downloads the current tested build.
 const androidInstaller = path.resolve(config.clientDist, '../../downloads/nextspace-android.apk');
+let androidInstallerChecksum = { key: '', sha256: '' };
+
+async function currentAndroidInstaller() {
+  const stat = await fs.promises.stat(androidInstaller);
+  const key = `${stat.size}:${stat.mtimeMs}`;
+  if (androidInstallerChecksum.key !== key) {
+    const sha256 = await new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      fs.createReadStream(androidInstaller).on('error', reject).on('data', (chunk) => hash.update(chunk)).on('end', () => resolve(hash.digest('hex')));
+    });
+    androidInstallerChecksum = { key, sha256 };
+  }
+  return {
+    platform: 'android',
+    sha256: androidInstallerChecksum.sha256,
+    size: stat.size,
+    updatedAt: stat.mtime.toISOString(),
+    url: `/downloads/nextspace-android.apk?v=${androidInstallerChecksum.sha256.slice(0, 12)}`,
+  };
+}
+
+app.get('/api/app/android-update', async (_req, res, next) => {
+  try {
+    if (!fs.existsSync(androidInstaller)) return res.status(404).json({ error: 'Android app is not available yet.' });
+    res.set('Cache-Control', 'no-cache');
+    return res.json(await currentAndroidInstaller());
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.get('/downloads/nextspace-android.apk', (req, res, next) => {
   if (!fs.existsSync(androidInstaller)) return res.status(404).send('Android app is not available yet.');
   res.set({
@@ -143,6 +175,19 @@ app.get('/downloads/nextspace-android.apk', (req, res, next) => {
     'Content-Disposition': 'attachment; filename="Nextspace-Android.apk"',
   });
   return res.sendFile(androidInstaller, (err) => (err ? next(err) : undefined));
+});
+
+// Native Windows desktop installer. It remains separate from the web bundle and uses a stable URL.
+const windowsInstaller = path.resolve(config.clientDist, '../desktop/Nextspace-Desktop-1.0.0-Setup.exe');
+
+app.get('/downloads/nextspace-desktop.exe', (req, res, next) => {
+  if (!fs.existsSync(windowsInstaller)) return res.status(404).send('Windows app is not available yet.');
+  res.set({
+    'Cache-Control': 'no-cache',
+    'Content-Type': 'application/vnd.microsoft.portable-executable',
+    'Content-Disposition': 'attachment; filename="Nextspace-Desktop-Setup.exe"',
+  });
+  return res.sendFile(windowsInstaller, (err) => (err ? next(err) : undefined));
 });
 
 // A page that broke in someone's browser (ErrorBoundary) reports where, for the runtime logs.

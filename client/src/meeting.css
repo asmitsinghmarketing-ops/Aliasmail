@@ -5,7 +5,7 @@
    round thumb-sized buttons and rounded sheets.
    ===================================================================================== */
 
-.nx-room, .nx-mini, .nx-call-dock, .nx-join, .nx-ring-backdrop, .nx-status-toast {
+.nx-room, .nx-mini, .nx-call-dock, .nx-native-pip, .nx-join, .nx-ring-backdrop, .nx-status-toast {
   --nx-bg: #080808;
   --nx-surface: #171717;
   --nx-surface-2: #202124;
@@ -29,7 +29,7 @@
   font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-.nx-room *, .nx-mini *, .nx-call-dock *, .nx-join *, .nx-ring * { box-sizing: border-box; }
+.nx-room *, .nx-mini *, .nx-call-dock *, .nx-native-pip *, .nx-join *, .nx-ring * { box-sizing: border-box; }
 .nx-room button, .nx-mini button, .nx-call-dock button, .nx-join button, .nx-ring button { font: inherit; cursor: pointer; }
 .nx-room button:disabled, .nx-join button:disabled, .nx-ring button:disabled { cursor: default; opacity: .55; }
 .nx-room :focus-visible, .nx-mini :focus-visible, .nx-call-dock :focus-visible, .nx-join :focus-visible, .nx-ring :focus-visible { outline: 2px solid var(--nx-accent); outline-offset: 2px; }
@@ -76,6 +76,10 @@
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   background: var(--nx-bg); animation: nx-fade .25s ease-out both;
 }
+.nx-native-pip { position: fixed; z-index: 200; inset: 0; overflow: hidden; background: var(--nx-bg); }
+.nx-native-pip .nx-tile { width: 100%; height: 100%; border-radius: 0; animation: none; }
+.nx-native-pip .nx-tile-name { left: 8px; bottom: 8px; max-width: calc(100% - 16px); }
+.nx-native-pip .nx-tile-pin, .nx-native-pip .nx-tile-hand, .nx-native-pip .nx-tile-reaction { display: none; }
 
 /* ---------- top bar: one compact row ---------- */
 .nx-top { position: relative; z-index: 4; flex: none; display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 20px; }

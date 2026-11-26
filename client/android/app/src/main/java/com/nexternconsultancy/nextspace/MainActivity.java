@@ -1,7 +1,12 @@
 package com.nexternconsultancy.nextspace;
 
+import android.app.PictureInPictureParams;
+import android.content.res.Configuration;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.Rational;
 import android.view.View;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
@@ -12,9 +17,47 @@ import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     private static volatile boolean foreground = false;
+    private String activeCallId = "";
+    private String activeCallTitle = "Nextspace call";
+    private boolean activeCallVideo = false;
 
     static boolean isForeground() {
         return foreground;
+    }
+
+    private boolean pictureInPictureSupported() {
+        return Build.VERSION.SDK_INT >= 26
+            && getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE);
+    }
+
+    private PictureInPictureParams pictureInPictureParams(boolean autoEnter) {
+        Rational ratio = activeCallVideo ? new Rational(16, 9) : new Rational(1, 1);
+        PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder().setAspectRatio(ratio);
+        if (Build.VERSION.SDK_INT >= 31) {
+            builder.setAutoEnterEnabled(autoEnter);
+            builder.setSeamlessResizeEnabled(true);
+        }
+        if (Build.VERSION.SDK_INT >= 33) builder.setTitle(activeCallTitle);
+        return builder.build();
+    }
+
+    void setActiveCall(String callId, String title, boolean video) {
+        activeCallId = callId;
+        activeCallTitle = title == null || title.isEmpty() ? "Nextspace call" : title;
+        activeCallVideo = video;
+        if (pictureInPictureSupported()) setPictureInPictureParams(pictureInPictureParams(true));
+    }
+
+    void clearActiveCall(String callId) {
+        if (!activeCallId.equals(callId)) return;
+        activeCallId = "";
+        if (pictureInPictureSupported()) setPictureInPictureParams(pictureInPictureParams(false));
+        if (Build.VERSION.SDK_INT >= 26 && isInPictureInPictureMode()) finish();
+    }
+
+    boolean enterCallPictureInPicture() {
+        if (activeCallId.isEmpty() || !pictureInPictureSupported() || isInPictureInPictureMode()) return false;
+        return enterPictureInPictureMode(pictureInPictureParams(Build.VERSION.SDK_INT >= 31));
     }
 
     @Override
@@ -59,6 +102,18 @@ public class MainActivity extends BridgeActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         NativeCallsPlugin.acceptIntent(this, intent);
+    }
+
+    @Override
+    public void onUserLeaveHint() {
+        if (Build.VERSION.SDK_INT < 31) enterCallPictureInPicture();
+        super.onUserLeaveHint();
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean inPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(inPictureInPictureMode, newConfig);
+        NativeCallsPlugin.onPictureInPictureChanged(inPictureInPictureMode);
     }
 
     @Override
