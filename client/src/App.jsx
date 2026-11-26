@@ -5,6 +5,7 @@ import { hideBoot, lazyPage, ShellSkeleton, whenIdle } from './components/Loadin
 import { isInstallPage } from './install.js';
 import { DialogHost } from './components/Dialog.jsx';
 import UpdateNotice from './components/UpdateNotice.jsx';
+import DeviceInstallPrompt from './components/DeviceInstallPrompt.jsx';
 import AriaTooltip from './components/AriaTooltip.jsx';
 import { startAttendanceHeartbeat } from './attendance.js';
 
@@ -58,6 +59,7 @@ export default function App() {
       <Screen />
       <DialogHost />
       <UpdateNotice />
+      <DeviceInstallPrompt />
       <AriaTooltip />
     </>
   );

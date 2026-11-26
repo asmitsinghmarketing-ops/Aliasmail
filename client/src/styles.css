@@ -1376,8 +1376,25 @@ a.btn { color: inherit; text-decoration: none; }
   animation: toast-in 0.26s var(--ease-out);
 }
 .update-notice .btn { padding: 7px 16px; }
+
+.device-install-prompt {
+  position: fixed; z-index: 69; top: calc(16px + env(safe-area-inset-top)); right: 16px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 12px;
+  width: min(520px, calc(100vw - 32px)); padding: 12px 10px 12px 14px;
+  border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--text);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 20%); animation: toast-in 0.26s var(--ease-out);
+}
+.device-install-prompt-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: color-mix(in srgb, var(--brand) 12%, var(--surface)); color: var(--brand); }
+.device-install-prompt-copy { display: grid; gap: 2px; min-width: 0; }
+.device-install-prompt-copy strong { font-size: 14px; }
+.device-install-prompt-copy span { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.device-install-prompt .btn { padding: 8px 14px; }
+.device-install-prompt-close { width: 34px; height: 34px; }
 @media (max-width: 800px) {
   .update-notice { left: 12px; right: 12px; transform: none; justify-content: space-between; bottom: calc(80px + env(safe-area-inset-bottom)); }
+  .device-install-prompt { left: 12px; right: 12px; width: auto; grid-template-columns: auto 1fr auto; }
+  .device-install-prompt .btn { grid-column: 2 / 4; justify-self: stretch; }
+  .device-install-prompt-close { grid-column: 3; grid-row: 1; }
 }
 
 /* "Where you're signed in": device icon, name, location */
