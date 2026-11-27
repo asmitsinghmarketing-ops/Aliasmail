@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { sessionUser, SESSION_COOKIE } from "./auth";
-export async function authenticatedUser(r:NextRequest){const user=await sessionUser(r.cookies.get(SESSION_COOKIE)?.value);if(user)return user;const userId=r.headers.get("oai-authenticated-user-id"),email=r.headers.get("oai-authenticated-user-email");return userId&&email?{userId,email,name:null,avatarUrl:null}:null}
+export async function authenticatedUser(r:NextRequest){const user=await sessionUser(r.cookies.get(SESSION_COOKIE)?.value);if(user)return user;/* Sites mock-auth headers are trusted only in local dev; in production any client could forge them. */if(!import.meta.env.DEV)return null;const userId=r.headers.get("oai-authenticated-user-id"),email=r.headers.get("oai-authenticated-user-email");return userId&&email?{userId,email,name:null,avatarUrl:null}:null}
 export function json(data:unknown,status=200,extra:HeadersInit={}){return Response.json(data,{status,headers:{"Cache-Control":"no-store",...extra}})}
 export function id(p:string){return `${p}_${crypto.randomUUID().replaceAll("-","")}`}
 export async function sha256(v:string){const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(v));return[...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,"0")).join("")}
