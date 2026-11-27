@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "nextgo",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "dist/client"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nextgo",
+      "database_id": "9db1eda1-ffbf-44e7-b728-bc838f3cf7ff"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

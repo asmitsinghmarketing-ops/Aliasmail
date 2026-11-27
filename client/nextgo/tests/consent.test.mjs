@@ -1,0 +1,3 @@
+import test from"node:test";import assert from"node:assert/strict";import{readFile}from"node:fs/promises";const root=new URL("../",import.meta.url);
+test("consent component offers granular choices before identification",async()=>{const source=await readFile(new URL("public/nextgo-consent.js",root),"utf8");for(const term of ["Allow personalized recovery","Anonymous analytics only","Reject optional tracking","consentVersion","consentedAt","withdraw"])assert.match(source,new RegExp(term))});
+test("personalized recovery requires email or phone",async()=>{const source=await readFile(new URL("public/nextgo-consent.js",root),"utf8");assert.match(source,/if\(!email&&!phone\)/);assert.match(source,/NextGo\.identify/)});

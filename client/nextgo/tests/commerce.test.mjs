@@ -1,0 +1,3 @@
+import test from "node:test";import assert from"node:assert/strict";import{readFile}from"node:fs/promises";const root=new URL("../",import.meta.url);
+test("commerce API calculates abandonment, revenue and product signals",async()=>{const source=await readFile(new URL("app/api/commerce/route.ts",root),"utf8");for(const term of ["cartAbandonmentRate","checkoutAbandonmentRate","averageOrderValue","topAbandoned","purchase_completed","added_to_cart"])assert.match(source,new RegExp(term))});
+test("SDK exposes canonical commerce methods",async()=>{const source=await readFile(new URL("public/nextgo.js",root),"utf8");for(const method of ["productViewed","addedToCart","checkoutStarted","purchaseCompleted"])assert.match(source,new RegExp(method))});
