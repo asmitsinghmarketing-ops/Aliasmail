@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "app:sync": "npm run build && cap sync android",
     "app:open": "cap open android",
-    "app:apk": "npm run app:sync && set \"JAVA_HOME=%CD%\\android-tools\\Jdk21\" && set \"GRADLE_USER_HOME=%CD%\\android-tools\\Gradle\" && set \"ANDROID_USER_HOME=%CD%\\android-tools\\AndroidHome\" && set \"GRADLE_OPTS=-Duser.home=%CD%\\android-tools\\AndroidHome\" && cd android && .\\gradlew.bat assembleDebug --no-daemon --no-parallel --max-workers=1"
+    "app:apk": "npm run app:sync && set \"JAVA_HOME=%CD%\\android-tools\\Jdk21\" && set \"GRADLE_USER_HOME=%CD%\\android-tools\\Gradle\" && set \"ANDROID_USER_HOME=%CD%\\android-tools\\AndroidHome\" && set \"GRADLE_OPTS=-Duser.home=%CD%\\android-tools\\AndroidHome\" && cd android && .\\gradlew.bat assembleDebug --no-daemon --no-parallel --max-workers=1",
+    "release:android": "node scripts/release-android.mjs",
+    "release:desktop": "node scripts/release-desktop.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.2",

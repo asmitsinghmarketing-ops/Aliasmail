@@ -31,3 +31,4 @@ google-services.json
 error_log
 *.log
 .aliasmail-worker/
+client/desktop/dist/

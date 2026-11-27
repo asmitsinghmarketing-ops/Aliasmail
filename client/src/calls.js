@@ -17,6 +17,8 @@ const RECONNECT_AFTER_MS = 5_000;
 // After a repaired SFU endpoint stays healthy for this long, a later network handoff gets its own
 // repair attempt instead of immediately moving the whole room to the peer-to-peer backup.
 const SFU_STABLE_MS = 15_000;
+// Waits before each repair of a failed SFU endpoint, before the room falls back to peer-to-peer.
+const SFU_REPAIR_WAITS_MS = [1_200, 4_000];
 // Still not connected after this long: it's not going to work by itself, so say why.
 const STUCK_AFTER_MS = 20_000;
 const ENDED_NOTICE_MS = 3_000;
@@ -112,10 +114,13 @@ function reportSfuError(err) {
   if (state.phase !== 'in-call') return;
   clearTimeout(sfuStableTimer);
   sfuStableTimer = null;
-  // A short network handoff or one failed renegotiation should not move every participant away
-  // from SFU. Recreate this endpoint once; only a repeated failure changes the room topology.
-  if (!sfuRetryCount && navigator.onLine !== false) {
-    sfuRetryCount = 1;
+  // A short network handoff or a failed renegotiation must not move every participant away from
+  // SFU: the fallback switches the whole room to peer-to-peer, where each phone uploads one copy of
+  // its video per person, which is what makes larger meetings lag. Repair this endpoint a few times
+  // with backoff first; only a persistent failure changes the room topology.
+  if (sfuRetryCount < SFU_REPAIR_WAITS_MS.length && navigator.onLine !== false) {
+    const wait = SFU_REPAIR_WAITS_MS[sfuRetryCount];
+    sfuRetryCount += 1;
     set({ notice: 'Reconnecting media…' });
     sfu?.close();
     sfu = null;
@@ -126,7 +131,7 @@ function reportSfuError(err) {
       if (state.phase !== 'in-call' || !usesSfu()) return;
       ensureSfu();
       sfu?.sync(state.call).catch(() => {});
-    }, 1200);
+    }, wait);
     return;
   }
   if (navigator.onLine === false) {
@@ -427,11 +432,18 @@ function queueCandidate(connection, candidate) {
   }, 60);
 }
 
+// The microphone and camera go out under one stream id, so the other side plays them as a
+// lip-synced pair rather than two tracks that drift apart. Set before each offer or answer.
+const localSync = typeof MediaStream === 'function' ? new MediaStream() : null;
+
 function fillChannels(connection) {
   connection.pc.getTransceivers().forEach((transceiver, i) => {
     const slot = SLOTS[i];
     if (!slot) return;
     transceiver.direction = 'sendrecv';
+    if (slot !== 'screen' && localSync) {
+      try { transceiver.sender.setStreams?.(localSync); } catch { /* older browsers: unsynced */ }
+    }
     transceiver.sender.replaceTrack(tracks[slot]() || null).catch(() => {});
   });
 }
@@ -444,6 +456,22 @@ function tuneSenders() {
     const factor = connection.network?.quality === 'poor' ? 0.45 : connection.network?.quality === 'fair' ? 0.7 : 1;
     limitBitrate(transceivers[SLOTS.indexOf('camera')]?.sender, Math.round(cameraLimit * factor));
     limitBitrate(transceivers[SLOTS.indexOf('screen')]?.sender, Math.round(SCREEN_BITRATE * Math.max(0.65, factor)));
+    prioritizeAudio(transceivers[SLOTS.indexOf('audio')]?.sender);
+  }
+}
+
+/** Speech first: when the connection is congested, video gives way before audio does. */
+function prioritizeAudio(sender) {
+  if (!sender?.getParameters) return;
+  try {
+    const params = sender.getParameters();
+    const encoding = params.encodings?.[0];
+    if (!encoding || encoding.priority === 'high') return;
+    encoding.priority = 'high';
+    encoding.networkPriority = 'high';
+    sender.setParameters(params).catch(() => {});
+  } catch {
+    // Older browsers choose for themselves.
   }
 }
 

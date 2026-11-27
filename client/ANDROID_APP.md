@@ -68,3 +68,20 @@ screen is limited to 960 pixels on its longest edge and eight frames per second 
 existing WebRTC/SFU screen channel; this keeps bridge memory and phone heat bounded. Android 14+
 allows the user to share either one app or the whole screen. Browser and iOS sessions continue to use
 their normal browser capture or screenshot fallback.
+
+## Releasing an update
+
+From `D:\mailer`, run `npm run release:android` (or `npm run release:android -- --version 1.2`). It builds
+the APK with the shared debug keystore, refuses to publish one signed with any other key, and replaces
+`downloads/nextspace-android.apk`. Commit that file and `android/app/build.gradle`, then push; installed
+apps offer the update by themselves. `npm run release:desktop` does the same for the Windows app.
+
+Keep `android/gradle/wrapper/gradle-wrapper.properties` on `gradle-8.14.3-all.zip`: Android Gradle
+Plugin 8.x fails on Gradle 9.6 and later.
+
+If publishing fails with `EPERM`, your Windows account can't write to `D:\mailer\downloads`. Grant it
+once from a terminal opened with **Run as administrator**:
+
+```powershell
+icacls "D:\mailer" /grant "${env:USERDOMAIN}\${env:USERNAME}:(OI)(CI)M"
+```

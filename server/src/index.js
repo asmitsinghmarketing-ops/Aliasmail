@@ -177,22 +177,52 @@ app.get('/downloads/nextspace-android.apk', (req, res, next) => {
   return res.sendFile(androidInstaller, (err) => (err ? next(err) : undefined));
 });
 
-// Native Windows desktop installer. It remains separate from the web bundle and uses a stable URL.
-const windowsInstaller = path.resolve(config.clientDist, '../desktop/Nextspace-Desktop-1.0.0-Setup.exe');
-const windowsInstallerFallback = 'https://media.githubusercontent.com/media/asmitsinghmarketing-ops/Aliasmail/148ab7965058e1591ebfb13359c71da0d25a2489/client/desktop/Nextspace-Desktop-1.0.0-Setup.exe';
+// Native Windows desktop installer. scripts/release-desktop.mjs writes client/desktop/latest.json
+// (version, file, SHA-256) next to the installer; installed apps compare it with their own version.
+const desktopDir = path.resolve(config.clientDist, '../desktop');
+const desktopManifestPath = path.join(desktopDir, 'latest.json');
+// GoDaddy deploys from GitHub without Git LFS files, so the installer there is only a small pointer:
+// the real file then comes from GitHub's LFS media host, at the same branch.
+const desktopMediaBase = 'https://media.githubusercontent.com/media/asmitsinghmarketing-ops/Aliasmail/main/client/desktop/';
+const legacyDesktop = { version: '1.0.0', file: 'Nextspace-Desktop-1.0.0-Setup.exe', sha256: '' };
+
+function desktopManifest() {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(desktopManifestPath, 'utf8'));
+    if (manifest?.version && /^[w.-]+.exe$/.test(manifest.file || '')) return manifest;
+  } catch {
+    // No release written yet: the original 1.0.0 installer.
+  }
+  return legacyDesktop;
+}
+
+app.get('/api/app/desktop-update', (_req, res) => {
+  const manifest = desktopManifest();
+  res.set('Cache-Control', 'no-cache');
+  res.json({
+    platform: 'windows',
+    version: manifest.version,
+    sha256: manifest.sha256 || null,
+    size: manifest.size || null,
+    releasedAt: manifest.releasedAt || null,
+    url: `/downloads/nextspace-desktop.exe?v=${encodeURIComponent(manifest.version)}`,
+  });
+});
 
 app.get('/downloads/nextspace-desktop.exe', async (req, res, next) => {
-  const localSize = await fs.promises.stat(windowsInstaller).then((stat) => stat.size).catch(() => 0);
+  const { file } = desktopManifest();
+  const installer = path.join(desktopDir, file);
+  const localSize = await fs.promises.stat(installer).then((stat) => stat.size).catch(() => 0);
   if (localSize < 1_000_000) {
     res.set('Cache-Control', 'no-cache');
-    return res.redirect(302, windowsInstallerFallback);
+    return res.redirect(302, desktopMediaBase + encodeURIComponent(file));
   }
   res.set({
     'Cache-Control': 'no-cache',
     'Content-Type': 'application/vnd.microsoft.portable-executable',
     'Content-Disposition': 'attachment; filename="Nextspace-Desktop-Setup.exe"',
   });
-  return res.sendFile(windowsInstaller, (err) => (err ? next(err) : undefined));
+  return res.sendFile(installer, (err) => (err ? next(err) : undefined));
 });
 
 // A page that broke in someone's browser (ErrorBoundary) reports where, for the runtime logs.

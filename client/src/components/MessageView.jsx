@@ -375,6 +375,7 @@ export default function MessageView({ aside, phoneMore,
         <article className="message">
           <div className="message-head">
             <h2>{head.subject || '(no subject)'}</h2>
+            <div className="message-chips">
             {head.aliases?.map((a) => (
               <span key={a.address} className="chip" style={{ '--chip': a.color }}>
                 {a.address}
@@ -392,6 +393,7 @@ export default function MessageView({ aside, phoneMore,
             {head.kind === 'inbox' && head.archived === false && head.trashed === false && <span className="chip grey">Inbox</span>}
             {head.via === 'cc' && <span className="chip" style={{ '--chip': 'var(--violet)' }}>You were CC'd</span>}
             {head.via === 'bcc' && <span className="chip" style={{ '--chip': 'var(--orange)' }}>You were BCC'd</span>}
+            </div>
           </div>
 
           <div className="sender">
@@ -466,7 +468,7 @@ export default function MessageView({ aside, phoneMore,
           {msg && !footerActions?.length && (onReply || onForward) && (
             <div className="reply-bar">
               {onReply && msg.kind === 'inbox' && (
-                <button className="btn btn-outline" onClick={() => onReply(msg)}>
+                <button className="btn btn-primary" onClick={() => onReply(msg)}>
                   <Icon name="reply" size={18} /> Reply
                 </button>
               )}

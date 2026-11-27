@@ -2,11 +2,14 @@
 // operation; this module only exchanges SDP and media tracks through the call-scoped proxy routes.
 
 const TRACK_NAMES = ['audio', 'camera', 'screen'];
-const GATHER_TIMEOUT_MS = 5_000;
+// Cloudflare's SFU is ICE-lite: it learns this browser's address from the connectivity checks, so
+// offers and answers go out immediately instead of waiting for every candidate (TURN relays over
+// TCP/TLS can take seconds to gather, which used to add up to five seconds per negotiation).
+const GATHER_TIMEOUT_MS = 0;
 const CONNECT_TIMEOUT_MS = 12_000;
 
 const waitForIce = (pc, timeout = GATHER_TIMEOUT_MS) => new Promise((resolve) => {
-  if (pc.iceGatheringState === 'complete') return resolve();
+  if (pc.iceGatheringState === 'complete' || timeout <= 0) return resolve();
   let timer;
   const done = () => {
     clearTimeout(timer);
@@ -48,13 +51,34 @@ const requireTracks = (result, expected, action) => {
 
 // Bound each publication so larger rooms remain usable on ordinary connections and do not burn
 // through Cloudflare's egress allowance with twelve independent full-bitrate 720p feeds.
+// Speech gets network priority: when bandwidth runs short, video gives way before audio does.
 const sendEncodings = (name) => [{
   maxBitrate: name === 'audio' ? 48_000 : name === 'screen' ? 1_500_000 : 550_000,
   ...(name !== 'audio' && { maxFramerate: name === 'screen' ? 20 : 24 }),
+  ...(name === 'audio' && { priority: 'high', networkPriority: 'high' }),
 }];
+
+
+/** Under pressure a camera keeps moving (lower resolution); a shared screen keeps its text sharp. */
+function preferSmoothness(name, sender) {
+  if (name === 'audio' || !sender?.getParameters) return;
+  try {
+    const params = sender.getParameters();
+    params.degradationPreference = name === 'screen' ? 'maintain-resolution' : 'maintain-framerate';
+    sender.setParameters(params).catch(() => {});
+  } catch {
+    // Browsers without this setting choose for themselves.
+  }
+}
+// The microphone and camera share one stream id (per person), so receivers treat them as one
+// lip-synced pair instead of two unrelated tracks that drift apart. The screen stays separate.
+const addSender = (pc, name, track, syncStream) => pc.addTransceiver(track, {
+  direction: 'sendonly', sendEncodings: sendEncodings(name), ...(syncStream && name !== 'screen' && { streams: [syncStream] }),
+});
 
 export function createCloudflareSfu({ post, peerId, iceServers = [], onCall, onMedia, onState, onError }) {
   const servers = [{ urls: 'stun:stun.cloudflare.com:3478' }, ...iceServers];
+  const syncStream = typeof MediaStream === 'function' ? new MediaStream() : null;
   let closed = false;
   let publisher = null;
   let subscriber = null;
@@ -79,7 +103,7 @@ export function createCloudflareSfu({ post, peerId, iceServers = [], onCall, onM
     if (!available.length || closed) return;
     const pc = makePeer();
     const transceivers = new Map();
-    for (const name of available) transceivers.set(name, pc.addTransceiver(local[name], { direction: 'sendonly', sendEncodings: sendEncodings(name) }));
+    for (const name of available) transceivers.set(name, addSender(pc, name, local[name], syncStream));
     const value = { pc, sessionId: null, transceivers, published: new Set(), connected: false };
     publisher = value;
     pc.onconnectionstatechange = () => {
@@ -99,6 +123,7 @@ export function createCloudflareSfu({ post, peerId, iceServers = [], onCall, onM
     if (!result?.sessionDescription) throw new Error('Cloudflare did not answer the publishing offer');
     requireTracks(result, available.length, 'publish');
     await pc.setRemoteDescription(result.sessionDescription);
+    transceivers.forEach((transceiver, name) => preferSmoothness(name, transceiver.sender));
     await waitForConnection(pc);
     available.forEach((name) => publisher.published.add(name));
     const call = await post(`/sfu/${encodeURIComponent(sessionId)}/ready`, { peerId, tracks: available });
@@ -110,7 +135,7 @@ export function createCloudflareSfu({ post, peerId, iceServers = [], onCall, onM
     const current = publisher.transceivers.get(name);
     if (current) return current.sender.replaceTrack(mediaTrack || null);
     if (!mediaTrack || !publisher.sessionId) return undefined;
-    const transceiver = publisher.pc.addTransceiver(mediaTrack, { direction: 'sendonly', sendEncodings: sendEncodings(name) });
+    const transceiver = addSender(publisher.pc, name, mediaTrack, syncStream);
     publisher.transceivers.set(name, transceiver);
     await publisher.pc.setLocalDescription(await publisher.pc.createOffer());
     await waitForIce(publisher.pc);
@@ -122,6 +147,7 @@ export function createCloudflareSfu({ post, peerId, iceServers = [], onCall, onM
     if (!result?.sessionDescription) throw new Error(`Cloudflare did not add the ${name} track`);
     requireTracks(result, 1, 'publish');
     await publisher.pc.setRemoteDescription(result.sessionDescription);
+    preferSmoothness(name, transceiver.sender);
     publisher.published.add(name);
     const call = await post(`/sfu/${encodeURIComponent(publisher.sessionId)}/ready`, { peerId, tracks: [name] });
     onCall?.(call);

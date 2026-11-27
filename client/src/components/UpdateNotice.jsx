@@ -15,6 +15,13 @@ const NATIVE_CHECK_EVERY_MS = 30 * 60 * 1000;
 const DOWNLOAD_POLL_MS = 1000;
 const BUNDLE = /\/assets\/index-[\w-]+\.js/;
 
+// "Check for updates" in Settings asks for a check now; the outcome comes back on RESULT_EVENT.
+export const CHECK_EVENT = 'nextspace:check-update';
+export const RESULT_EVENT = 'nextspace:update-result';
+const answer = (outcome) => Promise.resolve(outcome).then((result) => {
+  window.dispatchEvent(new CustomEvent(RESULT_EVENT, { detail: result || 'current' }));
+});
+
 const loadedBundle = () => document.querySelector('script[type="module"][src*="/assets/index-"]')?.getAttribute('src')?.match(BUNDLE)?.[0];
 
 const withDownload = (current, download) => ({
@@ -32,8 +39,10 @@ export default function UpdateNotice() {
       let stopped = false;
       let checking = false;
       let lastChecked = 0;
-      const check = async () => {
-        if (stopped || checking || document.visibilityState !== 'visible' || Date.now() - lastChecked < CHECK_EVERY_MS) return;
+      const check = async (force = false) => {
+        if (stopped) return undefined;
+        if (checking) return 'busy';
+        if (!force && (document.visibilityState !== 'visible' || Date.now() - lastChecked < CHECK_EVERY_MS)) return undefined;
         checking = true;
         lastChecked = Date.now();
         try {
@@ -50,7 +59,7 @@ export default function UpdateNotice() {
           } catch {
             // One-time path for builds made before native background updating existed.
             if (!stopped && available?.url) setUpdate({ ...candidate, bootstrap: true });
-            return;
+            return 'available';
           }
           if (installed?.sha256 && available?.sha256 && installed.sha256.toLowerCase() !== available.sha256.toLowerCase()) {
             let download = null;
@@ -60,49 +69,76 @@ export default function UpdateNotice() {
               /* No saved download yet. */
             }
             if (!stopped) setUpdate(withDownload(candidate, download));
-          } else if (!stopped) {
-            setUpdate((current) => current?.type === 'android' ? null : current);
+            return 'available';
           }
+          if (!stopped) setUpdate((current) => current?.type === 'android' ? null : current);
+          return 'current';
         } catch {
           /* Offline: try again when the connection returns. */
+          return 'error';
         } finally {
           checking = false;
         }
       };
-      const timer = setInterval(check, NATIVE_CHECK_EVERY_MS);
-      document.addEventListener('visibilitychange', check);
-      window.addEventListener('online', check);
-      check();
+      const auto = () => check();
+      const manual = () => answer(check(true));
+      const timer = setInterval(auto, NATIVE_CHECK_EVERY_MS);
+      document.addEventListener('visibilitychange', auto);
+      window.addEventListener('online', auto);
+      window.addEventListener(CHECK_EVENT, manual);
+      auto();
       return () => {
         stopped = true;
         clearInterval(timer);
-        document.removeEventListener('visibilitychange', check);
-        window.removeEventListener('online', check);
+        document.removeEventListener('visibilitychange', auto);
+        window.removeEventListener('online', auto);
+        window.removeEventListener(CHECK_EVENT, manual);
       };
     }
     const current = loadedBundle();
-    if (!current) return undefined; // development server: nothing to compare
     let stopped = false;
-    const check = async () => {
-      if (stopped || document.visibilityState !== 'visible') return;
+    const check = async (force = false) => {
+      if (stopped || (!force && document.visibilityState !== 'visible')) return undefined;
+      if (!current) return 'current'; // development server: nothing to compare
       try {
         const html = await (await fetch('/', { cache: 'no-store', credentials: 'same-origin' })).text();
         const live = html.match(BUNDLE)?.[0];
-        if (live && live !== current) setUpdate({ type: 'web' });
+        if (live && live !== current) {
+          setUpdate((existing) => existing || { type: 'web' });
+          return 'available';
+        }
+        return 'current';
       } catch {
         /* offline: try again later */
+        return 'error';
       }
     };
-    const timer = setInterval(check, CHECK_EVERY_MS);
-    document.addEventListener('visibilitychange', check);
-    window.addEventListener('online', check);
-    check();
+    const auto = () => check();
+    const manual = () => answer(check(true));
+    const timer = setInterval(auto, CHECK_EVERY_MS);
+    document.addEventListener('visibilitychange', auto);
+    window.addEventListener('online', auto);
+    window.addEventListener(CHECK_EVENT, manual);
+    auto();
     return () => {
       stopped = true;
       clearInterval(timer);
-      document.removeEventListener('visibilitychange', check);
-      window.removeEventListener('online', check);
+      document.removeEventListener('visibilitychange', auto);
+      window.removeEventListener('online', auto);
+      window.removeEventListener(CHECK_EVENT, manual);
     };
+  }, []);
+
+  useEffect(() => {
+    const desktop = window.nextspaceDesktop;
+    if (!desktop?.isDesktop || desktop.appVersion) return undefined; // newer builds update themselves
+    let stopped = false;
+    api('/app/desktop-update')
+      .then((latest) => {
+        if (!stopped && latest?.version && latest.version !== '1.0.0') setUpdate((current) => current || { type: 'desktop', url: latest.url });
+      })
+      .catch(() => {});
+    return () => { stopped = true; };
   }, []);
 
   useEffect(() => {
@@ -154,14 +190,16 @@ export default function UpdateNotice() {
 
   if (!update) return null;
   const downloading = ['starting', 'downloading', 'verifying'].includes(update.status);
-  const message = update.type !== 'android'
+  const message = update.type === 'desktop'
+    ? 'A new Nextspace desktop app is available. Install it once to get automatic updates.'
+    : update.type !== 'android'
     ? 'A new version of Nextspace is ready.'
     : update.permissionRequired
       ? 'Allow installs from Nextspace, then tap Install update again.'
       : update.status === 'verifying'
-        ? 'Verifying the downloaded update?'
+        ? 'Verifying the downloaded update…'
         : downloading
-          ? `Downloading Nextspace update? ${Math.round(update.progress || 0)}%`
+          ? `Downloading Nextspace update… ${Math.round(update.progress || 0)}%`
           : update.status === 'ready'
             ? 'The secure update is ready to install.'
             : update.error || 'A new version of Nextspace is ready.';
@@ -169,17 +207,19 @@ export default function UpdateNotice() {
   return (
     <div className="update-notice" role="status" aria-live="polite">
       <span>{message}</span>
-      {update.type !== 'android' ? (
+      {update.type === 'desktop' ? (
+        <a className="btn btn-primary" href={update.url} download="Nextspace-Desktop-Setup.exe">Download update</a>
+      ) : update.type !== 'android' ? (
         <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>Reload</button>
       ) : update.bootstrap ? (
         <a className="btn btn-primary" href={update.url} download="Nextspace-Android.apk">Update app</a>
       ) : update.status === 'ready' ? (
         <button type="button" className="btn btn-primary" disabled={update.installing} onClick={installUpdate}>
-          {update.installing ? 'Opening?' : 'Install update'}
+          {update.installing ? 'Opening…' : 'Install update'}
         </button>
       ) : (
         <button type="button" className="btn btn-primary" disabled={downloading} onClick={startDownload}>
-          {downloading ? 'Downloading?' : 'Update app'}
+          {downloading ? 'Downloading…' : 'Update app'}
         </button>
       )}
     </div>

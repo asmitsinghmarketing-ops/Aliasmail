@@ -5,6 +5,7 @@ const {
   app, BrowserWindow, Menu, Notification, Tray, desktopCapturer, dialog,
   ipcMain, nativeImage, session, shell,
 } = require('electron');
+const { startUpdater } = require('./updater.cjs');
 
 const APP_URL = 'https://mail.nexternconsultancy.com';
 const APP_ORIGIN = new URL(APP_URL).origin;
@@ -12,6 +13,7 @@ const PARTITION = 'persist:nextspace';
 const hiddenAtLaunch = process.argv.includes('--hidden');
 
 let mainWindow = null;
+let updater = null;
 let tray = null;
 let quitting = false;
 const callNotifications = new Map();
@@ -160,6 +162,8 @@ function createWindow() {
       sandbox: true,
       backgroundThrottling: false,
       spellcheck: true,
+      // The page reads this to know which desktop build it runs in (see preload.cjs).
+      additionalArguments: [`--nextspace-version=${app.getVersion()}`],
     },
   });
 
@@ -197,6 +201,7 @@ function rebuildTrayMenu() {
         rebuildTrayMenu();
       },
     },
+    { label: 'Check for updates…', click: () => { void updater?.check({ interactive: true }); } },
     { type: 'separator' },
     {
       label: 'Quit Nextspace',
@@ -210,7 +215,7 @@ function rebuildTrayMenu() {
 
 function createTray() {
   tray = new Tray(nativeImage.createFromPath(iconPath()));
-  tray.setToolTip('Nextspace ? running in the background');
+  tray.setToolTip('Nextspace (running in the background)');
   tray.on('click', showMain);
   tray.on('double-click', showMain);
   rebuildTrayMenu();
@@ -219,6 +224,7 @@ function createTray() {
 ipcMain.on('desktop:incoming-call', (event, call) => {
   if (trustedSender(event)) notifyIncomingCall(call);
 });
+ipcMain.handle('desktop:check-updates', (event) => (trustedSender(event) ? updater?.check({ interactive: true }) : 'error'));
 ipcMain.on('desktop:dismiss-call', (event, callId) => {
   if (trustedSender(event)) dismissCall(String(callId || ''));
 });
@@ -227,6 +233,7 @@ app.whenReady().then(() => {
   configurePermissions();
   createWindow();
   createTray();
+  updater = startUpdater({ appUrl: APP_URL, getWindow: () => mainWindow, beforeInstall: () => { quitting = true; } });
 });
 app.on('activate', showMain);
 app.on('before-quit', () => {

@@ -10,6 +10,7 @@ import SecurityPanel from './SecurityPanel.jsx';
 import GoogleApps from './GoogleApps.jsx';
 import NotificationSettings from './NotificationSettings.jsx';
 import TabSettings from './TabSettings.jsx';
+import AppUpdates from './AppUpdates.jsx';
 
 const GOOGLE_SIGNUP = 'https://accounts.google.com/signup';
 
@@ -281,6 +282,7 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
                 Set up Google Account
               </a>
             </section>
+            <AppUpdates />
           </>
         )}
         {error && <div className="alert">{error}</div>}

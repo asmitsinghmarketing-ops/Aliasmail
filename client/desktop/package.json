@@ -1,6 +1,6 @@
 {
   "name": "nextspace-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Nextspace native desktop client",
   "main": "main.cjs",
@@ -20,6 +20,7 @@
     "files": [
       "main.cjs",
       "preload.cjs",
+      "updater.cjs",
       "package.json",
       "assets/**/*"
     ],

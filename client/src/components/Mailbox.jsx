@@ -1823,6 +1823,18 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               <Logo className="mobile-drawer-logo" />
               <Wordmark />
             </div>
+            <button type="button" className="icon-btn drawer-close" aria-label="Close menu" title="Close menu" onClick={() => setCollapsed(true)}>
+              <Icon name="close" size={20} />
+            </button>
+          </div>
+          {/* Phone: who and which mailbox this menu belongs to. */}
+          <div className="drawer-account mobile-only">
+            <Avatar url={shared ? shared.avatarUrl : account.avatarUrl} person={{ name: shared ? shared.displayName : user.displayName, address: me }} color={shared?.color} />
+            <span className="drawer-account-text">
+              <strong>{shared ? shared.displayName || me : user.displayName || 'Your mailbox'}</strong>
+              <span>{me}</span>
+            </span>
+            <span className={`drawer-account-chip ${shared ? 'shared' : ''}`}>{shared ? 'Shared' : 'You'}</span>
           </div>
           <div className="pane-head">
             <span className="muted small">{(me.split('@')[1] || '').replace(/\.[a-z.]+$/i, '').replace(/^./, (c) => c.toUpperCase())}</span>
@@ -1931,35 +1943,6 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                 <span className="nav-label">Admin console</span>
               </button>
             )}
-            {shared ? (
-              <button className="nav-item mobile-only" onClick={() => onSwitchMailbox(null)} title="Back to my mailbox">
-                <span className="nav-icon" style={{ '--c': '#495057' }}>
-                  <Icon name="back" size={18} />
-                </span>
-                <span className="nav-label">Back to my mailbox</span>
-              </button>
-            ) : (
-              <>
-                <button className="nav-item mobile-only" onClick={startTour} title="Take the tour">
-                  <span className="nav-icon" style={{ '--c': 'var(--brand)' }}>
-                    <Icon name="info" size={18} />
-                  </span>
-                  <span className="nav-label">Take the tour</span>
-                </button>
-                <button className="nav-item mobile-only" onClick={() => { setCollapsed(true); setModal('settings'); }} title="Settings">
-                  <span className="nav-icon" style={{ '--c': '#495057' }}>
-                    <Icon name="settings" size={18} />
-                  </span>
-                  <span className="nav-label">Settings</span>
-                </button>
-              </>
-            )}
-            <button className="nav-item mobile-only" onClick={onLogout} title="Sign out">
-              <span className="nav-icon" style={{ '--c': '#495057' }}>
-                <Icon name="logout" size={18} />
-              </span>
-              <span className="nav-label">Sign out</span>
-            </button>
           </nav>
 
           {mailboxes.length > 0 && (
@@ -2033,6 +2016,27 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               </div>
             ))}
           </nav>
+
+          {/* Phone: account actions sit together at the foot of the menu, apart from navigation. */}
+          <div className="drawer-footer mobile-only">
+            {shared ? (
+              <button type="button" className="drawer-foot-item" onClick={() => { setCollapsed(true); onSwitchMailbox(null); }}>
+                <Icon name="back" size={18} /><span>Back to my mailbox</span>
+              </button>
+            ) : (
+              <>
+                <button type="button" className="drawer-foot-item" onClick={() => { setCollapsed(true); setModal('settings'); }}>
+                  <Icon name="settings" size={18} /><span>Settings</span>
+                </button>
+                <button type="button" className="drawer-foot-item" onClick={() => { setCollapsed(true); startTour(); }}>
+                  <Icon name="info" size={18} /><span>Take the tour</span>
+                </button>
+              </>
+            )}
+            <button type="button" className="drawer-foot-item danger" onClick={onLogout}>
+              <Icon name="logout" size={18} /><span>Sign out</span>
+            </button>
+          </div>
         </aside>
         <button
           className={`sidebar-backdrop ${collapsed ? '' : 'open'}`}
