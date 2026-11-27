@@ -33,7 +33,15 @@
 @media (max-width: 700px) {
   .meet-bar > .btn { flex: 1; justify-content: center; }
   .meet-bar-join, .meet-bar-next { flex: 1 1 100%; max-width: none; margin-left: 0; }
-  .meet-bar-join input { font-size: 16px; }
+  .meet-bar-join { min-width: 0; gap: 6px; padding-left: 10px; }
+  .meet-bar-join input { min-width: 0; font-size: 16px; }
+  .meet-bar-join .meet-join-main { padding-inline: 11px; }
+  .meet-join-actions .popover { position: fixed; z-index: 80; inset: auto 10px calc(10px + env(safe-area-inset-bottom)); }
+  .meet-join-menu { width: 100%; border-radius: 18px; box-shadow: 0 18px 50px rgb(20 30 55 / 28%); }
+  .meet-join-menu .menu-title { padding: 10px 16px 8px; }
+  .meet-join-menu .menu-item { min-height: 58px; padding: 10px 16px; }
+  .meet-join-menu .menu-item strong { font-size: 14px; }
+  .meet-join-menu .menu-item small { font-size: 12px; }
 }
 
 .cal-layout { max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 380px; align-items: start; gap: 18px; }
