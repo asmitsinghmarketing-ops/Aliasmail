@@ -165,8 +165,8 @@ export default function JoinMeeting({ code, onJoinedAsMember }) {
   const [phase, setPhase] = useState('form'); // form | knocking | waiting | joining | in-call | denied | expired | ended | left | missing
   const [error, setError] = useState('');
   const [name, setName] = useState(readName);
-  const [cameraOn, setCameraOn] = useState(true);
-  const [micOn, setMicOn] = useState(true);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [micOn, setMicOn] = useState(false);
   const [chosen, setChosen] = useState(() => ({
     videoinput: rememberedDevices().videoinput || '',
     audioinput: rememberedDevices().audioinput || '',

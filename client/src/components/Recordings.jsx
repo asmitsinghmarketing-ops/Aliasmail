@@ -12,6 +12,7 @@ import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { PanelSkeleton } from './Loading.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
+import { Popover } from './Menus.jsx';
 import ScheduleMeeting from './ScheduleMeeting.jsx';
 
 const MINUTE = 60_000;
@@ -638,7 +639,7 @@ export default function Recordings({ me, onClose }) {
     }
   }
 
-  const join = (meeting) => joinByCode(meeting.code, { video: true }).then(load).catch((err) => setError(err.message));
+  const join = (meeting) => joinByCode(meeting.code, { video: false, muted: true }).then(load).catch((err) => setError(err.message));
 
   // Start one now, or join with a code (or a whole meeting link) someone sent.
   const [code, setCode] = useState('');
@@ -655,11 +656,14 @@ export default function Recordings({ me, onClose }) {
     }
   };
   const startNow = () => run(() => startMeeting({ video: true }));
-  const joinWithCode = (event) => {
-    event.preventDefault();
+  const joinWithOptions = (options = { video: false, muted: true }) => {
     const found = MEETING_CODE.exec(code.trim().toLowerCase());
     if (!found) return setError('Enter a meeting code like abc-defg-hij, or paste the meeting link.');
-    return run(() => joinByCode(found[0], { video: true }).then(() => setCode('')));
+    return run(() => joinByCode(found[0], options).then(() => setCode('')));
+  };
+  const joinWithCode = (event) => {
+    event.preventDefault();
+    return joinWithOptions();
   };
 
   const saved = (meeting) => {
@@ -752,7 +756,28 @@ export default function Recordings({ me, onClose }) {
           <form className="meet-join meet-bar-join" onSubmit={joinWithCode}>
             <Icon name="keyboard" size={19} />
             <input id="meeting-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Enter a code or link" aria-label="Meeting code or link" autoComplete="off" spellCheck={false} />
-            <button type="submit" className="btn" disabled={starting || !code.trim()}>Join</button>
+            <span className="meet-join-actions">
+              <button type="submit" className="btn meet-join-main" disabled={starting || !code.trim()}>Join</button>
+              <Popover icon="arrowDrop" title="Choose how to join" className="btn meet-join-more" align="right" disabled={starting || !code.trim()}>
+                {(close) => (
+                  <div className="menu meet-join-menu" role="menu">
+                    <div className="menu-title">Choose how to join</div>
+                    <button type="button" className="menu-item" role="menuitem" onClick={() => { close(); joinWithOptions({ video: true, muted: false }); }}>
+                      <Icon name="videocam" size={19} />
+                      <span><strong>Camera and mic on</strong><small>Join normally</small></span>
+                    </button>
+                    <button type="button" className="menu-item" role="menuitem" onClick={() => { close(); joinWithOptions({ video: false, muted: false }); }}>
+                      <Icon name="videocamOff" size={19} />
+                      <span><strong>Camera off</strong><small>Join with your microphone on</small></span>
+                    </button>
+                    <button type="button" className="menu-item" role="menuitem" onClick={() => { close(); joinWithOptions({ video: false, muted: true }); }}>
+                      <Icon name="micOff" size={19} />
+                      <span><strong>Camera and mic off</strong><small>Default · join quietly</small></span>
+                    </button>
+                  </div>
+                )}
+              </Popover>
+            </span>
           </form>
           {next && (
             <div className={`meet-bar-next ${next.live ? 'live' : ''}`}>

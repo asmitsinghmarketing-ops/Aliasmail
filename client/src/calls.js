@@ -956,7 +956,7 @@ export const joinCall = (id, { video = false } = {}) => begin(video, () => api(`
 export const startMeeting = ({ video = true } = {}) => begin(video, () => api('/calls', { method: 'POST', body: { to: [], video, meeting: true } }));
 
 /** A teammate opening a meeting link: straight in. */
-export const joinByCode = (code, { video = true, muted = false } = {}) => begin(video, () => api(`/calls/code/${encodeURIComponent(code)}/join`, { method: 'POST', body: {} }), undefined, { muted });
+export const joinByCode = (code, { video = false, muted = true } = {}) => begin(video, () => api(`/calls/code/${encodeURIComponent(code)}/join`, { method: 'POST', body: {} }), undefined, { muted });
 
 /** A guest who has just been let in (`admitted` is what the server sent them). */
 export const joinAsGuest = (admitted, via, { video = true, muted = false } = {}) => begin(video, async () => admitted, via, { muted });

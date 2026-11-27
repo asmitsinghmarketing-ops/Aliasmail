@@ -11,6 +11,17 @@
 .meet-bar-join input { flex: 1; width: auto; }
 .meet-bar-join .btn { min-height: 34px; border: 0; border-radius: 9px; background: #202d47; color: #fff; }
 .meet-bar-join .btn:disabled { opacity: .35; }
+.meet-join-actions { flex: none; display: inline-flex; }
+.meet-bar-join .meet-join-main { padding-inline: 13px; border-radius: 9px 0 0 9px; }
+.meet-bar-join .meet-join-more { width: 30px; min-width: 30px; padding: 0; border-left: 1px solid rgb(255 255 255 / 22%); border-radius: 0 9px 9px 0; }
+.meet-join-more svg { width: 18px; height: 18px; }
+.meet-join-menu { width: 270px; padding-block: 7px; border: 1px solid #e3e7ef; border-radius: 14px; background: #fff; color: #202d47; }
+.meet-join-menu .menu-title { padding-bottom: 7px; color: #526078; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.meet-join-menu .menu-item { justify-content: flex-start; gap: 11px; padding: 10px 14px; color: #27344d; }
+.meet-join-menu .menu-item > svg { flex: none; color: #5b6dd8; }
+.meet-join-menu .menu-item > span { min-width: 0; display: grid; gap: 2px; }
+.meet-join-menu .menu-item strong { font-size: 13px; }
+.meet-join-menu .menu-item small { color: #7a879a; font-size: 11px; }
 .meet-bar-next { margin-left: auto; min-width: 0; display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 4px 0 14px; border: 1px solid #dfe4f0; border-radius: 12px; background: #fff; }
 .meet-bar-next.live { border-color: #a9dec9; background: #f2fbf7; }
 .meet-bar-next-text { min-width: 0; display: grid; line-height: 1.2; }
