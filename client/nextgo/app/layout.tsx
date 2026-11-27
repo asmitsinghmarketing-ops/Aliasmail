@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import "./production-fixes.css";
 
 export const metadata: Metadata = {
   title: { default: "NextGo — Consent-first commerce intelligence", template: "%s | NextGo" },
