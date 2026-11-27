@@ -282,7 +282,7 @@ function MonthView({ month, byDay, day, today, conflicts, onPick, onCreate, onOp
       {cells.map((date) => {
         const key = dayKey(date);
         const events = byDay.get(key) || [];
-        const shown = events.slice(0, 3);
+        const shown = events.slice(0, 2);
         const more = events.length - shown.length;
         const calls = events.filter((event) => event.kind === 'meeting').length;
         const classes = ['cal-cell', !sameMonth(date, month) && 'other', key === day && 'selected', key === today && 'today', events.length && 'has', (date.getDay() + 6) % 7 >= 5 && 'weekend', calls >= 3 && 'busy'].filter(Boolean).join(' ');
@@ -309,8 +309,10 @@ function MonthView({ month, byDay, day, today, conflicts, onPick, onCreate, onOp
               {shown.map((event) => (
                 <button key={event.id} type="button" className={eventClass(event, conflicts)} title={`${clock(event.start)} ${event.title}`} onClick={(e) => { e.stopPropagation(); onOpenEvent(event); }}>
                   <i />
-                  <time>{clock(event.start)}</time>
-                  <span>{event.title}</span>
+                  <span className="cal-event-summary">
+                    <strong>{event.title}</strong>
+                    <time>{clock(event.start)}</time>
+                  </span>
                 </button>
               ))}
               {more > 0 && <button type="button" className="cal-more-count" onClick={(e) => { e.stopPropagation(); onPick(date); }}>+{more} more</button>}
