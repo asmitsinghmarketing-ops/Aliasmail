@@ -189,7 +189,7 @@ const legacyDesktop = { version: '1.0.0', file: 'Nextspace-Desktop-1.0.0-Setup.e
 function desktopManifest() {
   try {
     const manifest = JSON.parse(fs.readFileSync(desktopManifestPath, 'utf8'));
-    if (manifest?.version && /^[w.-]+.exe$/.test(manifest.file || '')) return manifest;
+    if (manifest?.version && /^[\w.-]+\.exe$/.test(manifest.file || '')) return manifest;
   } catch {
     // No release written yet: the original 1.0.0 installer.
   }

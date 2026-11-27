@@ -10,6 +10,7 @@ import android.util.Rational;
 import android.view.View;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
+import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -45,12 +46,19 @@ public class MainActivity extends BridgeActivity {
         activeCallId = callId;
         activeCallTitle = title == null || title.isEmpty() ? "Nextspace call" : title;
         activeCallVideo = video;
+        Intent mediaService = new Intent(this, CallMediaService.class)
+            .setAction(CallMediaService.ACTION_START)
+            .putExtra(CallMediaService.EXTRA_CALL_ID, callId)
+            .putExtra(CallMediaService.EXTRA_TITLE, activeCallTitle)
+            .putExtra(CallMediaService.EXTRA_VIDEO, video);
+        ContextCompat.startForegroundService(this, mediaService);
         if (pictureInPictureSupported()) setPictureInPictureParams(pictureInPictureParams(true));
     }
 
     void clearActiveCall(String callId) {
         if (!activeCallId.equals(callId)) return;
         activeCallId = "";
+        stopService(new Intent(this, CallMediaService.class).setAction(CallMediaService.ACTION_STOP));
         if (pictureInPictureSupported()) setPictureInPictureParams(pictureInPictureParams(false));
         if (Build.VERSION.SDK_INT >= 26 && isInPictureInPictureMode()) finish();
     }
@@ -113,6 +121,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onPictureInPictureModeChanged(boolean inPictureInPictureMode, Configuration newConfig) {
         super.onPictureInPictureModeChanged(inPictureInPictureMode, newConfig);
+        if (inPictureInPictureMode) foreground = true;
         NativeCallsPlugin.onPictureInPictureChanged(inPictureInPictureMode);
     }
 
@@ -125,7 +134,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onPause() {
-        foreground = false;
+        if (Build.VERSION.SDK_INT < 26 || !isInPictureInPictureMode()) foreground = false;
         super.onPause();
     }
 }

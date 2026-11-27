@@ -1,5 +1,6 @@
 package com.nexternconsultancy.nextspace;
 
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -79,7 +80,7 @@ final class CallNotifications {
         context.getSystemService(NotificationManager.class).notify(id(callId), notification.build());
     }
 
-    static void ongoing(Context context, String callId, String title, boolean video, long startedAt) {
+    static Notification ongoingNotification(Context context, String callId, String title, boolean video, long startedAt) {
         channels(context);
         PendingIntent resume = open(context, callId, "resume", 4);
         NotificationCompat.Builder notification = new NotificationCompat.Builder(context, ONGOING_CALLS)
@@ -93,7 +94,11 @@ final class CallNotifications {
             .setAutoCancel(false).setOngoing(true)
             .setContentIntent(resume);
         if (startedAt > 0) notification.setWhen(startedAt).setUsesChronometer(true).setShowWhen(true);
-        context.getSystemService(NotificationManager.class).notify(id(callId), notification.build());
+        return notification.build();
+    }
+
+    static void ongoing(Context context, String callId, String title, boolean video, long startedAt) {
+        context.getSystemService(NotificationManager.class).notify(id(callId), ongoingNotification(context, callId, title, video, startedAt));
     }
 
     static void message(Context context, String title, String body) {
