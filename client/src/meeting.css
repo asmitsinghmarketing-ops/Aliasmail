@@ -831,6 +831,15 @@
 /* My notes: a private scratchpad for the call. */
 .nx-notes { height: 100%; display: flex; flex-direction: column; gap: 10px; }
 .nx-notes .nx-note { margin: 0; }
+.nx-notes-open {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border: 1px solid #2f3d5c; border-radius: 14px;
+  background: linear-gradient(0deg, rgb(143 176 255 / 10%), rgb(143 176 255 / 10%)), var(--nx-surface-2, var(--nx-surface)); color: var(--nx-text); text-align: left;
+}
+.nx-notes-open:hover { border-color: #8fb0ff; }
+.nx-notes-open > svg { flex: none; color: #8fb0ff; }
+.nx-notes-open span { display: grid; gap: 2px; }
+.nx-notes-open b { font-size: 14px; }
+.nx-notes-open small { color: var(--nx-muted); font-size: 12px; }
 .nx-notes textarea { flex: 1; min-height: 220px; width: 100%; box-sizing: border-box; resize: none; padding: 12px 14px; border: 1px solid var(--nx-line-2); border-radius: 14px; outline: 0; background: var(--nx-surface-2, var(--nx-surface)); color: var(--nx-text); font: inherit; font-size: 14px; line-height: 1.55; }
 .nx-notes textarea:focus { border-color: #8fb0ff; }
 .nx-notes-actions { display: flex; align-items: center; gap: 6px; }

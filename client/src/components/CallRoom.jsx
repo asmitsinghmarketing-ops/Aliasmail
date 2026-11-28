@@ -1,7 +1,9 @@
 // The call on screen: everyone's pictures, chat, reactions, the controls, and a small version to
 // keep working in. Layout adapts to the window: a gallery that fills the space for any number of
 // people, a spotlight with a filmstrip, a presenter view, and a phone-style 1:1.
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Capacitor } from '@capacitor/core';
 import { api } from '../api.js';
 import {
   admitGuest, canShareScreen, chooseDevice, clearNotice, hangUp, inviteToCall, meetingCode, meetingLink, react, REACTIONS,
@@ -18,6 +20,9 @@ import {
 import Avatar from './Avatar.jsx';
 import { colorFor } from '../format.js';
 import Icon from './Icon.jsx';
+import { notesPath, readNotes, watchNotes, writeMeta, writeNotes } from '../meetingNotes.js';
+
+const MeetingNotes = lazy(() => import('./MeetingNotes.jsx'));
 
 /**
  * A person's name for the call screen. Someone without a display name arrives as their email
@@ -871,17 +876,32 @@ function InfoPanel({ state }) {
 }
 
 /** Private notes for this meeting, kept on this device only, so nobody else in the call sees them. */
-function NotesPanel({ state }) {
+function NotesPanel({ state, name }) {
   const { call } = state;
-  const key = `nextspace:call-notes:${call.code || call.id || 'call'}`;
-  const [text, setText] = useState(() => { try { return localStorage.getItem(key) || ''; } catch { return ''; } });
+  const id = call.code || call.id || 'call';
+  const [text, setText] = useState(() => readNotes(id));
   const [copied, setCopied] = useState(false);
+  const [big, setBig] = useState(false);
+  const fromOutside = useRef(false);
   useEffect(() => {
-    const timer = setTimeout(() => {
-      try { if (text) localStorage.setItem(key, text); else localStorage.removeItem(key); } catch { /* private window */ }
-    }, 300);
+    if (fromOutside.current) { fromOutside.current = false; return undefined; }
+    const timer = setTimeout(() => writeNotes(id, text), 300);
     return () => clearTimeout(timer);
-  }, [key, text]);
+  }, [id, text]);
+  // The full-page notes (another tab, or full screen in the app) edit the same notes: follow them.
+  useEffect(() => watchNotes(id, (next) => setText((current) => {
+    if (current === next) return current;
+    fromOutside.current = true;
+    return next;
+  })), [id]);
+  useEffect(() => { writeMeta(id, { title: name }); }, [id, name]);
+  const openBig = () => {
+    writeNotes(id, text);
+    // The Android app has no tabs (a link would open the browser, without these notes): full screen here instead.
+    if (Capacitor.isNativePlatform()) { setBig(true); return; }
+    const opened = window.open(notesPath(id, name), '_blank');
+    if (!opened) setBig(true);
+  };
   const heading = `${call.title || 'Meeting'} · ${new Date().toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' })}`;
   const copy = async () => {
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* no clipboard */ }
@@ -899,6 +919,10 @@ function NotesPanel({ state }) {
   const stamp = () => setText((current) => `${current}${current && !current.endsWith('\n') ? '\n' : ''}[${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}] `);
   return (
     <div className="nx-notes">
+      <button type="button" className="nx-notes-open" onClick={openBig}>
+        <Icon name="openInNew" size={18} />
+        <span><b>{Capacitor.isNativePlatform() ? 'Open full screen' : 'Open in new tab'}</b><small>Big editor, checklists, timeline, export</small></span>
+      </button>
       <p className="nx-note">Only you can see these. They stay on this device for this meeting.</p>
       <textarea
         value={text}
@@ -914,6 +938,10 @@ function NotesPanel({ state }) {
         <button type="button" className="nx-btn small" disabled={!text} onClick={copy}><Icon name={copied ? 'check' : 'copy'} size={16} />{copied ? 'Copied' : 'Copy'}</button>
         <button type="button" className="nx-btn small" disabled={!text} onClick={download}><Icon name="download" size={16} />Save</button>
       </div>
+      {big && createPortal(
+        <Suspense fallback={null}><MeetingNotes id={id} title={name} onClose={() => setBig(false)} /></Suspense>,
+        document.body,
+      )}
     </div>
   );
 }
@@ -1813,7 +1841,7 @@ export default function CallRoom({ state }) {
                 {panel === 'chat' && <ChatPanel state={state} />}
                 {panel === 'info' && <InfoPanel state={state} />}
                 {panel === 'devices' && <DevicesPanel state={state} />}
-                {panel === 'notes' && <NotesPanel state={state} />}
+                {panel === 'notes' && <NotesPanel state={state} name={call.title || (peers.length ? title : call.code ? `Meeting ${call.code}` : 'Meeting')} />}
               </div>
             </aside>
           </>

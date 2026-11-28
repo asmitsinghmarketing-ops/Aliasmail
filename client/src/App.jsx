@@ -3,6 +3,7 @@ import { api, LOGOUT_EVENT, MAILBOX_REVOKED_EVENT, setActiveMailbox, signOut } f
 import Login from './components/Login.jsx';
 import { hideBoot, lazyPage, ShellSkeleton, whenIdle } from './components/Loading.jsx';
 import { isInstallPage } from './install.js';
+import { notesIdOf } from './meetingNotes.js';
 import { DialogHost } from './components/Dialog.jsx';
 import UpdateNotice from './components/UpdateNotice.jsx';
 import DeviceInstallPrompt from './components/DeviceInstallPrompt.jsx';
@@ -18,6 +19,7 @@ const Attendance = lazyPage(() => import('./components/Attendance.jsx'));
 const Recordings = lazyPage(() => import('./components/Recordings.jsx'));
 const JoinMeeting = lazyPage(() => import('./components/JoinMeeting.jsx'));
 const InstallPage = lazyPage(() => import('./components/InstallPage.jsx'));
+const MeetingNotes = lazyPage(() => import('./components/MeetingNotes.jsx'));
 
 // A meeting link: /join/abc-defg-hij
 const joinCodeOf = () => /^\/join\/([a-z]{3}-[a-z]{4}-[a-z]{3})\/?$/i.exec(window.location.pathname)?.[1]?.toLowerCase() || null;
@@ -30,6 +32,7 @@ const OWNER_COLOR = '#e8590c';
 
 export default function App() {
   const [joinCode, setJoinCode] = useState(joinCodeOf);
+  const [notesId] = useState(notesIdOf);
   useEffect(() => {
     if (!joinCode) return undefined;
     const onBack = (event) => {
@@ -42,6 +45,8 @@ export default function App() {
     return () => window.removeEventListener('nextspace:native-back', onBack);
   }, [joinCode]);
   if (isInstallPage()) return <Suspense fallback={null}><InstallPage /></Suspense>;
+  // A meeting's notes opened in their own tab: private to this device, so no sign-in check.
+  if (notesId) return <Suspense fallback={null}><MeetingNotes id={notesId} title={new URLSearchParams(window.location.search).get('title') || ''} /></Suspense>;
   // A teammate who joined from the link carries on in the app, with the call on screen.
   if (joinCode) {
     return (
