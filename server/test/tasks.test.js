@@ -104,6 +104,24 @@ test('team projects and tasks validate ownership, assignment and status changes'
   assert.ok((await completed.json()).completedAt);
   const completedNotifications = await (await john('/notifications')).json();
   assert.deepEqual([completedNotifications.unread, completedNotifications.items[0].type, completedNotifications.items[0].entity.id], [1, 'task-completed', task.id]);
+  const stepped = await john(`/tasks/items/${task.id}`, { method: 'PATCH', body: JSON.stringify({ checklist: [{ text: 'Draft copy', done: true }, { text: '  ' }, { text: 'Get sign-off' }] }) });
+  assert.equal(stepped.status, 200);
+  const steps = (await stepped.json()).checklist;
+  assert.deepEqual(steps.map((step) => [step.text, step.done]), [['Draft copy', true], ['Get sign-off', false]], 'blank steps are dropped');
+  assert.ok(steps.every((step) => step.id));
+  assert.equal((await john(`/tasks/items/${task.id}`, { method: 'PATCH', body: JSON.stringify({ checklist: 'nope' }) })).status, 400);
+
+  assert.equal((await mary(`/tasks/items/${task.id}/comments`, { method: 'POST', body: JSON.stringify({ text: '   ' }) })).status, 400);
+  const commented = await mary(`/tasks/items/${task.id}/comments`, { method: 'POST', body: JSON.stringify({ text: 'Looks good to me' }) });
+  assert.equal(commented.status, 201);
+  const [comment] = (await commented.json()).comments;
+  assert.deepEqual([comment.author, comment.text], ['mary@example.com', 'Looks good to me']);
+  const commentNotices = await (await john('/notifications')).json();
+  assert.ok(commentNotices.items.some((item) => item.type === 'task-comment' && item.entity.id === task.id), 'the task creator hears about comments');
+  assert.equal((await john(`/tasks/items/${task.id}/comments/${comment.id}`, { method: 'DELETE' })).status, 403);
+  const uncommented = await mary(`/tasks/items/${task.id}/comments/${comment.id}`, { method: 'DELETE' });
+  assert.deepEqual((await uncommented.json()).comments, []);
+
   const snapshot = await (await mary('/tasks')).json();
   assert.deepEqual([snapshot.projects.length, snapshot.tasks.length], [1, 3]);
   assert.equal(snapshot.tasks.find((item) => item.id === task.id).status, 'done');

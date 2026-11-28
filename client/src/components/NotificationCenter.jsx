@@ -12,7 +12,7 @@ function relativeTime(value) {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(value));
 }
 
-const iconFor = (type) => type === 'task-completed' ? 'checkCircle' : type === 'task-assigned' ? 'person' : 'bell';
+const iconFor = (type) => type === 'task-completed' ? 'checkCircle' : type === 'task-assigned' ? 'person' : type === 'task-comment' ? 'chat' : 'bell';
 
 export default function NotificationCenter({ onNavigate }) {
   const [open, setOpen] = useState(false);

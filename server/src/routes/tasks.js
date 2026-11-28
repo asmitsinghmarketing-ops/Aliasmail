@@ -38,6 +38,19 @@ function dueDate(value) {
   return date;
 }
 
+// A checklist is replaced as a whole: the client always sends the full list it shows.
+function checklist(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new HttpError(400, 'Checklist must be a list');
+  if (value.length > 50) throw new HttpError(400, 'A checklist can have at most 50 items');
+  return value
+    .map((step) => ({ id: typeof step?.id === 'string' && step.id ? step.id.slice(0, 80) : crypto.randomUUID(), text: clean(step?.text, 200, 'Checklist item'), done: Boolean(step?.done) }))
+    .filter((step) => step.text);
+}
+
+/** Older tasks were saved before checklists and comments existed. */
+const shaped = (item) => ({ ...item, checklist: item.checklist || [], comments: item.comments || [] });
+
 function project(id) {
   const found = store().projects.find((p) => p.id === id);
   if (!found) throw new HttpError(404, 'Project not found');
@@ -92,6 +105,8 @@ function makeTask(input, actor, now = new Date().toISOString()) {
     priority,
     assignee: assignee(input?.assignee),
     dueDate: dueDate(input?.dueDate),
+    checklist: checklist(input?.checklist),
+    comments: [],
     createdBy: actor,
     createdAt: now,
     updatedAt: now,
@@ -119,7 +134,7 @@ router.get('/', (req, res) => {
     me: personOf(req.user),
     team: teammates(),
     projects: [...data.projects].sort((a, b) => a.name.localeCompare(b.name)),
-    tasks: [...data.items].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    tasks: data.items.map(shaped).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     activity: data.activity.slice(-100).reverse(),
   });
 });
@@ -217,6 +232,7 @@ export function updateTask(id, body, actor) {
   }
   if (body?.assignee !== undefined) found.assignee = assignee(body.assignee);
   if (body?.dueDate !== undefined) found.dueDate = dueDate(body.dueDate);
+  if (body?.checklist !== undefined) found.checklist = checklist(body.checklist);
   found.updatedAt = new Date().toISOString();
   if (found.status === 'done' && beforeStatus !== 'done') found.completedAt = found.updatedAt;
   if (found.status !== 'done') found.completedAt = null;
@@ -233,10 +249,39 @@ export function updateTask(id, body, actor) {
     });
   }
   save();
-  return found;
+  return shaped(found);
 }
 
 router.patch('/items/:id', (req, res) => res.json(updateTask(req.params.id, req.body, personOf(req.user))));
+
+router.post('/items/:id/comments', (req, res) => {
+  const found = task(req.params.id);
+  const author = personOf(req.user);
+  const text = longText(req.body?.text, 4000);
+  if (!text) throw new HttpError(400, 'Write a comment first');
+  found.comments ||= [];
+  if (found.comments.length >= 200) throw new HttpError(400, 'This task has reached its comment limit');
+  const comment = { id: crypto.randomUUID(), author, text, at: new Date().toISOString() };
+  found.comments.push(comment);
+  found.updatedAt = comment.at;
+  activity(author, 'task-comment', found, found.title);
+  for (const to of new Set([found.assignee, found.createdBy])) {
+    if (!to || to === author) continue;
+    createNotification({ to, type: 'task-comment', title: 'New comment on a task', body: `${nameOf(author)} on “${found.title}”: ${text.slice(0, 140)}`, entity: { kind: 'task', id: found.id, projectId: found.projectId }, actor: author });
+  }
+  save();
+  res.status(201).json(shaped(found));
+});
+
+router.delete('/items/:id/comments/:commentId', (req, res) => {
+  const found = task(req.params.id);
+  const index = (found.comments || []).findIndex((comment) => comment.id === req.params.commentId);
+  if (index < 0) throw new HttpError(404, 'Comment not found');
+  if (req.user.role !== 'admin' && found.comments[index].author !== personOf(req.user)) throw new HttpError(403, 'You can only delete your own comments');
+  found.comments.splice(index, 1);
+  save();
+  res.json(shaped(found));
+});
 
 router.delete('/items/:id', (req, res) => {
   const found = task(req.params.id);
