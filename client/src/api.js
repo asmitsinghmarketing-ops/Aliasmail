@@ -123,10 +123,45 @@ export function prefetchMailboxList(path) {
   return pending;
 }
 
+/** Signs out of this account. Resolves { switched: true } when another account signed in on this
+ * browser took over (the page then reloads into it). */
 export const signOut = () => {
   clearMailCaches();
-  return api('/auth/logout', { method: 'POST', signInFlow: true }).catch(() => {});
+  return api('/auth/logout', { method: 'POST', signInFlow: true })
+    .then((result) => {
+      if (result?.switched) reloadIntoAccount();
+      return result || {};
+    })
+    .catch(() => ({}));
 };
+
+/* ----- several accounts on one browser (an admin account and a personal one, say) ----- */
+
+const ACCOUNT_CHANNEL = 'nextspace-account';
+const accountChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(ACCOUNT_CHANNEL) : null;
+// Another tab switched account: this one is now signed in as that account too, so start over.
+accountChannel?.addEventListener('message', (event) => { if (event.data === 'changed') window.location.reload(); });
+
+function reloadIntoAccount() {
+  accountChannel?.postMessage('changed');
+  window.location.assign('/');
+}
+
+/** Everyone signed in on this browser, the current account first. */
+export const listAccounts = () => api('/auth/accounts', { signInFlow: true }).then((data) => data?.accounts || []).catch(() => []);
+
+/** Keep this account signed in and go to the sign-in page to add another. */
+export async function addAccount() {
+  await api('/auth/accounts/add', { method: 'POST' });
+  clearMailCaches();
+  reloadIntoAccount();
+}
+
+export async function switchAccount(id) {
+  await api('/auth/accounts/switch', { method: 'POST', body: { id }, signInFlow: true });
+  clearMailCaches();
+  reloadIntoAccount();
+}
 
 // Opened / preloaded messages, so showing one again (or one preloaded on hover) is instant.
 // Loaded with ?peek=1, which doesn't mark the message read - opening it does that separately.

@@ -1,5 +1,5 @@
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, cachedMailboxList, fetchRemembered, patchCachedMessage, prefetchMailboxList, preloadMessage } from '../api.js';
+import { addAccount, api, cachedMailboxList, listAccounts, switchAccount, fetchRemembered, patchCachedMessage, prefetchMailboxList, preloadMessage } from '../api.js';
 import { displayName, formatDate, initial, personLabel } from '../format.js';
 import { escapeHtml, htmlFromText, sanitizeHtml, textFromHtml } from './RichEditor.jsx';
 import { withDriveLinks } from '../drivePicker.js';
@@ -357,6 +357,51 @@ function IconButton({ icon, title, onClick, danger, size }) {
  * Avatar menu: the open mailbox, then the account's own mailbox and the group mailboxes its
  * roles give it, Gmail-style. Without any group mailboxes the avatar just opens Settings.
  */
+/** The accounts signed in on this browser (fetched while a menu showing them is open). */
+function useAccounts(open) {
+  const [accounts, setAccounts] = useState([]);
+  useEffect(() => {
+    if (open) listAccounts().then(setAccounts);
+  }, [open]);
+  return accounts;
+}
+
+const roleName = (role) => (role === 'admin' ? 'Admin' : 'Personal');
+
+/** Other signed-in accounts to switch to, and "Add another account". */
+function AccountRows({ accounts }) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const others = accounts.filter((a) => !a.current);
+  const go = async (id, run) => {
+    setBusy(id);
+    setError('');
+    try { await run(); } catch (err) { setBusy(''); setError(err.message); }
+  };
+  return (
+    <div className="acct-rows">
+      {others.map((a) => (
+        <button key={a.id} type="button" role="menuitem" className="menu-item acct-item" disabled={Boolean(busy)} onClick={() => go(a.id, () => switchAccount(a.id))}>
+          <Avatar url={a.avatarUrl} person={{ name: a.displayName, address: a.email }} color={a.color} size="sm" />
+          <span className="acct-text">
+            <span className="acct-name">{a.displayName || a.email}</span>
+            <span className="acct-mail">{a.displayName ? a.email : `${roleName(a.role)} account`}</span>
+          </span>
+          <span className={`acct-role ${a.role}`}>{busy === a.id ? 'Opening…' : roleName(a.role)}</span>
+        </button>
+      ))}
+      <button type="button" role="menuitem" className="menu-item acct-item acct-add" disabled={Boolean(busy)} onClick={() => go('add', addAccount)}>
+        <span className="acct-add-icon"><Icon name="personAdd" size={18} /></span>
+        <span className="acct-text">
+          <span className="acct-name">{busy === 'add' ? 'Opening sign-in…' : 'Add another account'}</span>
+          <span className="acct-mail">Stay signed in to both, e.g. admin and personal</span>
+        </span>
+      </button>
+      {error && <p className="acct-error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
 function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh, onSettings, onLogout }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef(null);
@@ -382,13 +427,14 @@ function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh
     ...(shared ? [{ ...account, address: account.email, own: true }] : []),
     ...mailboxes.filter((m) => m.address !== user.email),
   ];
+  const accounts = useAccounts(open);
   const trigger = (
     <button
       className="avatar-btn"
-      title={mailboxes.length ? 'Switch mailbox' : 'Settings and profile picture'}
-      aria-haspopup={mailboxes.length ? 'menu' : undefined}
-      aria-expanded={mailboxes.length ? open : undefined}
-      onClick={() => (mailboxes.length || shared ? setOpen(!open) : onSettings())}
+      title="Your account, other accounts and mailboxes"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      onClick={() => setOpen(!open)}
     >
       <Avatar url={user.avatarUrl} person={{ name: user.displayName, address: user.email }} color={user.color} />
     </button>
@@ -404,14 +450,14 @@ function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh
               <Avatar url={user.avatarUrl} person={{ name: user.displayName, address: user.email }} color={user.color} size="lg" />
               <strong>{user.displayName || user.email}</strong>
               {user.displayName && <span className="muted small">{user.email}</span>}
-              <span className={`pill ${shared ? 'warn' : 'on'}`}>{shared ? `Shared · ${shared.roles.join(', ')}` : 'Your mailbox'}</span>
+              <span className={`pill ${shared ? 'warn' : 'on'}`}>{shared ? `Shared · ${shared.roles.join(', ')}` : user.role === 'admin' ? 'Admin account' : 'Your mailbox'}</span>
               {!shared && (
                 <button type="button" className="btn btn-outline" onClick={() => { setOpen(false); onSettings(); }}>
                   Manage your settings
                 </button>
               )}
             </div>
-            {others.length > 0 && <div className="menu-title small muted">Switch to</div>}
+            {others.length > 0 && <div className="menu-title small muted">Shared mailboxes</div>}
             {others.map((m) => (
               <button type="button" role="menuitem" key={m.address} className="menu-item switcher-item" onClick={() => choose(m.own ? null : m.address)}>
                 <Avatar url={m.avatarUrl} person={{ name: m.displayName, address: m.address }} color={m.color} size="sm" />
@@ -421,8 +467,10 @@ function MailboxSwitcher({ user, account, mailboxes, shared, onSwitch, onRefresh
                 </span>
               </button>
             ))}
+            <div className="menu-title small muted">Accounts on this device</div>
+            <AccountRows accounts={accounts} />
             <button type="button" role="menuitem" className="menu-item switcher-signout" onClick={onLogout}>
-              <Icon name="logout" size={18} /> Sign out
+              <Icon name="logout" size={18} /> {accounts.length > 1 ? 'Sign out of this account' : 'Sign out'}
             </button>
           </div>
         </div>
@@ -480,6 +528,8 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
   // Phones hide the drawer; tablets and small laptops start with the icon rail so the list has room.
   const [collapsed, setCollapsed] = useState(() => window.matchMedia('(max-width: 1100px)').matches);
   const [foldersOpen, setFoldersOpen] = useState(true);
+  const [accountsOpen, setAccountsOpen] = useState(false); // phone menu: the account switcher
+  const drawerAccounts = useAccounts(accountsOpen);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -1828,13 +1878,51 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
             </button>
           </div>
           {/* Phone: who and which mailbox this menu belongs to. */}
-          <div className="drawer-account mobile-only">
-            <Avatar url={shared ? shared.avatarUrl : account.avatarUrl} person={{ name: shared ? shared.displayName : user.displayName, address: me }} color={shared?.color} />
-            <span className="drawer-account-text">
-              <strong>{shared ? shared.displayName || me : user.displayName || 'Your mailbox'}</strong>
-              <span>{me}</span>
-            </span>
-            <span className={`drawer-account-chip ${shared ? 'shared' : ''}`}>{shared ? 'Shared' : 'You'}</span>
+          <div className={`drawer-account-wrap mobile-only ${accountsOpen ? 'open' : ''}`}>
+            <button type="button" className="drawer-account" aria-expanded={accountsOpen} onClick={() => setAccountsOpen((o) => !o)} title="Switch account or mailbox">
+              <Avatar url={shared ? shared.avatarUrl : account.avatarUrl} person={{ name: shared ? shared.displayName : user.displayName, address: me }} color={shared?.color} />
+              <span className="drawer-account-text">
+                <strong>{shared ? shared.displayName || me : user.displayName || 'Your mailbox'}</strong>
+                <span>{me}</span>
+              </span>
+              <span className={`drawer-account-chip ${shared ? 'shared' : ''}`}>{shared ? 'Shared' : user.role === 'admin' ? 'Admin' : 'You'}</span>
+              <Icon name="expandMore" size={20} className="drawer-account-caret" />
+            </button>
+            {accountsOpen && (
+              <div className="drawer-accounts" role="menu">
+                {mailboxes.length > 0 && (
+                  <>
+                    <div className="drawer-accounts-title">Mailboxes</div>
+                    {[{ ...account, address: account.email, own: true }, ...mailboxes].map((m) => {
+                      const current = m.address === me;
+                      return (
+                        <button
+                          key={m.address}
+                          type="button"
+                          role="menuitem"
+                          className={`menu-item acct-item ${current ? 'current' : ''}`}
+                          aria-current={current ? 'true' : undefined}
+                          onClick={() => {
+                            setCollapsed(true);
+                            setAccountsOpen(false);
+                            if (!current) onSwitchMailbox(m.own ? null : m.address);
+                          }}
+                        >
+                          <Avatar url={m.avatarUrl} person={{ name: m.displayName, address: m.address }} color={m.color} size="sm" />
+                          <span className="acct-text">
+                            <span className="acct-name">{m.displayName || m.address}</span>
+                            <span className="acct-mail">{m.own ? 'Your mailbox' : m.roles.join(', ')}</span>
+                          </span>
+                          {current && <Icon name="check" size={18} className="acct-check" />}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+                <div className="drawer-accounts-title">Accounts on this device</div>
+                <AccountRows accounts={drawerAccounts} />
+              </div>
+            )}
           </div>
           <div className="pane-head">
             <span className="muted small">{(me.split('@')[1] || '').replace(/\.[a-z.]+$/i, '').replace(/^./, (c) => c.toUpperCase())}</span>
@@ -1903,78 +1991,43 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                   : []),
               ]);
             })()}
-            {shownRail.filter((tab) => !tab.pinned && !phoneTabs.some((phoneTab) => phoneTab.id === tab.id)).length > 0 && (
-              <>
-                <div className="nav-section mobile-only">Workspace</div>
-                {shownRail
-                  .filter((tab) => !tab.pinned && !phoneTabs.some((phoneTab) => phoneTab.id === tab.id))
-                  .map((tab) => (
-                    <button
-                      key={`mobile-workspace-${tab.id}`}
-                      type="button"
-                      className={`nav-item mobile-only ${tab.on ? 'active' : ''}`}
-                      onClick={() => {
-                        setCollapsed(true);
-                        tab.onClick();
-                      }}
-                      title={tab.title || tab.label}
-                    >
-                      <span className="nav-icon" style={{ '--c': 'var(--brand)' }}>
-                        <Icon name={tab.icon} size={18} />
-                      </span>
-                      <span className="nav-label">{tab.label}</span>
-                      {tab.badge > 0 && <span className="count">{tab.badge > 99 ? '99+' : tab.badge}</span>}
-                    </button>
-                  ))}
-              </>
-            )}
-            {onOpenAdmin && (
-              <button
-                className="nav-item admin-mobile-item"
-                onClick={() => {
-                  setCollapsed(true);
-                  onOpenAdmin();
-                }}
-                title="Admin console"
-              >
-                <span className="nav-icon" style={{ '--c': 'var(--violet)' }}>
-                  <Icon name="shield" size={18} />
-                </span>
-                <span className="nav-label">Admin console</span>
-              </button>
-            )}
+            {(() => {
+              // Phone: the other workspaces as a grid of tiles, apart from the folder list.
+              const apps = shownRail.filter((tab) => !tab.pinned && !phoneTabs.some((phoneTab) => phoneTab.id === tab.id));
+              if (!apps.length && !onOpenAdmin) return null;
+              return (
+                <>
+                  <div className="nav-section mobile-only">Workspace</div>
+                  <div className="drawer-apps mobile-only">
+                    {apps.map((tab) => (
+                      <button
+                        key={`mobile-workspace-${tab.id}`}
+                        type="button"
+                        className={`drawer-app ${tab.on ? 'active' : ''}`}
+                        onClick={() => {
+                          setCollapsed(true);
+                          tab.onClick();
+                        }}
+                        title={tab.title || tab.label}
+                      >
+                        <span className="drawer-app-icon">
+                          <Icon name={tab.icon} size={22} />
+                          {tab.badge > 0 && <span className="drawer-app-badge">{tab.badge > 99 ? '99+' : tab.badge}</span>}
+                        </span>
+                        <span className="drawer-app-label">{tab.label}</span>
+                      </button>
+                    ))}
+                    {onOpenAdmin && (
+                      <button type="button" className="drawer-app admin" onClick={() => { setCollapsed(true); onOpenAdmin(); }} title="Admin console">
+                        <span className="drawer-app-icon"><Icon name="shield" size={22} /></span>
+                        <span className="drawer-app-label">Admin</span>
+                      </button>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </nav>
-
-          {mailboxes.length > 0 && (
-            <div className="drawer-mailboxes mobile-only">
-              <div className="labels-head">
-                <span>Mailboxes</span>
-              </div>
-              <nav>
-                {[{ ...account, address: account.email, own: true }, ...mailboxes].map((m) => {
-                  const current = m.address === me;
-                  return (
-                    <button
-                      key={m.address}
-                      className={`nav-item mailbox-item ${current ? 'active' : ''}`}
-                      aria-current={current ? 'true' : undefined}
-                      title={m.address}
-                      onClick={() => {
-                        setCollapsed(true);
-                        if (!current) onSwitchMailbox(m.own ? null : m.address);
-                      }}
-                    >
-                      <Avatar url={m.avatarUrl} person={{ name: m.displayName, address: m.address }} color={m.color} size="sm" />
-                      <span className="nav-label">
-                        {m.displayName || m.address}
-                        <span className="muted small mailbox-sub">{m.own ? 'Your mailbox' : m.roles.join(', ')}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </nav>
-            </div>
-          )}
 
           <div className="labels-head">
             <span>Labels</span>
@@ -1989,6 +2042,7 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               <Icon name="add" size={18} />
             </button>
           </div>
+          {!labels.length && <p className="drawer-hint mobile-only">No labels yet. Tap + to make one.</p>}
           <nav>
             {labels.map((l) => (
               <div
@@ -2021,20 +2075,20 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
           <div className="drawer-footer mobile-only">
             {shared ? (
               <button type="button" className="drawer-foot-item" onClick={() => { setCollapsed(true); onSwitchMailbox(null); }}>
-                <Icon name="back" size={18} /><span>Back to my mailbox</span>
+                <Icon name="back" size={20} /><span>My mailbox</span>
               </button>
             ) : (
               <>
                 <button type="button" className="drawer-foot-item" onClick={() => { setCollapsed(true); setModal('settings'); }}>
-                  <Icon name="settings" size={18} /><span>Settings</span>
+                  <Icon name="settings" size={20} /><span>Settings</span>
                 </button>
                 <button type="button" className="drawer-foot-item" onClick={() => { setCollapsed(true); startTour(); }}>
-                  <Icon name="info" size={18} /><span>Take the tour</span>
+                  <Icon name="info" size={20} /><span>Tour</span>
                 </button>
               </>
             )}
             <button type="button" className="drawer-foot-item danger" onClick={onLogout}>
-              <Icon name="logout" size={18} /><span>Sign out</span>
+              <Icon name="logout" size={20} /><span>Sign out</span>
             </button>
           </div>
         </aside>

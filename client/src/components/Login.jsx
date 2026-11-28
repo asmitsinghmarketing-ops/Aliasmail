@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { api } from '../api.js';
+import { api, listAccounts, switchAccount } from '../api.js';
+import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 import Logo, { Wordmark } from './Logo.jsx';
 import { AuthenticatorSetup, BackupCodes, CodeField } from './TwoStep.jsx';
@@ -72,7 +73,19 @@ export default function Login({ onLogin }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [help, setHelp] = useState(false);
+  const [kept, setKept] = useState([]); // other accounts still signed in on this browser
+  const [switching, setSwitching] = useState('');
   const emailInput = useRef(null);
+  useEffect(() => { listAccounts().then(setKept); }, []);
+  const backTo = async (account) => {
+    setSwitching(account.id);
+    setError('');
+    try { await switchAccount(account.id); } catch (err) {
+      setSwitching('');
+      setKept((list) => list.filter((a) => a.id !== account.id));
+      setError(err.message);
+    }
+  };
   const passwordInput = useRef(null);
 
   useEffect(() => {
@@ -193,7 +206,7 @@ export default function Login({ onLogin }) {
           </div>
           <p className="login-tagline">Your email, wherever you go.</p>
           <div className="login-heading" key={step}>
-            <h1>{HEADINGS[step]}</h1>
+            <h1>{step === 'email' && kept.length ? 'Add another account' : HEADINGS[step]}</h1>
             {step === 'email' ? (
               <p>{domain ? <>Use your <strong>@{domain}</strong> account</> : 'Use your email account'}</p>
             ) : (
@@ -213,6 +226,22 @@ export default function Login({ onLogin }) {
         </div>
 
         <div className="login-main">
+          {step === 'email' && kept.length > 0 && (
+            <div className="login-kept">
+              <p className="login-kept-title">Signed in on this device</p>
+              {kept.map((account) => (
+                <button key={account.id} type="button" className="login-kept-item" disabled={Boolean(switching)} onClick={() => backTo(account)}>
+                  <Avatar url={account.avatarUrl} person={{ name: account.displayName, address: account.email }} color={account.color} />
+                  <span className="login-kept-text">
+                    <strong>{account.displayName || account.email}</strong>
+                    <small>{account.displayName ? account.email : account.role === 'admin' ? 'Admin account' : 'Personal account'}</small>
+                  </span>
+                  <span className={`acct-role ${account.role}`}>{switching === account.id ? 'Opening…' : account.role === 'admin' ? 'Admin' : 'Personal'}</span>
+                </button>
+              ))}
+              <div className="login-or" role="separator"><span>or sign in to another account</span></div>
+            </div>
+          )}
           {step === 'email' && (
             <form className="login-step" key="email" onSubmit={next} noValidate>
               <Field

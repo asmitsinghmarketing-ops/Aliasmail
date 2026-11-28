@@ -25,7 +25,12 @@ import {
   endSessions,
   forgetTrustedDevices,
   isTrustedDevice,
+  MAX_ACCOUNTS,
+  savedTokens,
+  saveTokens,
+  sessionOfToken,
   sessionsOf,
+  touchSession,
   signOutAccount,
   setDeviceLocation,
   startSession,
@@ -629,8 +634,65 @@ router.post('/logout', (req, res) => {
     endSessions((s) => s.id === session.id);
     audit(req, 'signed-out', session.email);
   }
+  // Another account still signed in on this browser takes over, so signing out of one keeps the rest.
+  const kept = savedTokens(req).filter((t) => sessionOfToken(t));
+  if (kept.length) {
+    res.cookie(SESSION_COOKIE, kept[0], cookieOptions(req, config.sessionDays * 24 * 3600e3));
+    saveTokens(req, res, kept.slice(1));
+    return res.json({ ok: true, switched: true });
+  }
+  res.clearCookie(SESSION_COOKIE, { path: '/' });
+  saveTokens(req, res, []);
+  res.json({ ok: true });
+});
+
+/* ----- several accounts on one browser (e.g. an admin account and a personal one) ----- */
+
+function accountView(session, current) {
+  const view = session.role === 'admin'
+    ? { displayName: db().owner.displayName || '', avatarUrl: avatarUrl(db().owner.avatar), color: null }
+    : (() => { const alias = findAlias(session.email); return alias ? { displayName: alias.displayName || '', avatarUrl: avatarUrl(alias.avatar), color: alias.color || null } : null; })();
+  if (!view) return null;
+  return { id: session.id, role: session.role, email: session.email, ...view, current };
+}
+
+/** Everyone signed in on this browser: the current account first. Works signed out too (the
+ * sign-in page offers the kept accounts). Using Nextspace keeps the others signed in. */
+router.get('/accounts', (req, res) => {
+  const current = currentSession(req);
+  const kept = savedTokens(req).map((token) => ({ token, session: sessionOfToken(token) }))
+    .filter(({ session }) => session && session.id !== current?.id && session.account !== current?.account);
+  if (current) kept.forEach(({ session }) => touchSession(session));
+  if (kept.length !== savedTokens(req).length) saveTokens(req, res, kept.map((k) => k.token));
+  const list = [
+    ...(current ? [accountView(current, true)] : []),
+    ...kept.map(({ session }) => accountView(session, false)),
+  ].filter(Boolean);
+  res.json({ accounts: list, max: MAX_ACCOUNTS });
+});
+
+/** Add another account: this one is kept aside and the sign-in page comes up. */
+router.post('/accounts/add', requireAuth(), (req, res) => {
+  const kept = savedTokens(req).filter((t) => sessionOfToken(t));
+  if (kept.length + 1 >= MAX_ACCOUNTS) throw new HttpError(400, `You can be signed in to up to ${MAX_ACCOUNTS} accounts at once. Sign out of one first.`);
+  saveTokens(req, res, [readCookie(req, SESSION_COOKIE), ...kept]);
   res.clearCookie(SESSION_COOKIE, { path: '/' });
   res.json({ ok: true });
+});
+
+/** Switch to another account signed in on this browser ({ id }: its session). */
+router.post('/accounts/switch', (req, res) => {
+  const id = String(req.body?.id || '');
+  const kept = savedTokens(req);
+  const target = kept.find((t) => sessionOfToken(t)?.id === id);
+  if (!target) throw new HttpError(404, 'That account is no longer signed in here. Sign in to it again.');
+  const current = currentSession(req) ? readCookie(req, SESSION_COOKIE) : null;
+  res.cookie(SESSION_COOKIE, target, cookieOptions(req, config.sessionDays * 24 * 3600e3));
+  saveTokens(req, res, [...(current ? [current] : []), ...kept.filter((t) => t !== target && sessionOfToken(t))]);
+  const session = sessionOfToken(target);
+  touchSession(session);
+  audit(req, 'switched-account', session.email);
+  res.json({ user: profile({ role: session.role, email: session.email }) });
 });
 
 export default router;

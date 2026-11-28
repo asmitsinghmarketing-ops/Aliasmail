@@ -160,7 +160,8 @@ function Screen() {
 
   const logout = async () => {
     switchMailbox(null);
-    await signOut();
+    const { switched } = await signOut();
+    if (switched) return; // another account on this browser takes over (the page reloads)
     setUser(null);
     setWorkspace('mail');
   };

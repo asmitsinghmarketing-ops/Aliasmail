@@ -3382,14 +3382,45 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 }
 
 /* =====================================================================================
-   Phone navigation drawer: brand header, account card, full-width compose, grouped
-   sections and a pinned footer. Scoped to the mail app; the admin console keeps its own.
+   Phone navigation drawer, top to bottom: brand · account card (opens the account and
+   mailbox switcher) · compose · Folders · Workspace tiles · Labels · a pinned footer row.
+   Scoped to the mail app; the admin console keeps its own.
    ===================================================================================== */
-.drawer-account, .drawer-footer, .drawer-close { display: none; }
+.drawer-account-wrap, .drawer-footer, .drawer-close, .drawer-apps, .drawer-hint { display: none; }
+
+/* Accounts on this device: the desktop account menu and the phone drawer share these rows. */
+.acct-rows { display: grid; gap: 2px; }
+.acct-item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 6px 12px; text-align: left; }
+.acct-item:disabled { opacity: .6; }
+.acct-text { flex: 1; min-width: 0; display: grid; line-height: 1.3; }
+.acct-name { overflow: hidden; color: var(--text, #1f2937); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.acct-mail { overflow: hidden; color: var(--muted, #6b7686); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.acct-role { flex: none; padding: 2px 8px; border-radius: 999px; background: #e7f5ee; color: #1b6b43; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+.acct-role.admin { background: #efe9ff; color: #5b3cc4; }
+.acct-add-icon { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border: 1.5px dashed #b8c3d4; border-radius: 50%; color: var(--brand); }
+.acct-add .acct-name { color: var(--brand); }
+.acct-check { flex: none; color: var(--brand); }
+.acct-error { margin: 4px 12px 8px; color: #c92a2a; font-size: 12.5px; }
+.switcher-menu .acct-rows { margin: 0 -4px; }
+
+/* Sign-in page: the accounts already signed in, one tap to go back to one. */
+.login-kept { display: grid; gap: 6px; margin-bottom: 6px; }
+.login-kept-title { margin: 0 0 4px; color: var(--muted, #6b7686); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.login-kept-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 1px solid #dfe5ee; border-radius: 14px;
+  background: #fff; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: border-color .15s ease, background-color .15s ease;
+}
+.login-kept-item:hover:not(:disabled) { border-color: var(--brand); background: #f5f9ff; }
+.login-kept-item:disabled { opacity: .7; cursor: default; }
+.login-kept-text { flex: 1; min-width: 0; display: grid; line-height: 1.3; }
+.login-kept-text strong { overflow: hidden; font-size: 14.5px; text-overflow: ellipsis; white-space: nowrap; }
+.login-kept-text small { overflow: hidden; color: var(--muted, #6b7686); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.login-kept .login-or { margin: 10px 0 4px; }
+
 @media (max-width: 800px) {
   .app:not(.admin-app) .sidebar,
   .app:not(.admin-app) .sidebar.collapsed {
-    width: min(86vw, 340px); gap: 0; padding: max(14px, var(--safe-top)) 14px 0;
+    width: min(86vw, 340px); gap: 0; padding: max(12px, var(--safe-top)) 12px 0;
     background: #fff; border-radius: 0 24px 24px 0;
     box-shadow: 0 0 0 1px rgb(15 23 42 / 4%), 18px 0 48px rgb(15 23 42 / 22%);
     transition: transform .26s var(--ease);
@@ -3398,22 +3429,27 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
   .app:not(.admin-app) .sidebar-backdrop { background: rgb(15 23 42 / 45%); backdrop-filter: blur(2px); }
 
   /* Header */
-  .app:not(.admin-app) .mobile-drawer-head { min-height: 48px; padding: 0 2px 12px 4px; }
-  .app:not(.admin-app) .mobile-drawer-brand { gap: 10px; font-size: 19px; letter-spacing: -.01em; }
-  .app:not(.admin-app) .mobile-drawer-logo { width: 34px; }
+  .app:not(.admin-app) .mobile-drawer-head { min-height: 44px; padding: 0 0 10px 4px; }
+  .app:not(.admin-app) .mobile-drawer-brand { gap: 10px; font-size: 18px; letter-spacing: -.01em; }
+  .app:not(.admin-app) .mobile-drawer-logo { width: 30px; }
   .app:not(.admin-app) .drawer-close {
-    display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px;
+    display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px;
     background: #f1f4f9; color: #3c4858;
   }
   .app:not(.admin-app) .drawer-close:active { background: #e3e9f2; }
 
-  /* Account card */
-  .app:not(.admin-app) .drawer-account {
-    display: flex; align-items: center; gap: 12px; padding: 14px; margin-bottom: 14px; border-radius: 18px;
-    color: #fff; background: radial-gradient(120% 140% at 0% 0%, #1f6fe5 0%, #0b3f9e 55%, #0b2a6f 100%);
-    box-shadow: 0 10px 24px -10px rgb(11 42 111 / 60%);
+  /* Account card: tap to switch account or mailbox */
+  .app:not(.admin-app) .drawer-account-wrap {
+    display: block; flex: none; margin-bottom: 12px; border-radius: 18px; overflow: hidden;
+    background: #fff; box-shadow: 0 0 0 1px #e6ebf2;
   }
-  .app:not(.admin-app) .drawer-account .avatar { width: 44px; height: 44px; flex: none; font-size: 17px; box-shadow: 0 0 0 2px rgb(255 255 255 / 70%); }
+  .app:not(.admin-app) .drawer-account {
+    display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px; border: 0; border-radius: 18px;
+    color: #fff; text-align: left; font: inherit;
+    background: radial-gradient(120% 140% at 0% 0%, #1f6fe5 0%, #0b3f9e 55%, #0b2a6f 100%);
+  }
+  .app:not(.admin-app) .drawer-account-wrap.open .drawer-account { border-radius: 18px 18px 0 0; }
+  .app:not(.admin-app) .drawer-account .avatar { width: 40px; height: 40px; flex: none; font-size: 16px; box-shadow: 0 0 0 2px rgb(255 255 255 / 70%); }
   .drawer-account-text { display: grid; min-width: 0; flex: 1; line-height: 1.25; }
   .drawer-account-text strong { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .drawer-account-text span { font-size: 12.5px; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3422,12 +3458,20 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
     background: rgb(255 255 255 / 18%); color: #fff;
   }
   .drawer-account-chip.shared { background: #ffd43b; color: #5c3d00; }
+  .drawer-account-caret { flex: none; opacity: .85; transition: transform .2s var(--ease); }
+  .drawer-account-wrap.open .drawer-account-caret { transform: rotate(180deg); }
+  .drawer-accounts { display: grid; padding: 6px 4px 8px; animation: drawer-accounts-in .2s var(--ease) both; }
+  @keyframes drawer-accounts-in { from { opacity: 0; transform: translateY(-4px); } }
+  .drawer-accounts-title { padding: 8px 12px 4px; color: #8590a0; font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+  .drawer-accounts .acct-item { min-height: 50px; border: 0; border-radius: 12px; background: none; }
+  .drawer-accounts .acct-item:active { background: #eef2f8; }
+  .drawer-accounts .acct-item.current { background: #f2f6fd; }
 
   /* Compose */
   .app:not(.admin-app) .sidebar .compose-btn {
-    align-self: stretch; justify-content: center; height: 50px; padding: 0 18px; margin-bottom: 6px;
-    border-radius: 15px; background: var(--brand); color: #fff; font-size: 15px;
-    box-shadow: 0 8px 18px -8px rgb(11 92 213 / 70%);
+    flex: none; align-self: stretch; justify-content: center; height: 46px; padding: 0 18px; margin-bottom: 2px;
+    border-radius: 14px; background: var(--brand); color: #fff; font-size: 15px;
+    box-shadow: 0 8px 18px -10px rgb(11 92 213 / 70%);
   }
   .app:not(.admin-app) .sidebar .compose-btn:active { background: var(--brand-dark); }
 
@@ -3435,46 +3479,61 @@ tr:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
   .app:not(.admin-app) .sidebar .nav-section,
   .app:not(.admin-app) .sidebar .labels-head {
     display: flex; align-items: center; justify-content: space-between; min-height: 0;
-    padding: 18px 10px 8px; margin: 0; border: 0; background: none; color: #8590a0;
+    padding: 16px 10px 6px; margin: 0; border: 0; background: none; color: #8590a0;
     font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
   }
   .app:not(.admin-app) .sidebar .labels-head .icon-btn { width: 30px; height: 30px; margin: -6px -4px; color: var(--brand); }
 
-  /* Items */
-  .app:not(.admin-app) .sidebar nav { gap: 2px; }
+  /* Folder rows: compact, so the whole menu fits with less scrolling */
+  .app:not(.admin-app) .sidebar nav { gap: 1px; }
   .app:not(.admin-app) .sidebar .nav-item {
-    position: relative; min-height: 46px; margin: 0; padding: 7px 10px; gap: 13px;
-    border-radius: 13px; font-size: 15px; font-weight: 500; color: #1f2937;
+    position: relative; min-height: 42px; margin: 0; padding: 5px 10px; gap: 12px;
+    border-radius: 12px; font-size: 14.5px; font-weight: 500; color: #1f2937;
   }
   .app:not(.admin-app) .sidebar .nav-item:active { background: #eef2f8; }
   .app:not(.admin-app) .sidebar .nav-item.active { background: #e9f1fe; color: #0a3d91; font-weight: 650; }
   .app:not(.admin-app) .sidebar .nav-item.active::before {
-    content: ''; position: absolute; left: -14px; top: 10px; bottom: 10px; width: 4px; border-radius: 0 4px 4px 0; background: var(--brand);
+    content: ''; position: absolute; left: -12px; top: 9px; bottom: 9px; width: 4px; border-radius: 0 4px 4px 0; background: var(--brand);
   }
-  .app:not(.admin-app) .sidebar .nav-icon { width: 34px; height: 34px; margin: -4px 0; border-radius: 11px; }
-  .app:not(.admin-app) .sidebar .nav-sub { min-height: 40px; padding-left: 26px; font-size: 14px; }
-  .app:not(.admin-app) .sidebar .nav-sub .nav-icon { width: 28px; height: 28px; border-radius: 9px; }
+  .app:not(.admin-app) .sidebar .nav-icon { width: 30px; height: 30px; margin: -2px 0; border-radius: 10px; }
+  .app:not(.admin-app) .sidebar .nav-sub { min-height: 36px; padding-left: 24px; font-size: 13.5px; }
+  .app:not(.admin-app) .sidebar .nav-sub .nav-icon { width: 24px; height: 24px; border-radius: 8px; }
   .app:not(.admin-app) .sidebar .count {
     min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px; display: inline-grid; place-items: center;
     background: var(--brand); color: #fff; font-size: 11.5px; font-weight: 700;
   }
   .app:not(.admin-app) .sidebar .count.plain { background: #eef1f6; color: #5f6b7a; }
-  .app:not(.admin-app) .sidebar .mailbox-item { min-height: 54px; }
-  .app:not(.admin-app) .sidebar .label-item > span:first-child { width: 34px; display: grid; place-items: center; }
+  .app:not(.admin-app) .sidebar .label-item > span:first-child { width: 30px; display: grid; place-items: center; }
 
-  /* Pinned footer */
+  /* Workspace: tiles, three across */
+  .app:not(.admin-app) .drawer-apps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 2px 2px 4px; }
+  .drawer-app {
+    display: grid; justify-items: center; gap: 6px; padding: 12px 4px 10px; border: 0; border-radius: 16px;
+    background: #f4f7fb; color: #1f2937; font: inherit; font-size: 12.5px; font-weight: 600;
+  }
+  .drawer-app:active { background: #e8eef7; }
+  .drawer-app.active { background: #e9f1fe; color: #0a3d91; }
+  .drawer-app-icon { position: relative; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 13px; background: #fff; color: var(--brand); box-shadow: 0 1px 2px rgb(15 23 42 / 8%); }
+  .drawer-app.admin .drawer-app-icon { color: #6741d9; }
+  .drawer-app-badge { position: absolute; top: -5px; right: -7px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #e03131; color: #fff; font-size: 10.5px; font-weight: 700; line-height: 18px; }
+  .drawer-app-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .app:not(.admin-app) .drawer-hint { display: block; margin: 0; padding: 0 10px 6px; color: #8590a0; font-size: 12.5px; }
+
+  /* Footer: one solid row, always visible */
   .app:not(.admin-app) .drawer-footer {
-    position: sticky; bottom: 0; z-index: 1; display: grid; gap: 2px; margin: 18px -14px 0; margin-top: auto;
-    padding: 10px 14px max(14px, var(--safe-bottom));
-    background: linear-gradient(to bottom, rgb(255 255 255 / 92%), #fff 30%); border-top: 1px solid #edf0f5;
+    position: sticky; bottom: 0; z-index: 2; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px;
+    margin: auto -12px 0; padding: 8px 12px max(10px, var(--safe-bottom));
+    background: #fff; border-top: 1px solid #edf0f5; box-shadow: 0 -8px 16px -12px rgb(15 23 42 / 18%);
   }
   .drawer-foot-item {
-    display: flex; align-items: center; gap: 14px; min-height: 44px; padding: 0 12px; border: 0; border-radius: 12px;
-    background: none; color: #3c4858; font-size: 14.5px; font-weight: 500; text-align: left;
+    display: grid; justify-items: center; gap: 3px; min-height: 52px; padding: 7px 4px 6px; border: 0; border-radius: 12px;
+    background: none; color: #3c4858; font: inherit; font-size: 12px; font-weight: 600;
   }
   .drawer-foot-item svg { color: #6b7686; }
   .drawer-foot-item:active { background: #f1f4f9; }
   .drawer-foot-item.danger, .drawer-foot-item.danger svg { color: #c92a2a; }
+  .app:not(.admin-app) .sidebar > nav:last-of-type { padding-bottom: 12px; }
 }
 
 /* =====================================================================================
