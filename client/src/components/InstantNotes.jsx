@@ -40,7 +40,17 @@ const fileUrl = (f, download) => `/api/notes/files/${encodeURIComponent(f.id)}${
 const isGroup = (t) => t?.kind === 'group';
 /** One key per conversation: a teammate's address, or "group:<id>". */
 const keyOf = (t) => (isGroup(t) ? `group:${t.id}` : t?.address);
-const preview = (note) => note.text || (note.files.length ? `Attachment: ${note.files.map((f) => f.name).join(', ')}` : '');
+const preview = (note) => (note.deleted ? 'Note deleted' : note.text || (note.files.length ? `Attachment: ${note.files.map((f) => f.name).join(', ')}` : ''));
+const REACTIONS = ['👍', '❤️', '😂', '🎉', '✅'];
+/** "Today", "Yesterday", or the date, for the line between days in a conversation. */
+function dayLine(iso) {
+  const day = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (day.toDateString() === today.toDateString()) return 'Today';
+  if (day.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return day.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', ...(day.getFullYear() !== today.getFullYear() && { year: 'numeric' }) });
+}
 
 /** A group's picture: two other members' initials, in their colours. */
 function GroupAvatar({ group, me, size = '' }) {
@@ -69,7 +79,12 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   const [online, setOnline] = useState(onlineNow); // addresses online; null when unknown
   const [typing, setTyping] = useState({}); // "<conversation key>|<address>" -> when "typing" arrived
   const [, setTick] = useState(0);
+  const [query, setQuery] = useState(''); // filters the conversation list
+  const [filter, setFilter] = useState('all'); // all | unread | groups
+  const [replyTo, setReplyTo] = useState(null); // the note being answered
+  const [picked, setPicked] = useState(null); // the note whose actions are showing (tap on phones)
   const bottom = useRef(null);
+  const textBox = useRef(null);
   const picker = useRef(null);
   const lastTyping = useRef(0);
   const current = useRef(null);
@@ -94,6 +109,9 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   useEffect(() => { loadThreads(); }, []);
 
   const people = (threads || []).filter((t) => !isGroup(t));
+  const needle = query.trim().toLowerCase();
+  const shownThreads = (threads || []).filter((t) => (filter !== 'unread' || t.unread) && (filter !== 'groups' || isGroup(t))
+    && (!needle || `${isGroup(t) ? t.name : nameOf(t)} ${t.address || ''}`.toLowerCase().includes(needle)));
 
   // Who is online and typing, "Seen" the moment a note is read, and group changes.
   useEffect(() => subscribe((message) => {
@@ -111,10 +129,40 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
       } else if (!message.group && open?.address === message.by) {
         setNotes((list) => list.map((n) => (n.to === message.by ? { ...n, read: true } : n)));
       }
+    } else if (message.type === 'note-update') {
+      // A reaction or a deletion, from me in another window or from someone in the conversation.
+      setNotes((list) => list.map((n) => (n.id === message.note.id ? { ...n, ...message.note } : n)));
+      if (message.note.deleted) loadThreads();
     } else if (message.type === 'group') {
       loadThreads();
     }
   }), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const replaceNote = (note) => setNotes((list) => list.map((n) => (n.id === note.id ? { ...n, ...note } : n)));
+  async function react(note, emoji) {
+    setPicked(null);
+    try { replaceNote(await api(`/notes/${note.id}/react`, { method: 'POST', body: { emoji } })); }
+    catch (err) { setError(err.message); }
+  }
+  async function removeNote(note) {
+    setPicked(null);
+    try {
+      replaceNote(await api(`/notes/${note.id}`, { method: 'DELETE' }));
+      loadThreads();
+    } catch (err) { setError(err.message); }
+  }
+  function answer(note) {
+    setPicked(null);
+    setReplyTo(note);
+    textBox.current?.focus();
+  }
+  const jumpTo = (id) => {
+    const node = document.getElementById(`note-${id}`);
+    if (!node) return;
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    node.classList.add('flash');
+    setTimeout(() => node.classList.remove('flash'), 1200);
+  };
 
   // "typing…" fades by itself when no more arrive.
   const typers = (t) => {
@@ -150,13 +198,15 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
-      if (view === 'group-info') setView('chat');
+      if (picked) setPicked(null);
+      else if (replyTo) setReplyTo(null);
+      else if (view === 'group-info') setView('chat');
       else if (view !== 'list') backToList();
       else onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [view, onClose]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, onClose, picked, replyTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A note pushed while the panel is open: into the open conversation, or the list's preview.
   useEffect(() => {
@@ -184,6 +234,8 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
     setThread(t);
     setView('chat');
     setError('');
+    setReplyTo(null);
+    setPicked(null);
     setNotes(await api(isGroup(t) ? `/notes?group=${encodeURIComponent(t.id)}` : `/notes?with=${encodeURIComponent(t.address)}`).catch((err) => { setError(err.message); return []; }));
     if (t.unread) {
       await markRead(t);
@@ -217,13 +269,14 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
     setError('');
     try {
       const target = isGroup(thread) ? { group: thread.id } : { to: thread.address };
-      const body = { ...target, text, files: await Promise.all(files.map(async (f) => ({ name: f.name, type: f.type, data: await readBase64(f) }))) };
+      const body = { ...target, text, ...(replyTo && { replyTo: replyTo.id }), files: await Promise.all(files.map(async (f) => ({ name: f.name, type: f.type, data: await readBase64(f) }))) };
       const answer = await viaLive({ type: 'note', ...body }, '/notes', body);
       const note = answer.http || answer.note;
       lastTyping.current = 0;
       setNotes((list) => (list.some((n) => n.id === note.id) ? list : [...list, note]));
       setText('');
       setFiles([]);
+      setReplyTo(null);
       loadThreads();
     } catch (err) {
       setError(err.message);
@@ -299,10 +352,15 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
           </>
         ) : (
           <>
-            <div className="notes-who">
-              <strong>Instant notes</strong>
-              <span className="muted small">Private notes to your team, delivered instantly. Never sent by email.</span>
+            <div className="notes-who notes-title">
+              <strong>Notes</strong>
+              <span className="muted small">Private to your team · never emailed</span>
             </div>
+            {people.length >= 2 && (
+              <button type="button" className="icon-btn notes-call" aria-label="New group" title="New group" onClick={() => { setView('new-group'); setError(''); }}>
+                <Icon name="personAdd" />
+              </button>
+            )}
             <button type="button" className="icon-btn notes-call" aria-label="New meeting with a link" title="New meeting with a link to share" onClick={() => startMeeting({ video: true }).catch((err) => setError(err.message))}>
               <Icon name="videocam" />
             </button>
@@ -315,18 +373,25 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
 
       {view === 'list' && (
         <div className="notes-threads">
-          {people.length >= 2 && (
-            <button type="button" className="notes-new-group" onClick={() => { setView('new-group'); setError(''); }}>
-              <span className="group-avatar"><Icon name="add" size={20} /></span>
-              <span>
-                <strong>New group</strong>
-                <span className="muted small">Notes to several teammates at once</span>
-              </span>
-            </button>
+          {threads?.length > 0 && (
+            <div className="notes-tools">
+              <label className="notes-search">
+                <Icon name="search" size={17} />
+                <input type="search" placeholder="Search people and groups" aria-label="Search conversations" value={query} onChange={(e) => setQuery(e.target.value)} />
+              </label>
+              <div className="notes-filters" role="group" aria-label="Show">
+                {[['all', 'All'], ['unread', `Unread${threads.some((t) => t.unread) ? ` · ${threads.filter((t) => t.unread).length}` : ''}`], ['groups', 'Groups']].map(([value, label]) => (
+                  <button key={value} type="button" aria-pressed={filter === value} className={filter === value ? 'on' : ''} onClick={() => setFilter(value)}>{label}</button>
+                ))}
+              </div>
+            </div>
           )}
           {!threads && <PeopleSkeleton />}
           {threads?.length === 0 && <div className="muted notes-empty">Nobody else on your team yet. The admin adds people in the Admin console.</div>}
-          {threads?.map((t) => (
+          {threads?.length > 0 && !shownThreads.length && (
+            <div className="muted notes-empty">{query.trim() ? `Nobody matches “${query.trim()}”.` : filter === 'unread' ? 'You’re all caught up.' : 'No groups yet. Start one with the people button above.'}</div>
+          )}
+          {shownThreads.map((t) => (
             <button key={keyOf(t)} type="button" className={`notes-thread ${t.unread ? 'unread' : ''}`} onClick={() => open(t)}>
               {isGroup(t) ? (
                 <GroupAvatar group={t} me={me} />
@@ -380,17 +445,52 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
         <>
           <div className="notes-list">
             {notes.length === 0 && (
-              <div className="muted notes-empty">
-                {isGroup(thread) ? `No notes in ${thread.name} yet. Say hello to everyone.` : `No notes with ${nameOf(thread)} yet. Say hello.`}
+              <div className="notes-hello">
+                {isGroup(thread) ? <GroupAvatar group={thread} me={me} size="lg" /> : <Avatar url={thread.avatarUrl} person={thread} color={thread.color} size="lg" />}
+                <strong>{isGroup(thread) ? thread.name : nameOf(thread)}</strong>
+                <span className="muted small">{isGroup(thread) ? `No notes yet. Say hello to all ${thread.members.length}.` : `No notes yet. Say hello to ${firstName(thread)}.`}</span>
+                <div className="notes-starters">
+                  {['👋 Hi!', 'Got a minute?', 'Thanks!', 'Can we talk today?'].map((starter) => (
+                    <button key={starter} type="button" onClick={() => { setText(starter); textBox.current?.focus(); }}>{starter}</button>
+                  ))}
+                </div>
               </div>
             )}
             {notes.map((n, i) => {
               const mine = n.from === me;
-              const showName = isGroup(thread) && !mine && notes[i - 1]?.from !== n.from;
+              const newDay = !notes[i - 1] || new Date(notes[i - 1].at).toDateString() !== new Date(n.at).toDateString();
+              const showName = isGroup(thread) && !mine && (newDay || notes[i - 1]?.from !== n.from);
+              // Back-to-back notes from the same person sit closer together, like one message.
+              const follows = !newDay && notes[i - 1]?.from === n.from && new Date(n.at) - new Date(notes[i - 1].at) < 5 * 60_000;
               const sender = memberOf(n.from);
+              const reactions = Object.entries(n.reactions || {}).filter(([, who]) => who.length);
+              const quotedFrom = n.replyTo && (n.replyTo.from === me ? 'You' : nameOf(isGroup(thread) ? memberOf(n.replyTo.from) : thread));
               return (
-                <div key={n.id} className={`note ${mine ? 'mine' : 'theirs'}`}>
+                <div key={n.id} className={`note-wrap ${follows ? 'follows' : ''}`}>
+                {newDay && <div className="note-day"><span>{dayLine(n.at)}</span></div>}
+                <div
+                  id={`note-${n.id}`}
+                  className={`note ${mine ? 'mine' : 'theirs'} ${n.deleted ? 'deleted' : ''} ${picked === n.id ? 'picked' : ''}`}
+                  onClick={(e) => { if (!n.deleted && !e.target.closest('a, button')) setPicked((id) => (id === n.id ? null : n.id)); }}
+                >
                   {showName && <span className="note-sender" style={{ color: sender.color || 'var(--brand)' }}>{nameOf(sender)}</span>}
+                  {n.replyTo && !n.deleted && (
+                    <button type="button" className="note-quote" onClick={() => jumpTo(n.replyTo.id)}>
+                      <strong>{quotedFrom}</strong>
+                      <span>{n.replyTo.text || 'A note'}</span>
+                    </button>
+                  )}
+                  {n.deleted && <p className="note-deleted"><Icon name="trash" size={14} /> {mine ? 'You deleted this note' : 'This note was deleted'}</p>}
+                  {!n.deleted && (
+                    <div className="note-actions" role="toolbar" aria-label="Note actions">
+                      {REACTIONS.map((emoji) => (
+                        <button key={emoji} type="button" className={(n.reactions?.[emoji] || []).includes(me) ? 'on' : ''} aria-label={`React ${emoji}`} title={`React ${emoji}`} onClick={() => react(n, emoji)}>{emoji}</button>
+                      ))}
+                      <span className="note-actions-sep" />
+                      <button type="button" aria-label="Reply" title="Reply" onClick={() => answer(n)}><Icon name="reply" size={16} /></button>
+                      {mine && <button type="button" className="danger" aria-label="Delete for everyone" title="Delete for everyone" onClick={() => removeNote(n)}><Icon name="trash" size={16} /></button>}
+                    </div>
+                  )}
                   {n.text && <p>{n.text}</p>}
                   {n.files.map((f) =>
                     IMAGE.test(f.type) ? (
@@ -410,6 +510,20 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
                     {mine && !isGroup(thread) && n.read && ' · Seen'}
                     {mine && isGroup(thread) && seenBy(n).length > 0 && ` · Seen by ${seenBy(n).length === thread.members.length - 1 ? 'everyone' : seenBy(n).length}`}
                   </span>
+                  {reactions.length > 0 && (
+                    <span className="note-reactions">
+                      {reactions.map(([emoji, who]) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          className={who.includes(me) ? 'on' : ''}
+                          title={who.map((a) => (a === me ? 'You' : nameOf(isGroup(thread) ? memberOf(a) : thread))).join(', ')}
+                          onClick={() => react(n, emoji)}
+                        >{emoji}<b>{who.length}</b></button>
+                      ))}
+                    </span>
+                  )}
+                </div>
                 </div>
               );
             })}
@@ -417,6 +531,16 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
           </div>
 
           <form className="notes-compose" onSubmit={send}>
+            {replyTo && (
+              <div className="notes-replying">
+                <Icon name="reply" size={16} />
+                <span>
+                  <strong>Replying to {replyTo.from === me ? 'yourself' : nameOf(isGroup(thread) ? memberOf(replyTo.from) : thread)}</strong>
+                  <small>{preview(replyTo)}</small>
+                </span>
+                <button type="button" className="icon-btn" aria-label="Cancel reply" onClick={() => setReplyTo(null)}><Icon name="close" size={16} /></button>
+              </div>
+            )}
             {files.length > 0 && (
               <div className="notes-files">
                 {files.map((f, i) => (
@@ -436,6 +560,7 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
               <input ref={picker} type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
               <label className="sr-only" htmlFor="note-text">Note to {isGroup(thread) ? thread.name : nameOf(thread)}</label>
               <textarea
+                ref={textBox}
                 id="note-text"
                 rows={1}
                 maxLength={4000}
@@ -452,8 +577,8 @@ export default function InstantNotes({ me, incoming, startWith, onClose, onRead 
                   if (e.key === 'Enter' && !e.shiftKey) send(e);
                 }}
               />
-              <button className="btn btn-primary" disabled={busy || (!text.trim() && !files.length)}>
-                {busy ? 'Sending…' : 'Send'}
+              <button className="notes-send" disabled={busy || (!text.trim() && !files.length)} aria-label={busy ? 'Sending' : 'Send'} title="Send (Enter)">
+                <Icon name={busy ? 'refresh' : 'send'} size={19} className={busy ? 'spin' : ''} />
               </button>
             </div>
           </form>

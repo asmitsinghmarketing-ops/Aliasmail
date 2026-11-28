@@ -1,13 +1,15 @@
-// Meet: start or join a meeting, and a calendar of scheduled meetings and recorded calls. The
-// calendar shows a month, a week (with times) or an agenda list; it can be searched and filtered,
-// moved through with the keyboard, and a free slot clicked to plan a meeting there. Picking a day
-// lists what's on: join, copy or share a meeting, add it to another calendar, duplicate, change or
-// cancel it; play, download or delete a recording. Recordings are deleted automatically a set
+// Meet: start or join a meeting, and a calendar of scheduled meetings and recorded calls. A side
+// rail holds the actions, a mini month, what's up next and the week at a glance; the calendar shows
+// a day, a week (with times), a month or an agenda list, and can be searched, filtered and moved
+// through with the keyboard. Clicking a meeting or recording opens its details beside it: join,
+// copy or share a meeting, add it to another calendar, duplicate, change or cancel it; play,
+// download or delete a recording. Recordings are deleted automatically a set
 // number of days after the meeting (15 by default).
 import { localDate } from '../format.js';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { joinByCode, meetingLink, startMeeting } from '../calls.js';
+import Avatar from './Avatar.jsx';
 import { ask } from './Dialog.jsx';
 import Icon from './Icon.jsx';
 import { PanelSkeleton } from './Loading.jsx';
@@ -20,7 +22,7 @@ const DAY = 86_400_000;
 const MEETING_CODE = /[a-z]{3}-[a-z]{4}-[a-z]{3}/;
 const VIEW_KEY = 'nextspace:meet-calendar-view';
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const HOUR_PX = 52; // one hour in the week view
+const HOUR_PX = 56; // one hour in the day and week views
 
 const dayKey = localDate; // "2026-11-21"
 const fromKey = (key) => {
@@ -45,12 +47,6 @@ function size(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-const hoursText = (minutes) => {
-  if (!minutes) return '0 h';
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  return h ? `${h} h${m ? ` ${m} min` : ''}` : `${m} min`;
-};
 
 function deletesIn(iso) {
   const days = Math.ceil((Date.parse(iso) - Date.now()) / DAY);
@@ -134,7 +130,7 @@ function toEvents(meetings, recordings) {
   return events.sort((a, b) => a.start - b.start);
 }
 
-const eventClass = (event, conflicts) => ['cal-event', event.kind, event.live && 'live', event.kind === 'meeting' && event.end < new Date() && !event.live && 'past', conflicts?.has(event.id) && 'clash'].filter(Boolean).join(' ');
+const eventClass = (event, conflicts) => ['mc-event', event.kind, event.live && 'live', event.kind === 'meeting' && event.end < new Date() && !event.live && 'past', conflicts?.has(event.id) && 'clash'].filter(Boolean).join(' ');
 
 /** Meetings that overlap in time: event id → the titles of the meetings it clashes with. */
 function findConflicts(events) {
@@ -151,37 +147,104 @@ function findConflicts(events) {
   return clashes;
 }
 
-/** The first free half hour on `date` between 9:00 and 18:00 (and after now), or null. */
-function nextFreeSlot(date, events, minutes = 30) {
+/** Free stretches of `date` between 9:00 and 18:00 (after now), as [start, end] pairs. */
+function freeRanges(date, events, limit = 3) {
   const busy = events.filter((event) => event.kind === 'meeting');
   const soon = Date.now() + 10 * MINUTE;
+  const ranges = [];
   for (let at = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9); at.getHours() < 18; at = new Date(at.getTime() + 30 * MINUTE)) {
-    const end = new Date(at.getTime() + minutes * MINUTE);
-    if (at.getTime() < soon) continue;
-    if (!busy.some((event) => event.start < end && event.end > at)) return at;
+    const end = new Date(at.getTime() + 30 * MINUTE);
+    if (at.getTime() < soon || busy.some((event) => event.start < end && event.end > at)) continue;
+    const last = ranges.at(-1);
+    if (last && last[1].getTime() === at.getTime()) last[1] = end;
+    else ranges.push([at, end]);
   }
-  return null;
+  return ranges.slice(0, limit);
 }
 
-/* ---------------------------------- cards ---------------------------------- */
+/* ---------------------------------- details ---------------------------------- */
 
 function DriveNote({ drive }) {
   if (!drive) return null;
-  if (drive.status === 'saved') return <a className="recording-drive saved" href={drive.link} target="_blank" rel="noreferrer"><Icon name="check" size={15} /> Copy in your Google Drive</a>;
-  if (drive.status === 'uploading') return <span className="recording-drive">Copying to your Google Drive…</span>;
-  if (drive.status === 'failed') return <span className="recording-drive problem">Couldn’t copy it to Google Drive</span>;
+  if (drive.status === 'saved') return <a className="mc-drive saved" href={drive.link} target="_blank" rel="noreferrer"><Icon name="check" size={15} /> Copy in your Google Drive</a>;
+  if (drive.status === 'uploading') return <span className="mc-drive">Copying to your Google Drive…</span>;
+  if (drive.status === 'failed') return <span className="mc-drive problem">Couldn’t copy it to Google Drive</span>;
   return null;
 }
 
-function MeetingCard({ meeting, highlighted, clashes, onJoin, onEdit, onCancel, onDuplicate }) {
+/** Floats beside the event that was clicked; a sheet from the bottom on a phone. */
+function EventPopover({ anchor, label, onClose, children }) {
+  const box = useRef(null);
+  const [place, setPlace] = useState(null);
+  const phone = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 800px)').matches;
+
+  useLayoutEffect(() => {
+    if (phone || !box.current) return;
+    const width = box.current.offsetWidth;
+    const height = box.current.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left;
+    let top;
+    if (anchor) {
+      left = anchor.right + 12;
+      if (left + width > vw - 12) left = anchor.left - 12 - width;
+      if (left < 12) left = Math.min(Math.max(12, anchor.left), vw - width - 12);
+      top = anchor.top - 18;
+    } else {
+      left = vw - width - 28;
+      top = 88;
+    }
+    top = Math.max(76, Math.min(top, vh - height - 12));
+    setPlace({ left, top: Math.max(12, top) });
+  }, [anchor, phone, children]);
+
+  useEffect(() => {
+    const away = (event) => {
+      if (box.current?.contains(event.target) || event.target.closest?.('.dialog, .modal-backdrop, .mc-event, .mc-row')) return;
+      onClose();
+    };
+    const key = (event) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', key); };
+  }, [onClose]);
+
+  return (
+    <>
+      {phone && <div className="mc-scrim" onClick={onClose} />}
+      <section
+        ref={box}
+        className={`mc-pop ${phone ? 'sheet' : ''} ${!phone && !place ? 'measuring' : ''}`}
+        style={place && !phone ? { left: place.left, top: place.top } : undefined}
+        role="dialog"
+        aria-label={label}
+      >
+        {children}
+      </section>
+    </>
+  );
+}
+
+function PopHead({ kind, live, title, when, status, onClose }) {
+  return (
+    <header className="mc-pop-head">
+      <span className={`mc-swatch ${kind} ${live ? 'live' : ''}`} aria-hidden="true" />
+      <div>
+        <h2>{title}</h2>
+        <p>{when}</p>
+        {status}
+      </div>
+      <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="close" size={19} /></button>
+    </header>
+  );
+}
+
+function MeetingDetail({ meeting, clashes, onClose, onJoin, onEdit, onCancel, onDuplicate }) {
   const [copied, setCopied] = useState(false);
   const [menu, setMenu] = useState(false);
   const menuRef = useRef(null);
-  const card = useRef(null);
   const ended = !meeting.live && Date.parse(meeting.endAt) < Date.now();
-  useEffect(() => {
-    if (highlighted) card.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [highlighted]);
   useEffect(() => {
     if (!menu) return undefined;
     const close = (event) => { if (!menuRef.current?.contains(event.target)) setMenu(false); };
@@ -195,137 +258,156 @@ function MeetingCard({ meeting, highlighted, clashes, onJoin, onEdit, onCancel, 
       setTimeout(() => setCopied(false), 2000);
     } catch { /* nothing to copy to */ }
   };
-  const others = meeting.invitees.filter((person) => !(meeting.mine && person.address === meeting.host.address));
+  const people = [meeting.host, ...meeting.invitees.filter((person) => person.address !== meeting.host.address)];
+  const start = new Date(meeting.startAt);
   return (
-    <article ref={card} className={`meeting-card ${meeting.live ? 'live' : ''} ${ended ? 'ended' : ''} ${highlighted ? 'highlighted' : ''} ${clashes?.length && !ended ? 'clash' : ''}`}>
-      <span className="meeting-card-icon"><Icon name="videocam" size={19} /></span>
-      <span className="recording-time">
-        <strong>{clock(meeting.startAt)}</strong>
-        <small>{clock(meeting.endAt)}</small>
-      </span>
-      <div className="recording-info">
-        <strong>{meeting.title}</strong>
-        <span>
-          {meeting.mine ? 'You organise' : `Organised by ${meeting.host.name}`}
-          {others.length ? ` · with ${others.map((person) => person.name).join(', ')}` : ''}
-        </span>
-        <span className={`meeting-when ${meeting.live ? 'live' : ''}`}>{meeting.live && <i />}{startsIn(meeting)}</span>
-        {clashes?.length > 0 && !ended && <span className="meeting-clash"><Icon name="info" size={14} /> Overlaps with {clashes.join(', ')}</span>}
-        {meeting.description && <p className="meeting-note">{meeting.description}</p>}
+    <>
+      <PopHead
+        kind="meeting"
+        live={meeting.live}
+        title={meeting.title}
+        when={`${longDay(start)} · ${clock(meeting.startAt)} – ${clock(meeting.endAt)}`}
+        status={meeting.live ? <span className="mc-status live"><i /> Live now</span> : !ended && <span className="mc-status">{startsIn(meeting)}</span>}
+        onClose={onClose}
+      />
+      <div className="mc-code">
+        <Icon name="link" size={16} />
+        <code>{meeting.code}</code>
+        <button type="button" className="link" onClick={copy}>{copied ? 'Copied' : 'Copy link'}</button>
       </div>
-      <div className="recording-actions">
-        {!ended && <button type="button" className="btn btn-primary" onClick={() => onJoin(meeting)}><Icon name="videocam" size={17} /> {meeting.live ? 'Join' : 'Start'}</button>}
-        <button type="button" className="btn btn-outline" onClick={copy} title={meetingLink(meeting.code)}><Icon name={copied ? 'check' : 'link'} size={17} /> {copied ? 'Copied' : 'Copy link'}</button>
-        <div className="cal-more" ref={menuRef}>
-          <button type="button" className="icon-btn" aria-label={`More for ${meeting.title}`} aria-expanded={menu} title="More" onClick={() => setMenu((open) => !open)}><Icon name="moreVert" size={19} /></button>
+      {clashes?.length > 0 && !ended && <p className="mc-clash"><Icon name="info" size={15} /> Overlaps with {clashes.join(', ')}</p>}
+      <div className="mc-people">
+        <h3>{people.length} {people.length === 1 ? 'person' : 'people'}</h3>
+        <ul>
+          {people.map((person) => (
+            <li key={person.address}>
+              <Avatar person={person} size="xs" />
+              <span>{person.name}</span>
+              {person.address === meeting.host.address && <small>organiser</small>}
+            </li>
+          ))}
+        </ul>
+      </div>
+      {meeting.description && <p className="mc-note">{meeting.description}</p>}
+      <footer className="mc-pop-actions">
+        {!ended && <button type="button" className="btn btn-primary" onClick={() => onJoin(meeting)}><Icon name="videocam" size={17} /> {meeting.live ? 'Join meeting' : 'Start meeting'}</button>}
+        {meeting.canEdit && !ended && <button type="button" className="btn btn-outline" onClick={() => onEdit(meeting)}><Icon name="edit" size={16} /> Edit</button>}
+        <div className="mc-more" ref={menuRef}>
+          <button type="button" className="btn btn-outline mc-more-btn" aria-label={`More for ${meeting.title}`} aria-expanded={menu} onClick={() => setMenu((open) => !open)}><Icon name="moreVert" size={18} /></button>
           {menu && (
-            <div className="cal-menu" role="menu">
+            <div className="mc-menu" role="menu">
               {!ended && <a role="menuitem" href={inviteMail(meeting)} onClick={() => setMenu(false)}><Icon name="mail" size={18} /> Email an invitation</a>}
               {!ended && <a role="menuitem" href={googleCalendarLink(meeting)} target="_blank" rel="noopener noreferrer" onClick={() => setMenu(false)}><Icon name="event" size={18} /> Add to Google Calendar</a>}
               {!ended && <button type="button" role="menuitem" onClick={() => { setMenu(false); downloadIcs([meeting], meeting.title); }}><Icon name="download" size={18} /> Download for Outlook / Apple (.ics)</button>}
               <button type="button" role="menuitem" onClick={() => { setMenu(false); onDuplicate(meeting); }}><Icon name="copy" size={18} /> Duplicate</button>
-              {meeting.canEdit && !ended && <button type="button" role="menuitem" onClick={() => { setMenu(false); onEdit(meeting); }}><Icon name="edit" size={18} /> Change meeting</button>}
               {meeting.canEdit && <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(false); onCancel(meeting); }}><Icon name="trash" size={18} /> {ended ? 'Remove from calendar' : 'Cancel meeting'}</button>}
             </div>
           )}
         </div>
-      </div>
-    </article>
+      </footer>
+    </>
   );
 }
 
-function RecordingCard({ item, playing, highlighted, onPlay, onDelete }) {
-  const card = useRef(null);
-  useEffect(() => {
-    if (highlighted) card.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [highlighted]);
+function RecordingDetail({ item, onClose, onDelete }) {
+  const start = new Date(item.startedAt);
   return (
-    <article ref={card} className={`recording ${playing ? 'open' : ''} ${highlighted ? 'highlighted' : ''}`}>
-      {playing && item.status === 'ready' && <video className="recording-player" src={`/api/recordings/${item.id}/video`} controls autoPlay playsInline />}
-      <div className="recording-row">
-        <span className="recording-time">
-          <strong>{clock(item.startedAt)}</strong>
-          {item.endedAt && <small>{clock(item.endedAt)}</small>}
-        </span>
-        <div className="recording-info">
-          <strong>{item.title}</strong>
-          <span>
-            {item.status === 'ready' ? `${length(item.durationMs)} · ${size(item.size)} · ` : ''}
-            {`recorded by ${item.mine ? 'you' : item.recorder.name}`}
-          </span>
-          {item.status === 'recording'
-            ? <span className="recording-live"><i /> Still recording</span>
-            : <span className="recording-expiry" title={new Date(item.deletesAt).toLocaleString()}>{deletesIn(item.deletesAt)}</span>}
-          <DriveNote drive={item.drive} />
-        </div>
-        <div className="recording-actions">
-          <button type="button" className="btn btn-outline" disabled={item.status !== 'ready'} onClick={onPlay}>
-            <Icon name={playing ? 'close' : 'play'} size={17} /> {playing ? 'Close' : 'Play'}
-          </button>
-          {item.status === 'ready' && <a className="btn btn-primary" href={`/api/recordings/${item.id}/video?download=1`} download><Icon name="download" size={17} /> Download</a>}
-          {item.canDelete && <button type="button" className="icon-btn" title="Delete recording" aria-label={`Delete ${item.title}`} onClick={onDelete}><Icon name="trash" size={19} /></button>}
-        </div>
-      </div>
-    </article>
+    <>
+      <PopHead
+        kind="recording"
+        live={item.status === 'recording'}
+        title={item.title}
+        when={`${longDay(start)} · ${clock(item.startedAt)}${item.endedAt ? ` – ${clock(item.endedAt)}` : ''}`}
+        status={item.status === 'recording' ? <span className="mc-status rec"><i /> Still recording</span> : <span className="mc-status warn" title={new Date(item.deletesAt).toLocaleString()}>{deletesIn(item.deletesAt)}</span>}
+        onClose={onClose}
+      />
+      {item.status === 'ready'
+        ? <video className="mc-video" src={`/api/recordings/${item.id}/video`} controls preload="metadata" playsInline />
+        : <div className="mc-video empty"><Icon name="record" size={22} /> {item.status === 'recording' ? 'Recording in progress' : 'Getting the video ready…'}</div>}
+      <dl className="mc-facts">
+        {item.status === 'ready' && <><dt>Length</dt><dd>{length(item.durationMs)}</dd><dt>Size</dt><dd>{size(item.size)}</dd></>}
+        <dt>Recorded by</dt><dd>{item.mine ? 'You' : item.recorder.name}</dd>
+      </dl>
+      <DriveNote drive={item.drive} />
+      <footer className="mc-pop-actions">
+        {item.status === 'ready' && <a className="btn btn-primary" href={`/api/recordings/${item.id}/video?download=1`} download><Icon name="download" size={17} /> Download</a>}
+        {item.canDelete && <button type="button" className="btn btn-outline mc-danger" onClick={onDelete}><Icon name="trash" size={16} /> Delete</button>}
+      </footer>
+    </>
   );
 }
 
 /* ---------------------------------- views ---------------------------------- */
 
-function MonthView({ month, byDay, day, today, conflicts, onPick, onCreate, onOpenEvent }) {
+function MiniMonth({ month, day, today, byDay, onPick, onMove }) {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const start = startOfWeek(first);
+  const cells = Array.from({ length: 42 }, (_, i) => addDays(start, i));
+  return (
+    <section className="mc-mini" aria-label="Pick a date">
+      <header>
+        <strong>{month.toLocaleDateString([], { month: 'long', year: 'numeric' })}</strong>
+        <button type="button" className="icon-btn" aria-label="Previous month" onClick={() => onMove(-1)}><Icon name="chevronLeft" size={18} /></button>
+        <button type="button" className="icon-btn" aria-label="Next month" onClick={() => onMove(1)}><Icon name="chevronRight" size={18} /></button>
+      </header>
+      <div className="mc-mini-grid">
+        {WEEKDAYS.map((name) => <span key={name} className="mc-mini-wd" aria-hidden="true">{name[0]}</span>)}
+        {cells.map((date) => {
+          const key = dayKey(date);
+          const classes = [!sameMonth(date, month) && 'dim', key === today && 'today', key === day && 'on', byDay.has(key) && 'has'].filter(Boolean).join(' ');
+          return <button key={key} type="button" className={classes} aria-label={longDay(date)} aria-pressed={key === day} onClick={() => onPick(date)}>{date.getDate()}</button>;
+        })}
+      </div>
+    </section>
+  );
+}
+
+function EventChip({ event, conflicts, onOpenEvent }) {
+  return (
+    <button type="button" className={eventClass(event, conflicts)} title={`${clock(event.start)} ${event.title}`} onClick={(e) => { e.stopPropagation(); onOpenEvent(event, e.currentTarget); }}>
+      {event.kind === 'recording' ? <Icon name="play" size={12} /> : <time>{clock(event.start)}</time>}
+      <span>{event.title}</span>
+    </button>
+  );
+}
+
+function MonthView({ month, byDay, day, today, conflicts, onPick, onOpenDay, onCreate, onOpenEvent }) {
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const start = startOfWeek(first);
   const weeks = Math.ceil((((first.getDay() + 6) % 7) + new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()) / 7);
   const cells = Array.from({ length: weeks * 7 }, (_, i) => addDays(start, i));
   return (
-    <div className="cal-month" role="grid" aria-label={month.toLocaleDateString([], { month: 'long', year: 'numeric' })}>
-      {WEEKDAYS.map((name) => <span key={name} className="cal-weekday" role="columnheader">{name}</span>)}
-      {cells.map((date) => {
-        const key = dayKey(date);
-        const events = byDay.get(key) || [];
-        const shown = events.slice(0, 2);
-        const more = events.length - shown.length;
-        const calls = events.filter((event) => event.kind === 'meeting').length;
-        const classes = ['cal-cell', !sameMonth(date, month) && 'other', key === day && 'selected', key === today && 'today', events.length && 'has', (date.getDay() + 6) % 7 >= 5 && 'weekend', calls >= 3 && 'busy'].filter(Boolean).join(' ');
-        const label = `${longDay(date)}${events.length ? `, ${events.length} item${events.length === 1 ? '' : 's'}` : ''}`;
-        return (
-          <div
-            key={key}
-            role="gridcell"
-            aria-selected={key === day}
-            aria-label={label}
-            tabIndex={key === day ? 0 : -1}
-            className={classes}
-            style={{ '--load': Math.min(calls, 6) }}
-            onClick={() => onPick(date)}
-            onDoubleClick={() => key >= today && onCreate(date)}
-            onKeyDown={(event) => { if (event.key === 'Enter') onPick(date); }}
-          >
-            <span className="cal-cell-head">
-              <span className="cal-date">{date.getDate()}</span>
-              {calls > 1 && <span className="cal-calls" title={`${calls} calls`}><Icon name="videocam" size={12} />{calls}</span>}
-              {key >= today && <button type="button" className="cal-add" aria-label={`Schedule on ${longDay(date)}`} title="Schedule a meeting this day" onClick={(event) => { event.stopPropagation(); onCreate(date); }}><Icon name="add" size={16} /></button>}
-            </span>
-            <span className="cal-chips">
-              {shown.map((event) => (
-                <button key={event.id} type="button" className={eventClass(event, conflicts)} title={`${clock(event.start)} ${event.title}`} onClick={(e) => { e.stopPropagation(); onOpenEvent(event); }}>
-                  <i />
-                  <span className="cal-event-summary">
-                    <strong>{event.title}</strong>
-                    <time>{clock(event.start)}</time>
-                  </span>
-                </button>
-              ))}
-              {more > 0 && <button type="button" className="cal-more-count" onClick={(e) => { e.stopPropagation(); onPick(date); }}>+{more} more</button>}
-            </span>
-            {events.length > 0 && (
-              <span className="cal-dots" aria-hidden="true">
-                {events.slice(0, 4).map((event) => <i key={event.id} className={event.kind} />)}
+    <div className="mc-month-wrap">
+      <div className="mc-weekdays" aria-hidden="true">{WEEKDAYS.map((name) => <span key={name}>{name}</span>)}</div>
+      <div className="mc-month" role="grid" aria-label={month.toLocaleDateString([], { month: 'long', year: 'numeric' })} style={{ '--weeks': weeks }}>
+        {cells.map((date) => {
+          const key = dayKey(date);
+          const events = byDay.get(key) || [];
+          const shown = events.slice(0, 3);
+          const more = events.length - shown.length;
+          const classes = ['mc-cell', !sameMonth(date, month) && 'other', key === day && 'selected', key === today && 'today', (date.getDay() + 6) % 7 >= 5 && 'weekend', key < today && 'past'].filter(Boolean).join(' ');
+          return (
+            <div
+              key={key}
+              role="gridcell"
+              aria-selected={key === day}
+              aria-label={`${longDay(date)}${events.length ? `, ${events.length} item${events.length === 1 ? '' : 's'}` : ''}`}
+              tabIndex={key === day ? 0 : -1}
+              className={classes}
+              onClick={() => onPick(date)}
+              onDoubleClick={() => key >= today && onCreate(date)}
+              onKeyDown={(event) => { if (event.key === 'Enter') onOpenDay(date); }}
+            >
+              <span className="mc-cell-head">
+                <button type="button" className="mc-date" onClick={(e) => { e.stopPropagation(); onOpenDay(date); }} aria-label={`Open ${longDay(date)}`}>{date.getDate()}</button>
+                {key >= today && <button type="button" className="mc-add" aria-label={`Schedule on ${longDay(date)}`} title="Schedule a meeting this day" onClick={(e) => { e.stopPropagation(); onCreate(date); }}><Icon name="add" size={16} /></button>}
               </span>
-            )}
-          </div>
-        );
-      })}
+              {shown.map((event) => <EventChip key={event.id} event={event} conflicts={conflicts} onOpenEvent={onOpenEvent} />)}
+              {more > 0 && <button type="button" className="mc-more-count" onClick={(e) => { e.stopPropagation(); onOpenDay(date); }}>+{more} more</button>}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -355,8 +437,8 @@ function placeDay(events) {
   return placed;
 }
 
-function WeekView({ weekStart, byDay, day, today, conflicts, onPick, onCreate, onOpenEvent }) {
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+/** Days side by side with a column of hours: the week view, or the day view with one day. */
+function TimeGrid({ days, byDay, day, today, conflicts, onPick, onCreate, onOpenEvent }) {
   const scroller = useRef(null);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -373,7 +455,7 @@ function WeekView({ weekStart, byDay, day, today, conflicts, onPick, onCreate, o
   useEffect(() => {
     const focus = days.some((date) => dayKey(date) === today) ? Math.max(0, now.getHours() - 1) : 8;
     if (scroller.current) scroller.current.scrollTop = Math.max(0, (focus - firstHour) * HOUR_PX);
-  }, [dayKey(weekStart)]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dayKey(days[0]), days.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const slotClick = (date, event) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -384,46 +466,46 @@ function WeekView({ weekStart, byDay, day, today, conflicts, onPick, onCreate, o
   };
 
   return (
-    <div className="cal-week">
-      <div className="cal-week-head">
-        <span className="cal-gutter" />
+    <div className={`mc-grid ${days.length === 1 ? 'one' : ''}`} style={{ '--days': days.length }}>
+      <div className="mc-grid-head">
+        <span />
         {days.map((date) => {
           const key = dayKey(date);
           return (
-            <button key={key} type="button" className={`cal-week-day ${key === today ? 'today' : ''} ${key === day ? 'selected' : ''}`} onClick={() => onPick(date)}>
-              <small>{WEEKDAYS[(date.getDay() + 6) % 7]}</small>
+            <button key={key} type="button" className={`mc-grid-day ${key === today ? 'today' : ''} ${key === day ? 'selected' : ''} ${key < today ? 'past' : ''}`} onClick={() => onPick(date)}>
+              <small>{days.length === 1 ? date.toLocaleDateString([], { weekday: 'long' }) : WEEKDAYS[(date.getDay() + 6) % 7]}</small>
               <strong>{date.getDate()}</strong>
             </button>
           );
         })}
       </div>
-      <div className="cal-week-body" ref={scroller}>
-        <div className="cal-hours" style={{ height: hours.length * HOUR_PX }}>
-          {hours.map((hour) => <span key={hour} style={{ top: (hour - firstHour) * HOUR_PX }}>{new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: 'numeric' })}</span>)}
+      <div className="mc-grid-body" ref={scroller}>
+        <div className="mc-hours" style={{ height: hours.length * HOUR_PX }}>
+          {hours.map((hour) => <span key={hour} style={{ top: (hour - firstHour) * HOUR_PX }}>{String(hour).padStart(2, '0')}:00</span>)}
         </div>
         {days.map((date) => {
           const key = dayKey(date);
           const placed = placeDay(byDay.get(key) || []);
           return (
-            <div key={key} className={`cal-col ${key === today ? 'today' : ''} ${key < today ? 'past' : ''}`} style={{ height: hours.length * HOUR_PX, '--hour': `${HOUR_PX}px` }} onClick={(event) => slotClick(date, event)} title={key >= today ? 'Click a time to schedule a meeting' : undefined}>
+            <div key={key} className={`mc-col ${key === today ? 'today' : ''} ${key < today ? 'past' : ''}`} style={{ height: hours.length * HOUR_PX, '--hour': `${HOUR_PX}px` }} onClick={(event) => slotClick(date, event)} title={key >= today ? 'Click a time to schedule a meeting' : undefined}>
               {placed.map(({ event, lane, lanes }) => {
                 const y = top(event.start);
-                const h = Math.max(24, top(event.end) - y - 2);
+                const h = Math.max(26, top(event.end) - y - 2);
                 return (
                   <button
                     key={event.id}
                     type="button"
-                    className={`${eventClass(event, conflicts)} block ${h < 40 ? 'short' : ''}`}
-                    style={{ top: y, height: h, left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - 4px)` }}
-                    onClick={(e) => { e.stopPropagation(); onOpenEvent(event); }}
+                    className={`${eventClass(event, conflicts)} block ${h < 38 ? 'short' : ''}`}
+                    style={{ top: y, height: h, left: `calc(${(lane / lanes) * 100}% + 3px)`, width: `calc(${100 / lanes}% - 6px)` }}
+                    onClick={(e) => { e.stopPropagation(); onOpenEvent(event, e.currentTarget); }}
                     title={`${clock(event.start)}–${clock(event.end)} ${event.title}`}
                   >
                     <strong>{event.title}</strong>
-                    <time>{clock(event.start)}–{clock(event.end)}</time>
+                    <time>{clock(event.start)}<span> – {clock(event.end)}</span></time>
                   </button>
                 );
               })}
-              {key === today && now.getHours() >= firstHour && now.getHours() < lastHour && <span className="cal-now" style={{ top: top(now) }} aria-hidden="true" />}
+              {key === today && now.getHours() >= firstHour && now.getHours() < lastHour && <span className="mc-now" style={{ top: top(now) }} aria-hidden="true" />}
             </div>
           );
         })}
@@ -432,40 +514,49 @@ function WeekView({ weekStart, byDay, day, today, conflicts, onPick, onCreate, o
   );
 }
 
-/** The picked day's calls on one timeline, overlapping ones side by side. */
-function DayTimeline({ events, conflicts, onOpenEvent }) {
-  const PX = 34;
-  const first = Math.min(...events.map((event) => event.start.getHours()));
-  const last = Math.max(...events.map((event) => Math.min(24, event.end.getHours() + (event.end.getMinutes() ? 1 : 0))), first + 1);
-  const hours = Array.from({ length: last - first }, (_, i) => first + i);
-  const y = (date) => ((date.getHours() - first) * 60 + date.getMinutes()) / 60 * PX;
-  const placed = placeDay(events);
-  const now = new Date();
-  const isToday = dayKey(events[0].start) === dayKey(now);
-  return (
-    <div className="cal-daytl" aria-label="The day at a glance">
-      <div className="cal-daytl-hours">{hours.map((hour) => <span key={hour} style={{ top: (hour - first) * PX }}>{new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: 'numeric' })}</span>)}</div>
-      <div className="cal-daytl-track" style={{ height: hours.length * PX, '--hour': `${PX}px` }}>
-        {placed.map(({ event, lane, lanes }) => (
-          <button
-            key={event.id}
-            type="button"
-            className={`${eventClass(event, conflicts)} block`}
-            style={{ top: y(event.start), height: Math.max(20, y(event.end) - y(event.start) - 2), left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - 4px)` }}
-            onClick={() => onOpenEvent(event)}
-            title={`${clock(event.start)}–${clock(event.end)} ${event.title}`}
-          >
-            <strong>{event.title}</strong>
-            <time>{clock(event.start)}</time>
+/** The phone's day view: what's on, in order, with the free stretches between. */
+function DayList({ date, events, allEvents, conflicts, onOpenEvent, onCreate }) {
+  const key = dayKey(date);
+  const today = dayKey(new Date());
+  const tomorrow = addDays(date, 1);
+  const free = key >= today ? freeRanges(date, allEvents.filter((event) => dayKey(event.start) === key), 1) : [];
+  const section = (label, list, when, current) => (
+    <section className="mc-daylist">
+      <h2 className={current ? 'today' : ''}>{label}</h2>
+      {!list.length && !(when === 'first' && free.length) && <p className="mc-daylist-empty">Nothing scheduled.</p>}
+      {[...list, ...(when === 'first' ? free.map(([from, to]) => ({ free: true, id: `free-${from.toISOString()}`, start: from, end: to })) : [])].sort((a, b) => a.start - b.start).map((event) => (event.free ? (
+        <div key={event.id} className="mc-row-wrap">
+          <time>{clock(event.start)}</time>
+          <button type="button" className="mc-row mc-free" onClick={() => onCreate(date, event.start)}>
+            <strong>Free until {clock(event.end)}</strong>
+            <span>Tap to schedule a meeting here</span>
           </button>
-        ))}
-        {isToday && now.getHours() >= first && now.getHours() < last && <span className="cal-now" style={{ top: y(now) }} aria-hidden="true" />}
-      </div>
+        </div>
+      ) : (
+        <div key={event.id} className="mc-row-wrap">
+          <time>{clock(event.start)}</time>
+          <button type="button" className={`${eventClass(event, conflicts)} mc-row`} onClick={(e) => onOpenEvent(event, e.currentTarget)}>
+            <strong>{event.title}</strong>
+            <span>{clock(event.start)} – {clock(event.end)} · {event.kind === 'meeting' ? `${event.item.invitees.length + 1} ${event.item.invitees.length ? 'people' : 'person'}` : 'Recording'}</span>
+          </button>
+        </div>
+      )))}
+    </section>
+  );
+  const label = (value) => {
+    const k = dayKey(value);
+    const prefix = k === today ? 'Today' : k === dayKey(addDays(new Date(), 1)) ? 'Tomorrow' : k === dayKey(addDays(new Date(), -1)) ? 'Yesterday' : '';
+    return `${prefix ? `${prefix} · ` : ''}${value.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' })}`;
+  };
+  return (
+    <div className="mc-daylists">
+      {section(label(date), events.filter((event) => dayKey(event.start) === key), 'first', key === today)}
+      {section(label(tomorrow), events.filter((event) => dayKey(event.start) === dayKey(tomorrow)), 'second', false)}
     </div>
   );
 }
 
-function AgendaView({ events, today, onOpenEvent, onPick, query }) {
+function AgendaView({ events, today, onOpenEvent, onOpenDay, query }) {
   const [showPast, setShowPast] = useState(Boolean(query));
   useEffect(() => { if (query) setShowPast(true); }, [query]);
   const now = Date.now();
@@ -484,15 +575,15 @@ function AgendaView({ events, today, onOpenEvent, onPick, query }) {
     const date = fromKey(key);
     const relative = key === today ? 'Today' : key === dayKey(addDays(new Date(), 1)) ? 'Tomorrow' : key === dayKey(addDays(new Date(), -1)) ? 'Yesterday' : '';
     return (
-      <section key={key} className="cal-agenda-day">
-        <button type="button" className={`cal-agenda-date ${key === today ? 'today' : ''}`} onClick={() => onPick(date)}>
+      <section key={key} className="mc-agenda-day">
+        <button type="button" className={`mc-agenda-date ${key === today ? 'today' : ''}`} onClick={() => onOpenDay(date)}>
           <strong>{date.getDate()}</strong>
-          <span>{date.toLocaleDateString([], { weekday: 'short' })}<small>{date.toLocaleDateString([], { month: 'short' })}</small></span>
+          <span>{date.toLocaleDateString([], { weekday: 'short' })} · {date.toLocaleDateString([], { month: 'short' })}</span>
         </button>
-        <div className="cal-agenda-items">
-          {relative && <span className="cal-agenda-rel">{relative}</span>}
+        <div className="mc-agenda-items">
+          {relative && <span className="mc-agenda-rel">{relative}</span>}
           {list.map((event) => (
-            <button key={event.id} type="button" className={`${eventClass(event)} row`} onClick={() => onOpenEvent(event)}>
+            <button key={event.id} type="button" className={`${eventClass(event)} mc-agenda-row`} onClick={(e) => onOpenEvent(event, e.currentTarget)}>
               <i />
               <time>{clock(event.start)} – {clock(event.end)}</time>
               <strong>{event.title}</strong>
@@ -504,12 +595,12 @@ function AgendaView({ events, today, onOpenEvent, onPick, query }) {
     );
   });
   return (
-    <div className="cal-agenda">
-      {!upcoming.length && <p className="cal-agenda-empty">{query ? 'Nothing upcoming matches your search.' : 'Nothing coming up. Schedule a meeting to see it here.'}</p>}
+    <div className="mc-agenda">
+      {!upcoming.length && <p className="mc-agenda-empty">{query ? 'Nothing upcoming matches your search.' : 'Nothing coming up. Schedule a meeting to see it here.'}</p>}
       {renderGroups(group(upcoming))}
       {past.length > 0 && (
         <>
-          <button type="button" className="cal-agenda-toggle" onClick={() => setShowPast((open) => !open)} aria-expanded={showPast}>
+          <button type="button" className="mc-agenda-toggle" onClick={() => setShowPast((open) => !open)} aria-expanded={showPast}>
             <Icon name="expandMore" size={18} className={showPast ? 'up' : ''} /> {showPast ? 'Hide' : 'Show'} earlier ({past.length})
           </button>
           {showPast && renderGroups(group(past))}
@@ -521,26 +612,28 @@ function AgendaView({ events, today, onOpenEvent, onPick, query }) {
 
 /* ---------------------------------- the page ---------------------------------- */
 
+const VIEWS = [['day', 'Day', 'D'], ['week', 'Week', 'W'], ['month', 'Month', 'M'], ['agenda', 'Agenda', 'A']];
 const readView = () => {
   try {
     const saved = localStorage.getItem(VIEW_KEY);
-    if (['month', 'week', 'agenda'].includes(saved)) return saved;
+    if (VIEWS.some(([value]) => value === saved)) return saved;
   } catch { /* private window */ }
-  return window.matchMedia?.('(max-width: 700px)').matches ? 'agenda' : 'month';
+  return window.matchMedia?.('(max-width: 800px)').matches ? 'day' : 'month';
 };
 
 export default function Recordings({ me, onClose }) {
   const [data, setData] = useState(null); // recordings: { items, keepDays }
   const [meetings, setMeetings] = useState(null);
   const [error, setError] = useState('');
-  const [playing, setPlaying] = useState(null);
   const [view, setViewState] = useState(readView);
-  const [cursor, setCursor] = useState(() => new Date()); // the month or week on screen
+  const [cursor, setCursor] = useState(() => new Date()); // the day, week or month on screen
+  const [miniMonth, setMiniMonth] = useState(() => new Date());
   const [day, setDay] = useState(null); // a dayKey, chosen once everything has loaded
-  const [highlight, setHighlight] = useState(null); // an event id picked on the calendar
+  const [selected, setSelected] = useState(null); // { id, anchor } of the event whose details are open
   const [editing, setEditing] = useState(null); // null | { meeting } | { day, at, template }
   const [query, setQuery] = useState('');
-  const [kind, setKind] = useState('all'); // all | meeting | recording
+  const [showMeetings, setShowMeetings] = useState(true);
+  const [showRecordings, setShowRecordings] = useState(true);
   const [mineOnly, setMineOnly] = useState(false);
   const searchBox = useRef(null);
 
@@ -566,7 +659,8 @@ export default function Recordings({ me, onClose }) {
   const allEvents = useMemo(() => toEvents(meetings || [], data?.items || []), [meetings, data]);
   const needle = query.trim().toLowerCase();
   const events = useMemo(() => allEvents.filter((event) => {
-    if (kind !== 'all' && event.kind !== kind) return false;
+    if (event.kind === 'meeting' && !showMeetings) return false;
+    if (event.kind === 'recording' && !showRecordings) return false;
     if (mineOnly && !event.mine) return false;
     if (!needle) return true;
     const item = event.item;
@@ -574,7 +668,7 @@ export default function Recordings({ me, onClose }) {
       ? `${item.title} ${item.description || ''} ${item.host?.name || ''} ${item.invitees.map((p) => p.name).join(' ')} ${item.code}`
       : `${item.title} ${item.recorder?.name || ''}`;
     return haystack.toLowerCase().includes(needle);
-  }), [allEvents, kind, mineOnly, needle]);
+  }), [allEvents, showMeetings, showRecordings, mineOnly, needle]);
   const conflicts = useMemo(() => findConflicts(allEvents), [allEvents]);
   const byDay = useMemo(() => {
     const map = new Map();
@@ -594,9 +688,16 @@ export default function Recordings({ me, onClose }) {
   const week = useMemo(() => {
     const from = startOfWeek(new Date());
     const to = addDays(from, 7);
-    const mine = (meetings || []).filter((meeting) => new Date(meeting.startAt) >= from && new Date(meeting.startAt) < to);
-    return { count: mine.length, minutes: mine.reduce((sum, meeting) => sum + (Date.parse(meeting.endAt) - Date.parse(meeting.startAt)) / MINUTE, 0) };
-  }, [meetings]);
+    const inWeek = (date) => date >= from && date < to;
+    const list = (meetings || []).filter((meeting) => inWeek(new Date(meeting.startAt)));
+    const clashing = list.filter((meeting) => conflicts.has(`m:${meeting.id}`) && Date.parse(meeting.endAt) > Date.now());
+    return {
+      count: list.length,
+      minutes: list.reduce((sum, meeting) => sum + (Date.parse(meeting.endAt) - Date.parse(meeting.startAt)) / MINUTE, 0),
+      recordings: (data?.items || []).filter((item) => inWeek(new Date(item.startedAt))).length,
+      clashing,
+    };
+  }, [meetings, data, conflicts]);
 
   // Start on today if anything is on; else the next meeting; else the latest recording; else today.
   useEffect(() => {
@@ -607,6 +708,7 @@ export default function Recordings({ me, onClose }) {
     const chosen = byDay.has(today) ? new Date() : next || latest || new Date();
     setDay(dayKey(chosen));
     setCursor(chosen);
+    setMiniMonth(chosen);
   }, [data, meetings, day, byDay, upcoming]);
 
   async function removeRecording(item) {
@@ -614,7 +716,7 @@ export default function Recordings({ me, onClose }) {
     if (!sure) return;
     try {
       await api(`/recordings/${item.id}`, { method: 'DELETE' });
-      if (playing === item.id) setPlaying(null);
+      setSelected(null);
       setData((current) => ({ ...current, items: current.items.filter((other) => other.id !== item.id) }));
     } catch (err) {
       setError(err.message);
@@ -633,6 +735,7 @@ export default function Recordings({ me, onClose }) {
     if (!sure) return;
     try {
       await api(`/meetings/${meeting.id}`, { method: 'DELETE' });
+      setSelected(null);
       setMeetings((current) => current.filter((other) => other.id !== meeting.id));
     } catch (err) {
       setError(err.message);
@@ -656,62 +759,85 @@ export default function Recordings({ me, onClose }) {
     }
   };
   const startNow = () => run(() => startMeeting({ video: true }));
-  const joinWithOptions = (options = { video: false, muted: true }) => {
-    const found = MEETING_CODE.exec(code.trim().toLowerCase());
-    if (!found) return setError('Enter a meeting code like abc-defg-hij, or paste the meeting link.');
+  const joinCode = (text, options = { video: false, muted: true }) => {
+    const found = MEETING_CODE.exec(String(text || '').trim().toLowerCase());
+    if (!found) { setError('Enter a meeting code like abc-defg-hij, or paste the meeting link.'); return null; }
     return run(() => joinByCode(found[0], options).then(() => setCode('')));
   };
   const joinWithCode = (event) => {
     event.preventDefault();
-    return joinWithOptions();
+    joinCode(code);
+  };
+  const askForCode = async () => {
+    const text = await ask({ title: 'Join a meeting', input: { label: 'Meeting code or link', placeholder: 'abc-defg-hij', maxLength: 300 }, confirmLabel: 'Join' });
+    if (text) joinCode(text);
   };
 
+  const today = dayKey(new Date());
+  const pick = (date) => {
+    setDay(dayKey(date));
+    setSelected(null);
+  };
+  const openDay = (date) => {
+    pick(date);
+    setCursor(date);
+    setView('day');
+  };
+  const pickFromMini = (date) => {
+    pick(date);
+    setCursor(date);
+    setMiniMonth(date);
+  };
   const saved = (meeting) => {
     setMeetings((current) => [...(current || []).filter((other) => other.id !== meeting.id), meeting]);
     const date = new Date(meeting.startAt);
     setDay(dayKey(date));
     setCursor(date);
-    setHighlight(`m:${meeting.id}`);
+    setMiniMonth(date);
+    justSaved.current = `m:${meeting.id}`;
   };
-
-  const today = dayKey(new Date());
-  const shown = (day && byDay.get(day)) || [];
-  const shownMeetings = shown.filter((event) => event.kind === 'meeting').map((event) => event.item);
-  // A free half hour that day (working hours), from every meeting, not only the filtered ones.
-  const freeSlot = day && day >= today ? nextFreeSlot(fromKey(day), allEvents.filter((event) => dayKey(event.start) === day)) : null;
-  const shownRecordings = shown.filter((event) => event.kind === 'recording').map((event) => event.item);
-  const pick = (date) => {
-    setDay(dayKey(date));
-    setHighlight(null);
-    setPlaying(null);
+  // The new meeting's details open once the "Meeting scheduled" dialog is closed, not behind it.
+  const justSaved = useRef(null);
+  const closeEditor = () => {
+    setEditing(null);
+    if (justSaved.current) setSelected({ id: justSaved.current, anchor: null });
+    justSaved.current = null;
   };
-  const openEvent = (event) => {
+  const openEvent = (event, element) => {
+    const rect = element?.getBoundingClientRect();
     setDay(dayKey(event.start));
-    setHighlight(event.id);
-    if (event.kind === 'recording' && event.item.status === 'ready') setPlaying(null);
+    setSelected({ id: event.id, anchor: rect ? { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom } : null });
   };
-  const create = (date, at = null) => setEditing({ day: date, at });
-  const move = (step) => setCursor((current) => (view === 'week' ? addDays(current, step * 7) : new Date(current.getFullYear(), current.getMonth() + step, 1)));
+  const create = (date, at = null) => { setSelected(null); setEditing({ day: date, at }); };
+  const move = (step) => setCursor((current) => {
+    const next = view === 'day' ? addDays(current, step) : view === 'week' ? addDays(current, step * 7) : new Date(current.getFullYear(), current.getMonth() + step, 1);
+    if (view === 'day') setDay(dayKey(next));
+    setMiniMonth(next);
+    return next;
+  });
   const goToday = () => {
     setCursor(new Date());
+    setMiniMonth(new Date());
     pick(new Date());
   };
-  const pickedDate = day ? fromKey(day) : null;
+
+  const pickedDate = day ? fromKey(day) : new Date();
   const weekStart = startOfWeek(cursor);
   const heading = view === 'week'
     ? (() => {
       const end = addDays(weekStart, 6);
       return sameMonth(weekStart, end)
-        ? `${weekStart.getDate()} – ${end.toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' })}`
-        : `${weekStart.toLocaleDateString([], { day: 'numeric', month: 'short' })} – ${end.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}`;
+        ? <>{weekStart.getDate()} – {end.toLocaleDateString([], { day: 'numeric', month: 'long' })} <span>{end.getFullYear()}</span></>
+        : <>{weekStart.toLocaleDateString([], { day: 'numeric', month: 'short' })} – {end.toLocaleDateString([], { day: 'numeric', month: 'short' })} <span>{end.getFullYear()}</span></>;
     })()
-    : view === 'agenda' ? (needle ? `${events.length} result${events.length === 1 ? '' : 's'}` : 'Agenda')
-      : cursor.toLocaleDateString([], { month: 'long', year: 'numeric' });
+    : view === 'day' ? <>{cursor.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })}</>
+      : view === 'agenda' ? (needle ? `${events.length} result${events.length === 1 ? '' : 's'}` : 'Agenda')
+        : <>{cursor.toLocaleDateString([], { month: 'long' })} <span>{cursor.getFullYear()}</span></>;
 
-  // Keyboard: arrows move the day, PageUp/PageDown the month or week, T today, N new, M/W/A views, / search.
+  // Keyboard: arrows move the day, PageUp/PageDown the period, T today, N new, D/W/M/A views, / search.
   useEffect(() => {
     const onKey = (event) => {
-      if (editing || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (editing || selected || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.target.closest?.('input, textarea, select, [contenteditable="true"], .modal-backdrop, .dialog')) return;
       const steps = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
       if (steps[event.key] !== undefined && view !== 'agenda' && day) {
@@ -719,11 +845,13 @@ export default function Recordings({ me, onClose }) {
         const next = addDays(fromKey(day), steps[event.key]);
         pick(next);
         setCursor(next);
+        setMiniMonth(next);
       } else if (event.key === 'PageUp' || event.key === 'PageDown') {
         event.preventDefault();
         move(event.key === 'PageUp' ? -1 : 1);
       } else if (event.key === 't') goToday();
       else if (event.key === 'n') create(day && day >= today ? fromKey(day) : new Date());
+      else if (event.key === 'd') setView('day');
       else if (event.key === 'm') setView('month');
       else if (event.key === 'w') setView('week');
       else if (event.key === 'a') setView('agenda');
@@ -738,208 +866,201 @@ export default function Recordings({ me, onClose }) {
 
   const next = upcoming[0];
   const exportable = upcoming.filter((meeting) => !meeting.live);
+  const open = selected && allEvents.find((event) => event.id === selected.id);
+  const free = day && day >= today ? freeRanges(pickedDate, allEvents.filter((event) => dayKey(event.start) === day)) : [];
+  const stripStart = startOfWeek(pickedDate);
+  const closeDetails = () => setSelected(null);
+
+  const upNext = next && (
+    <section className={`mc-next ${next.live ? 'live' : ''}`} aria-label="Up next">
+      <span className="mc-next-when">{next.live ? <><i /> Live now</> : <><Icon name="clock" size={14} /> Up next · {startsIn(next).replace(/^In /, 'in ')}</>}</span>
+      <strong>{next.title}</strong>
+      <span className="mc-next-time">{dayKey(new Date(next.startAt)) === today ? 'Today' : new Date(next.startAt).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })} · {clock(next.startAt)} – {clock(next.endAt)}</span>
+      <div className="mc-next-foot">
+        <span className="mc-faces">
+          {[next.host, ...next.invitees.filter((person) => person.address !== next.host.address)].slice(0, 4).map((person) => <Avatar key={person.address} person={person} size="xs" />)}
+        </span>
+        <button type="button" className="btn" onClick={() => (next.live ? join(next) : openEvent({ kind: 'meeting', id: `m:${next.id}`, start: new Date(next.startAt) }, null))}>{next.live ? 'Join' : 'Open'}</button>
+      </div>
+    </section>
+  );
 
   return (
-    <div className="attendance-app recordings-app meet-hub">
+    <div className="attendance-app recordings-app mc-app">
       <header className="tasks-topbar attendance-topbar">
         <button type="button" className="icon-btn tasks-back" onClick={onClose} title="Back to mailbox" aria-label="Back to mailbox"><Icon name="back" /></button>
         <button className="tasks-brand" type="button" onClick={onClose} title="Back to mail"><Logo /><Wordmark /></button>
         <span className="tasks-divider" />
         <strong>Meet</strong>
-        <span className="grow" />
+        <label className="tasks-search mc-search">
+          <Icon name="search" size={19} />
+          <input ref={searchBox} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search meetings, people, recordings" aria-label="Search the calendar" />
+          {query && <button type="button" className="icon-btn" aria-label="Clear search" onClick={() => setQuery('')}><Icon name="close" size={16} /></button>}
+        </label>
       </header>
 
-      <main className="attendance-main">
-        <section className="meet-bar" aria-label="Start or join">
-          <button type="button" className="btn meet-start" disabled={starting} onClick={startNow}><Icon name="videocam" size={19} /> New meeting</button>
-          <button type="button" className="btn meet-schedule" onClick={() => create(day && day >= today ? fromKey(day) : new Date())}><Icon name="event" size={19} /> Schedule</button>
-          <form className="meet-join meet-bar-join" onSubmit={joinWithCode}>
-            <Icon name="keyboard" size={19} />
-            <input id="meeting-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Enter a code or link" aria-label="Meeting code or link" autoComplete="off" spellCheck={false} />
-            <span className="meet-join-actions">
-              <button type="submit" className="btn meet-join-main" disabled={starting || !code.trim()}>Join</button>
-              <Popover icon="arrowDrop" title="Choose how to join" className="btn meet-join-more" align="right" disabled={starting || !code.trim()}>
-                {(close) => (
-                  <div className="menu meet-join-menu" role="menu">
-                    <div className="menu-title">Choose how to join</div>
-                    <button type="button" className="menu-item" role="menuitem" onClick={() => { close(); joinWithOptions({ video: true, muted: false }); }}>
-                      <Icon name="videocam" size={19} />
-                      <span><strong>Camera and mic on</strong><small>Join normally</small></span>
-                    </button>
-                    <button type="button" className="menu-item" role="menuitem" onClick={() => { close(); joinWithOptions({ video: false, muted: false }); }}>
-                      <Icon name="videocamOff" size={19} />
-                      <span><strong>Camera off</strong><small>Join with your microphone on</small></span>
-                    </button>
-                    <button type="button" className="menu-item" role="menuitem" onClick={() => { close(); joinWithOptions({ video: false, muted: true }); }}>
-                      <Icon name="micOff" size={19} />
-                      <span><strong>Camera and mic off</strong><small>Default · join quietly</small></span>
-                    </button>
-                  </div>
-                )}
-              </Popover>
-            </span>
-          </form>
-          {next && (
-            <div className={`meet-bar-next ${next.live ? 'live' : ''}`}>
-              <span className="meet-bar-next-text">
-                <small>{next.live ? <><i /> Live now</> : `Up next · ${startsIn(next)}`}</small>
-                <strong>{next.title}</strong>
-              </span>
-              <button type="button" className="btn" onClick={() => join(next)}>{next.live ? 'Join' : 'Open'}</button>
+      {!data || !meetings ? <div className="mc-loading"><PanelSkeleton /></div> : (
+        <div className="mc-layout">
+          <aside className="mc-rail">
+            <div className="mc-actions">
+              <button type="button" className="btn btn-primary" disabled={starting} onClick={startNow}><Icon name="videocam" size={19} /> New meeting</button>
+              <button type="button" className="btn btn-outline" onClick={() => create(day && day >= today ? fromKey(day) : new Date())}><Icon name="event" size={18} /> Schedule</button>
             </div>
-          )}
-        </section>
-
-        {data && meetings && (
-          <section className="meet-hub-stats" aria-label="Meeting overview">
-            <div><span className="meet-stat-icon violet"><Icon name="event" size={18} /></span><strong>{week.count}</strong><small>Meetings this week</small></div>
-            <div><span className="meet-stat-icon blue"><Icon name="clock" size={18} /></span><strong>{hoursText(week.minutes)}</strong><small>Planned this week</small></div>
-            <div><span className="meet-stat-icon coral"><Icon name="play" size={18} /></span><strong>{data.items.length}</strong><small>Recordings</small></div>
-            <p><Icon name="info" size={16} /> Recordings stay available for {data.keepDays} days.</p>
-          </section>
-        )}
-        {error && <div className="alert"><span>{error}</span><button className="link" onClick={() => setError('')}>Dismiss</button></div>}
-        {!data || !meetings ? <PanelSkeleton /> : (
-          <div className="cal-layout">
-            <section className="cal-main" aria-label="Calendar">
-              <header className="cal-toolbar">
-                <div className="cal-nav">
-                  <button type="button" className="btn btn-outline cal-today" onClick={goToday} title="Today (T)">Today</button>
-                  {view !== 'agenda' && (
-                    <>
-                      <button type="button" className="icon-btn" aria-label={view === 'week' ? 'Previous week' : 'Previous month'} title="Previous (Page Up)" onClick={() => move(-1)}><Icon name="chevronLeft" /></button>
-                      <button type="button" className="icon-btn" aria-label={view === 'week' ? 'Next week' : 'Next month'} title="Next (Page Down)" onClick={() => move(1)}><Icon name="chevronRight" /></button>
-                    </>
+            <form className="mc-join" onSubmit={joinWithCode}>
+              <label>
+                <Icon name="link" size={17} />
+                <input id="meeting-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code or link" aria-label="Meeting code or link" autoComplete="off" spellCheck={false} />
+              </label>
+              <span className="mc-join-actions">
+                <button type="submit" className="mc-join-main" disabled={starting || !code.trim()}>Join</button>
+                <Popover icon="arrowDrop" title="Choose how to join" className="mc-join-more" align="right" disabled={starting || !code.trim()}>
+                  {(close) => (
+                    <div className="menu meet-join-menu" role="menu">
+                      <div className="menu-title">Choose how to join</div>
+                      <button type="button" className="menu-item" role="menuitem" onClick={() => { close(); joinCode(code, { video: true, muted: false }); }}>
+                        <Icon name="videocam" size={19} />
+                        <span><strong>Camera and mic on</strong><small>Join normally</small></span>
+                      </button>
+                      <button type="button" className="menu-item" role="menuitem" onClick={() => { close(); joinCode(code, { video: false, muted: false }); }}>
+                        <Icon name="videocamOff" size={19} />
+                        <span><strong>Camera off</strong><small>Join with your microphone on</small></span>
+                      </button>
+                      <button type="button" className="menu-item" role="menuitem" onClick={() => { close(); joinCode(code, { video: false, muted: true }); }}>
+                        <Icon name="micOff" size={19} />
+                        <span><strong>Camera and mic off</strong><small>Default · join quietly</small></span>
+                      </button>
+                    </div>
                   )}
-                  <h2>{view === 'month' ? <><b>{cursor.toLocaleDateString([], { month: 'long' })}</b> <span>{cursor.getFullYear()}</span></> : heading}</h2>
-                </div>
-                <div className="cal-views" role="tablist" aria-label="Calendar view">
-                  {[['month', 'viewMonth', 'Month', 'M'], ['week', 'viewWeek', 'Week', 'W'], ['agenda', 'viewList', 'Agenda', 'A']].map(([value, icon, label, key]) => (
-                    <button key={value} type="button" role="tab" aria-selected={view === value} className={view === value ? 'on' : ''} title={`${label} (${key})`} onClick={() => setView(value)}>
-                      <Icon name={icon} size={17} /><span>{label}</span>
-                    </button>
-                  ))}
-                </div>
-              </header>
+                </Popover>
+              </span>
+            </form>
 
-              <div className="cal-filters">
-                <label className="cal-search">
-                  <Icon name="search" size={17} />
-                  <input ref={searchBox} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search meetings, people, recordings" aria-label="Search the calendar" />
-                  {query && <button type="button" className="icon-btn" aria-label="Clear search" onClick={() => setQuery('')}><Icon name="close" size={16} /></button>}
-                </label>
-                <div className="cal-chips-filter" role="group" aria-label="Show">
-                  {[['all', 'Everything'], ['meeting', 'Meetings'], ['recording', 'Recordings']].map(([value, label]) => (
-                    <button key={value} type="button" aria-pressed={kind === value} className={`${kind === value ? 'on' : ''} ${value}`} onClick={() => setKind(value)}>
-                      {value !== 'all' && <i />}{label}
-                    </button>
-                  ))}
-                  <button type="button" aria-pressed={mineOnly} className={mineOnly ? 'on' : ''} onClick={() => setMineOnly((on) => !on)}><Icon name="person" size={15} /> Mine</button>
-                </div>
-                {exportable.length > 0 && (
-                  <button type="button" className="btn btn-outline cal-export" onClick={() => downloadIcs(exportable, 'Nextspace meetings')} title="Download every upcoming meeting as a calendar file">
-                    <Icon name="download" size={16} /> Export upcoming
-                  </button>
-                )}
-              </div>
+            <MiniMonth
+              month={miniMonth}
+              day={day}
+              today={today}
+              byDay={byDay}
+              onPick={pickFromMini}
+              onMove={(step) => setMiniMonth((current) => new Date(current.getFullYear(), current.getMonth() + step, 1))}
+            />
 
-              {view === 'month' && <MonthView month={cursor} byDay={byDay} day={day} today={today} conflicts={conflicts} onPick={pick} onCreate={create} onOpenEvent={openEvent} />}
-              {view === 'week' && <WeekView weekStart={weekStart} byDay={byDay} day={day} today={today} conflicts={conflicts} onPick={pick} onCreate={create} onOpenEvent={openEvent} />}
-              {view === 'agenda' && <AgendaView events={events} today={today} query={needle} onPick={(date) => { pick(date); }} onOpenEvent={openEvent} />}
+            {upNext}
 
-              <p className="cal-hint">
-                <Icon name="keyboard" size={15} />
-                {view === 'week' ? 'Click a free time to plan a meeting there.' : view === 'month' ? 'Double-click a day to plan a meeting.' : 'Pick anything to see its details.'}
-                <span> Keys: ← → ↑ ↓ move · T today · N new · M W A views · / search</span>
-              </p>
+            <section className="mc-stats" aria-label="This week">
+              <div><strong>{week.count}</strong><small>meeting{week.count === 1 ? '' : 's'} this week</small></div>
+              <div><strong>{week.minutes >= 60 ? `${Math.floor(week.minutes / 60)}h${Math.round(week.minutes % 60) ? ` ${Math.round(week.minutes % 60)}m` : ''}` : `${Math.round(week.minutes)}m`}</strong><small>in meetings</small></div>
+              <div><strong>{week.recordings}</strong><small>recording{week.recordings === 1 ? '' : 's'}</small></div>
             </section>
 
-            <aside className="cal-side" aria-live="polite">
-              <div className="recordings-day-head">
-                {pickedDate && <span className="cal-side-date" aria-hidden="true"><b>{pickedDate.getDate()}</b><small>{pickedDate.toLocaleDateString([], { weekday: 'short' })}</small></span>}
-                <span className="cal-side-title">
-                  <h2>{pickedDate ? (day === today ? `Today · ${pickedDate.toLocaleDateString([], { day: 'numeric', month: 'long' })}` : longDay(pickedDate)) : ''}</h2>
-                  <small>{shown.length ? `${shownMeetings.length} meeting${shownMeetings.length === 1 ? '' : 's'} · ${shownRecordings.length} recording${shownRecordings.length === 1 ? '' : 's'}` : 'A clear day'}</small>
-                </span>
-                {day >= today && <button type="button" className="btn btn-outline" onClick={() => create(fromKey(day))}><Icon name="add" size={17} /> Schedule</button>}
+            {week.clashing.length > 0 && (
+              <section className="mc-warn" aria-label="Clashes">
+                <strong>{week.clashing.length} meetings overlap this week</strong>
+                <span>{week.clashing.slice(0, 4).map((meeting) => meeting.title).join(', ')}</span>
+              </section>
+            )}
+
+            {free.length > 0 && (
+              <section className="mc-free-list" aria-label="Free time">
+                <h3>Free {day === today ? 'today' : `on ${pickedDate.toLocaleDateString([], { weekday: 'long' })}`}</h3>
+                {free.map(([from, to]) => (
+                  <button key={from.toISOString()} type="button" onClick={() => create(pickedDate, from)}>
+                    <strong>{clock(from)} – {clock(to)}</strong><span>Schedule here</span>
+                  </button>
+                ))}
+              </section>
+            )}
+
+            <section className="mc-show" aria-label="Show">
+              <h3>Show</h3>
+              <label><input type="checkbox" checked={showMeetings} onChange={(e) => setShowMeetings(e.target.checked)} /><i className="meeting" />Meetings</label>
+              <label><input type="checkbox" checked={showRecordings} onChange={(e) => setShowRecordings(e.target.checked)} /><i className="recording" />Recordings</label>
+              <label><input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} /><i className="mine" />Only ones I organise</label>
+            </section>
+
+            <p className="mc-hint">Recordings are kept for {data.keepDays} days.<br />Keys: T today · N new · D W M A views · / search</p>
+          </aside>
+
+          <main className="mc-main">
+            <div className="mc-toolbar">
+              <h1>{heading}</h1>
+              <div className="mc-nav">
+                <button type="button" className="btn btn-outline" onClick={goToday} title="Today (T)">Today</button>
+                {view !== 'agenda' && (
+                  <>
+                    <button type="button" className="btn btn-outline mc-arrow" aria-label="Previous" title="Previous (Page Up)" onClick={() => move(-1)}><Icon name="chevronLeft" size={18} /></button>
+                    <button type="button" className="btn btn-outline mc-arrow" aria-label="Next" title="Next (Page Down)" onClick={() => move(1)}><Icon name="chevronRight" size={18} /></button>
+                  </>
+                )}
               </div>
-              {freeSlot && shownMeetings.length > 0 && (
-                <button type="button" className="cal-free" onClick={() => create(fromKey(day), freeSlot)}>
-                  <Icon name="clock" size={16} /> Next free: <strong>{clock(freeSlot)}</strong> <span>Schedule there</span>
+              <div className="mc-views" role="tablist" aria-label="Calendar view">
+                {VIEWS.map(([value, label, key]) => (
+                  <button key={value} type="button" role="tab" aria-selected={view === value} className={view === value ? 'on' : ''} title={`${label} (${key})`} onClick={() => { if (value === 'day' && day) setCursor(fromKey(day)); setView(value); }}>{label}</button>
+                ))}
+              </div>
+              {exportable.length > 0 && (
+                <button type="button" className="btn btn-outline mc-arrow mc-export" onClick={() => downloadIcs(exportable, 'Nextspace meetings')} title="Download every upcoming meeting as a calendar file" aria-label="Export upcoming meetings">
+                  <Icon name="download" size={18} />
                 </button>
               )}
-              {shown.length > 1 && <DayTimeline events={shown} conflicts={conflicts} onOpenEvent={openEvent} />}
+            </div>
 
-              {!shown.length && (
-                <div className="recordings-empty">
-                  <span><Icon name="event" size={24} /></span>
-                  <p>{needle || kind !== 'all' || mineOnly ? 'Nothing this day matches your filters.' : day >= today ? 'Nothing scheduled this day.' : 'No meetings or recordings this day.'}</p>
-                </div>
-              )}
+            {error && <div className="alert"><span>{error}</span><button type="button" className="link" onClick={() => setError('')}>Dismiss</button></div>}
 
-              {shownMeetings.length > 0 && (
+            {view === 'day' && (
+              <nav className="mc-strip" aria-label="Pick a day">
+                <button type="button" className="icon-btn" aria-label="Previous week" onClick={() => pickFromMini(addDays(pickedDate, -7))}><Icon name="chevronLeft" size={18} /></button>
+                {Array.from({ length: 7 }, (_, i) => addDays(stripStart, i)).map((date) => {
+                  const key = dayKey(date);
+                  return (
+                    <button key={key} type="button" className={[key === day && 'on', key === today && 'today', key < today && 'past', byDay.has(key) && 'has'].filter(Boolean).join(' ')} onClick={() => pickFromMini(date)} aria-label={longDay(date)} aria-pressed={key === day}>
+                      <small>{WEEKDAYS[(date.getDay() + 6) % 7][0]}</small><b>{date.getDate()}</b><i />
+                    </button>
+                  );
+                })}
+                <button type="button" className="icon-btn" aria-label="Next week" onClick={() => pickFromMini(addDays(pickedDate, 7))}><Icon name="chevronRight" size={18} /></button>
+              </nav>
+            )}
+            {view === 'day' && <div className="mc-phone-only">{upNext}</div>}
+
+            <div className="mc-surface">
+              {view === 'month' && <MonthView month={cursor} byDay={byDay} day={day} today={today} conflicts={conflicts} onPick={pick} onOpenDay={openDay} onCreate={create} onOpenEvent={openEvent} />}
+              {view === 'week' && <TimeGrid days={Array.from({ length: 7 }, (_, n) => addDays(weekStart, n))} byDay={byDay} day={day} today={today} conflicts={conflicts} onPick={pick} onCreate={create} onOpenEvent={openEvent} />}
+              {view === 'day' && (
                 <>
-                  <h3 className="recordings-section">Meetings</h3>
-                  <div className="recordings-list">
-                    {shownMeetings.map((meeting) => (
-                      <MeetingCard
-                        key={meeting.id}
-                        meeting={meeting}
-                        highlighted={highlight === `m:${meeting.id}`}
-                        clashes={conflicts.get(`m:${meeting.id}`)}
-                        onJoin={join}
-                        onEdit={(m) => setEditing({ meeting: m })}
-                        onCancel={cancelMeeting}
-                        onDuplicate={(m) => setEditing({ template: m, day: fromKey(day) >= fromKey(today) ? addDays(fromKey(day), 7) : addDays(new Date(), 1), at: null })}
-                      />
-                    ))}
-                  </div>
+                  <div className="mc-desktop-only"><TimeGrid days={[pickedDate]} byDay={byDay} day={day} today={today} conflicts={conflicts} onPick={pick} onCreate={create} onOpenEvent={openEvent} /></div>
+                  <div className="mc-phone-only"><DayList date={pickedDate} events={events} allEvents={allEvents} conflicts={conflicts} onOpenEvent={openEvent} onCreate={create} /></div>
                 </>
               )}
-
-              {shownRecordings.length > 0 && (
-                <>
-                  <h3 className="recordings-section">Recordings</h3>
-                  <div className="recordings-list">
-                    {shownRecordings.map((item) => (
-                      <RecordingCard
-                        key={item.id}
-                        item={item}
-                        playing={playing === item.id}
-                        highlighted={highlight === `r:${item.id}`}
-                        onPlay={() => setPlaying(playing === item.id ? null : item.id)}
-                        onDelete={() => removeRecording(item)}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-
-              {upcoming.length > 0 && (
-                <section className="upcoming" aria-label="Coming up">
-                  <h2>Coming up</h2>
-                  <ul>
-                    {upcoming.slice(0, 5).map((meeting) => (
-                      <li key={meeting.id}>
-                        <button type="button" onClick={() => { const date = new Date(meeting.startAt); setCursor(date); openEvent({ kind: 'meeting', id: `m:${meeting.id}`, start: date, item: meeting }); }}>
-                          <strong>{meeting.title}</strong>
-                          <span>{new Date(meeting.startAt).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
-                          <em className={meeting.live ? 'live' : ''}>{startsIn(meeting)}</em>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-            </aside>
-          </div>
-        )}
-      </main>
+              {view === 'agenda' && <AgendaView events={events} today={today} query={needle} onOpenDay={openDay} onOpenEvent={openEvent} />}
+            </div>
+          </main>
+        </div>
+      )}
 
       {data && meetings && !editing && (
-        <button type="button" className="cal-fab" onClick={() => create(day && day >= today ? fromKey(day) : new Date())} aria-label="Schedule a meeting">
-          <Icon name="add" size={22} /> Schedule
-        </button>
+        <div className="mc-bottom">
+          <button type="button" className="btn btn-primary" disabled={starting} onClick={startNow}><Icon name="videocam" size={19} /> New meeting</button>
+          <button type="button" className="btn btn-outline" onClick={askForCode} aria-label="Join with code"><Icon name="keyboard" size={19} /><span className="mc-long">Join with code</span><span className="mc-short">Join</span></button>
+          <button type="button" className="btn btn-outline mc-bottom-add" aria-label="Schedule a meeting" onClick={() => create(day && day >= today ? fromKey(day) : new Date())}><Icon name="event" size={19} /></button>
+        </div>
+      )}
+
+      {open && (
+        <EventPopover anchor={selected.anchor} label={`${open.title} details`} onClose={closeDetails}>
+          {open.kind === 'meeting' ? (
+            <MeetingDetail
+              meeting={open.item}
+              clashes={conflicts.get(open.id)}
+              onClose={closeDetails}
+              onJoin={join}
+              onEdit={(m) => { setSelected(null); setEditing({ meeting: m }); }}
+              onCancel={cancelMeeting}
+              onDuplicate={(m) => { setSelected(null); setEditing({ template: m, day: fromKey(dayKey(new Date(m.startAt))) >= fromKey(today) ? addDays(new Date(m.startAt), 7) : addDays(new Date(), 1), at: null }); }}
+            />
+          ) : (
+            <RecordingDetail item={open.item} onClose={closeDetails} onDelete={() => removeRecording(open.item)} />
+          )}
+        </EventPopover>
       )}
 
       {editing && (
@@ -950,9 +1071,10 @@ export default function Recordings({ me, onClose }) {
           template={editing.template || null}
           meeting={editing.meeting || null}
           onSaved={saved}
-          onClose={() => setEditing(null)}
+          onClose={closeEditor}
         />
       )}
     </div>
   );
 }
+

@@ -8,7 +8,7 @@ import { persistence } from '../persist.js';
 import { personOf, teammates } from '../team.js';
 import { normalize } from '../aliases.js';
 import {
-  between, createGroup, createNote, groupFor, groupUnread, groups, groupView, inGroup, leaveGroup, markGroupRead, markNotesRead, noteView, notes, updateGroup,
+  between, createGroup, createNote, deleteNote, groupFor, reactToNote, groupUnread, groups, groupView, inGroup, leaveGroup, markGroupRead, markNotesRead, noteView, notes, updateGroup,
 } from '../instant-notes.js';
 import { onlinePeople } from '../live.js';
 
@@ -74,6 +74,16 @@ router.get('/', (req, res) => {
 /** Send a note: { to | group, text, files: [{ name, type, data (base64) }] }. */
 router.post('/', async (req, res) => {
   res.status(201).json(await createNote(personOf(req.user), req.body ?? {}));
+});
+
+/** React to a note ({ emoji }), or take the reaction back. */
+router.post('/:id/react', (req, res) => {
+  res.json(reactToNote(personOf(req.user), req.params.id, String(req.body?.emoji || '')));
+});
+
+/** Delete one of my own notes for everyone. */
+router.delete('/:id', (req, res) => {
+  res.json(deleteNote(personOf(req.user), req.params.id));
 });
 
 /** Mark notes as read: from a teammate ({ with }) or in a group ({ group }). */

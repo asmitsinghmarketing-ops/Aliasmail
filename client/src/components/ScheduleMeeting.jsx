@@ -4,9 +4,11 @@ import { localDate, localTime } from '../format.js';
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { meetingLink } from '../calls.js';
+import Avatar from './Avatar.jsx';
 import Icon from './Icon.jsx';
 
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
+const QUICK = [15, 30, 45, 60];
 const durationLabel = (m) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`);
 
 /** The next half hour, on `day` if that's later than now. */
@@ -90,76 +92,113 @@ export default function ScheduleMeeting({ me, day, at, template, meeting, onSave
     }
   }
 
+  const begins = new Date(`${form.date}T${form.time}`);
+  const ends = Number.isNaN(begins.getTime()) ? null : new Date(begins.getTime() + Number(form.durationMin) * 60_000);
+  const clock = (date) => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const summary = ends
+    ? `${begins.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })} · ${clock(begins)} – ${clock(ends)}${form.invitees.size ? ` · ${form.invitees.size} invited` : ''}`
+    : 'Pick a date and time';
+  const quick = QUICK.includes(Number(form.durationMin));
+
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal meet-modal schedule-modal" role="dialog" aria-modal="true" aria-labelledby="schedule-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="modal-head">
-          <h2 className="meet-title" id="schedule-dialog-title">
-            <span className="meet-badge"><Icon name="event" size={20} /></span>
-            {saved ? 'Meeting scheduled' : meeting ? 'Change meeting' : 'Schedule a meeting'}
-          </h2>
+    <div className="modal-backdrop sm-backdrop" onMouseDown={onClose}>
+      <div className="sm-dialog" role="dialog" aria-modal="true" aria-labelledby="schedule-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="sm-head">
+          <span className={`sm-badge ${saved ? 'done' : ''}`}><Icon name={saved ? 'check' : 'event'} size={20} /></span>
+          <div>
+            <h2 id="schedule-dialog-title">{saved ? 'Meeting scheduled' : meeting ? 'Change meeting' : 'Schedule a meeting'}</h2>
+            <p>{saved ? saved.title : meeting ? 'Invited teammates are told about the change.' : 'Pick a time and who to invite.'}</p>
+          </div>
           <button className="icon-btn" type="button" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
-        </div>
+        </header>
 
         {saved ? (
-          <div className="meet-done">
-            <p className="muted small">
-              {new Date(saved.startAt).toLocaleString([], { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}
-              {saved.invitees.length ? ` · ${saved.invitees.length} teammate${saved.invitees.length === 1 ? '' : 's'} told` : ''}
-            </p>
-            <p className="small">Send this link to anyone else. Teammates come straight in; you’ll be asked before guests join.</p>
-            <div className="meet-link">
-              <Icon name="link" size={18} />
-              <span className="grow" title={meetingLink(saved.code)}>{meetingLink(saved.code).replace(/^https?:\/\//, '')}</span>
-              <button type="button" className="icon-btn" title="Copy link" aria-label="Copy meeting link" onClick={copy}><Icon name={copied ? 'check' : 'copy'} size={18} /></button>
+          <div className="sm-body sm-done">
+            <div className="sm-when-card">
+              <Icon name="event" size={20} />
+              <div>
+                <strong>{new Date(saved.startAt).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })}</strong>
+                <span>{clock(new Date(saved.startAt))} – {clock(new Date(saved.endAt))}{saved.invitees.length ? ` · ${saved.invitees.length} teammate${saved.invitees.length === 1 ? '' : 's'} told` : ''}</span>
+              </div>
             </div>
-            {copied && <span className="muted small">Link copied</span>}
+            <div className="sm-field">
+              <span className="sm-label">Meeting link</span>
+              <div className="sm-link">
+                <Icon name="link" size={18} />
+                <span title={meetingLink(saved.code)}>{meetingLink(saved.code).replace(/^https?:\/\//, '')}</span>
+                <button type="button" className="btn btn-outline" onClick={copy}><Icon name={copied ? 'check' : 'copy'} size={16} /> {copied ? 'Copied' : 'Copy'}</button>
+              </div>
+              <span className="sm-hint">Send it to anyone else. Teammates come straight in; you’re asked before guests join.</span>
+            </div>
             {error && <div className="alert" role="alert">{error}</div>}
-            <div className="meet-actions">
-              {onOpenMeetings && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onOpenMeetings(); }}><Icon name="event" size={18} /> Open Meet</button>}
-              {onEmail && <button type="button" className="btn btn-outline" onClick={() => onEmail({ ...saved, link: meetingLink(saved.code) })}><Icon name="mail" size={18} /> Send by email</button>}
+            <footer className="sm-foot">
+              {onOpenMeetings && <button type="button" className="btn btn-outline" onClick={() => { onClose(); onOpenMeetings(); }}><Icon name="event" size={17} /> Open Meet</button>}
+              {onEmail && <button type="button" className="btn btn-outline" onClick={() => onEmail({ ...saved, link: meetingLink(saved.code) })}><Icon name="mail" size={17} /> Send by email</button>}
+              <span className="sm-grow" />
               <button type="button" className="btn btn-primary" onClick={onClose}>Done</button>
-            </div>
+            </footer>
           </div>
         ) : (
-          <form className="meet-form" onSubmit={submit}>
-            <label>
-              Title
-              <input type="text" value={form.title} onChange={set('title')} placeholder="Meeting" maxLength={120} autoFocus />
+          <form className="sm-body" onSubmit={submit}>
+            <label className="sm-field">
+              <span className="sm-label">Title</span>
+              <input className="sm-title" type="text" value={form.title} onChange={set('title')} placeholder="Add a title, e.g. Weekly sync" maxLength={120} autoFocus />
             </label>
-            <div className="meet-row">
-              <label>Date<input type="date" value={form.date} min={meeting ? undefined : localDate(new Date())} onChange={set('date')} required /></label>
-              <label>Time<input type="time" value={form.time} onChange={set('time')} required /></label>
-              <label>
-                Length
-                <select value={form.durationMin} onChange={set('durationMin')}>
-                  {DURATIONS.map((m) => <option key={m} value={m}>{durationLabel(m)}</option>)}
-                </select>
+
+            <div className="sm-when">
+              <label className="sm-field">
+                <span className="sm-label">Date</span>
+                <input type="date" value={form.date} min={meeting ? undefined : localDate(new Date())} onChange={set('date')} required />
+              </label>
+              <label className="sm-field">
+                <span className="sm-label">Start</span>
+                <input type="time" value={form.time} onChange={set('time')} required />
               </label>
             </div>
-            <div className="schedule-invitees">
-              <span className="meet-label">Invite teammates</span>
-              {!team ? <span className="muted small">Getting your team…</span> : !team.length ? <span className="muted small">No teammates to invite. Send the link instead.</span> : (
-                <div className="schedule-people">
-                  {team.map((person) => (
-                    <label key={person.address} className={`schedule-person ${form.invitees.has(person.address) ? 'on' : ''}`}>
-                      <input type="checkbox" checked={form.invitees.has(person.address)} onChange={() => toggle(person.address)} />
-                      <span>{person.name || person.address}</span>
-                    </label>
-                  ))}
+
+            <div className="sm-field">
+              <span className="sm-label" id="sm-length">Length</span>
+              <div className="sm-lengths" role="group" aria-labelledby="sm-length">
+                {QUICK.map((m) => (
+                  <button key={m} type="button" className={Number(form.durationMin) === m ? 'on' : ''} aria-pressed={Number(form.durationMin) === m} onClick={() => setForm((current) => ({ ...current, durationMin: m }))}>{durationLabel(m)}</button>
+                ))}
+                <select aria-label="A longer meeting" className={quick ? '' : 'on'} value={quick ? '' : form.durationMin} onChange={set('durationMin')}>
+                  <option value="" disabled>Longer…</option>
+                  {DURATIONS.filter((m) => !QUICK.includes(m)).map((m) => <option key={m} value={m}>{durationLabel(m)}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="sm-field">
+              <span className="sm-label">Invite teammates {form.invitees.size > 0 && <em>{form.invitees.size} selected</em>}</span>
+              {!team ? <span className="sm-hint">Getting your team…</span> : !team.length ? <span className="sm-hint">No teammates to invite. Share the link instead.</span> : (
+                <div className="sm-people">
+                  {team.map((person) => {
+                    const on = form.invitees.has(person.address);
+                    return (
+                      <button key={person.address} type="button" className={`sm-person ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => toggle(person.address)}>
+                        <Avatar url={person.avatarUrl} person={person} color={person.color} size="xs" />
+                        <span>{person.name || person.address}</span>
+                        <Icon name={on ? 'check' : 'add'} size={15} />
+                      </button>
+                    );
+                  })}
                 </div>
               )}
-              <span className="muted small">They’re told now and reminded 10 minutes before. Anyone else can join with the link.</span>
+              <span className="sm-hint">They’re told now and reminded 10 minutes before. Anyone else can join with the link.</span>
             </div>
-            <label>
-              Note
-              <textarea value={form.description} onChange={set('description')} rows={3} maxLength={2000} placeholder="Agenda, notes (optional)" />
+
+            <label className="sm-field">
+              <span className="sm-label">Note <em>optional</em></span>
+              <textarea value={form.description} onChange={set('description')} rows={3} maxLength={2000} placeholder="Agenda, links, what to prepare…" />
             </label>
-            {error && <div className="alert">{error}</div>}
-            <div className="meet-actions">
+
+            {error && <div className="alert" role="alert">{error}</div>}
+            <footer className="sm-foot">
+              <span className="sm-summary"><Icon name="clock" size={16} />{summary}</span>
               <button type="button" className="btn btn-outline" onClick={onClose}>Cancel</button>
               <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : meeting ? 'Save changes' : 'Schedule'}</button>
-            </div>
+            </footer>
           </form>
         )}
       </div>

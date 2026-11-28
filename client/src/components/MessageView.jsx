@@ -390,7 +390,6 @@ export default function MessageView({ aside, phoneMore,
                 ),
             )}
             {head.trashed && <span className="chip grey">Trash</span>}
-            {head.kind === 'inbox' && head.archived === false && head.trashed === false && <span className="chip grey">Inbox</span>}
             {head.via === 'cc' && <span className="chip" style={{ '--chip': 'var(--violet)' }}>You were CC'd</span>}
             {head.via === 'bcc' && <span className="chip" style={{ '--chip': 'var(--orange)' }}>You were BCC'd</span>}
             </div>

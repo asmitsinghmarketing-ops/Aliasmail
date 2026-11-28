@@ -15,6 +15,7 @@ export const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const KEEP = 10_000; // notes kept in all; the oldest go first
 const MAX_GROUP = 50; // people in one group
 const MAX_GROUP_NAME = 60;
+export const REACTIONS = ['👍', '❤️', '😂', '🎉', '✅'];
 
 export const notes = () => (db().instantNotes ||= []);
 export const groups = () => (db().noteGroups ||= []);
@@ -27,13 +28,56 @@ export const noteView = (n) => ({
   from: n.from,
   to: n.to || null,
   group: n.group || null,
-  text: n.text,
+  text: n.deleted ? '' : n.text,
   at: n.at,
+  deleted: Boolean(n.deleted),
+  replyTo: n.replyTo || null,
+  reactions: n.deleted ? {} : n.reactions || {},
   // One to one: read by the other person. In a group: who has read it (not the sender).
   read: n.group ? (n.readBy || []).length > 0 : Boolean(n.readAt),
   ...(n.group && { readBy: n.readBy || [] }),
-  files: (n.files || []).map(({ id, name, type, size }) => ({ id, name, type, size })),
+  files: n.deleted ? [] : (n.files || []).map(({ id, name, type, size }) => ({ id, name, type, size })),
 });
+
+/** Who can see a note: the two people it's between, or the group's members. */
+const audience = (n) => (n.group ? groups().find((g) => g.id === n.group)?.members || [] : [n.from, n.to]);
+
+/** A note `me` can see, or a 404. */
+function visibleNote(me, id) {
+  const note = notes().find((n) => n.id === id);
+  if (!note || !audience(note).includes(me)) throw new HttpError(404, 'Note not found');
+  return note;
+}
+
+/** Add or take back an emoji reaction. Everyone in the conversation sees it change. */
+export function reactToNote(me, id, emoji) {
+  if (!REACTIONS.includes(emoji)) throw new HttpError(400, 'Choose one of the reactions');
+  const note = visibleNote(me, id);
+  if (note.deleted) throw new HttpError(400, 'This note was deleted');
+  const reactions = (note.reactions ||= {});
+  const who = reactions[emoji] || [];
+  reactions[emoji] = who.includes(me) ? who.filter((a) => a !== me) : [...who, me];
+  if (!reactions[emoji].length) delete reactions[emoji];
+  save();
+  noteEvents.emit('note-update', audience(note), noteView(note));
+  return noteView(note);
+}
+
+/** Delete one of my own notes for everyone: its text and files go; a "deleted" marker stays. */
+export function deleteNote(me, id) {
+  const note = visibleNote(me, id);
+  if (note.from !== me) throw new HttpError(403, 'You can only delete your own notes');
+  if (!note.deleted) {
+    for (const f of note.files || []) persistence().deleteFile(f.id).catch(() => {});
+    note.deleted = true;
+    note.text = '';
+    note.files = [];
+    note.reactions = {};
+    save();
+    noteEvents.emit('note-update', audience(note), noteView(note));
+  }
+  return noteView(note);
+}
 
 export const groupView = (g) => ({ id: g.id, name: g.name, members: g.members, createdBy: g.createdBy, createdAt: g.createdAt });
 
@@ -126,6 +170,15 @@ export async function createNote(me, input = {}) {
   const fileInput = Array.isArray(input.files) ? input.files : [];
   if (fileInput.length > MAX_FILES) throw new HttpError(400, `Up to ${MAX_FILES} files in one note`);
   if (!text && !fileInput.length) throw new HttpError(400, 'Write a note or attach a file');
+  // A reply quotes a note from the same conversation, kept short so the quote stays readable.
+  let replyTo = null;
+  if (input.replyTo) {
+    const quoted = notes().find((n) => n.id === String(input.replyTo));
+    const same = quoted && (group ? quoted.group === group.id : between(me, to)(quoted));
+    if (!same || quoted.deleted) throw new HttpError(400, 'That note can’t be replied to');
+    const quotedText = quoted.text || (quoted.files?.length ? `Attachment: ${quoted.files.map((f) => f.name).join(', ')}` : '');
+    replyTo = { id: quoted.id, from: quoted.from, text: quotedText.slice(0, 160) };
+  }
 
   const files = [];
   for (const f of fileInput) {
@@ -139,8 +192,8 @@ export async function createNote(me, input = {}) {
   }
 
   const note = group
-    ? { id: crypto.randomUUID(), from: me, group: group.id, text, files, at: new Date().toISOString(), readBy: [] }
-    : { id: crypto.randomUUID(), from: me, to, text, files, at: new Date().toISOString(), readAt: null };
+    ? { id: crypto.randomUUID(), from: me, group: group.id, text, files, at: new Date().toISOString(), readBy: [], ...(replyTo && { replyTo }) }
+    : { id: crypto.randomUUID(), from: me, to, text, files, at: new Date().toISOString(), readAt: null, ...(replyTo && { replyTo }) };
   notes().push(note);
   // Oldest notes go first once there are too many; their files go with them.
   for (const old of notes().splice(0, Math.max(0, notes().length - KEEP))) {

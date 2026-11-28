@@ -433,6 +433,7 @@ const Tile = memo(function Tile({ tile, size, compact, onPin, pinned, hug }) {
           </span>
         )}
       {status && <span className="nx-tile-status">{ringing && <i />}{status}</span>}
+      {!status && speaking && !compact && !isMe && <span className="nx-tile-speaking" aria-hidden="true">Speaking</span>}
       {hand && <span className="nx-tile-hand" title="Hand raised"><Icon name="hand" size={16} /></span>}
       {reaction && <span key={reaction.key} className="nx-tile-reaction" aria-hidden="true">{reaction.emoji}</span>}
       <span className="nx-tile-name">
@@ -803,6 +804,8 @@ const SHORTCUTS = [
   [`${MOD} + Alt + C`, 'Open or close chat'],
   [`${MOD} + Alt + P`, 'Open or close people'],
   ['F', 'Full screen'],
+  ['P', 'Pop out video'],
+  ['N', 'Open or close my notes'],
   ['Esc', 'Close a panel or menu'],
 ];
 
@@ -833,6 +836,67 @@ function InfoPanel({ state }) {
         </ul>
       </section>
     </>
+  );
+}
+
+/** Private notes for this meeting, kept on this device only, so nobody else in the call sees them. */
+function NotesPanel({ state }) {
+  const { call } = state;
+  const key = `nextspace:call-notes:${call.code || call.id || 'call'}`;
+  const [text, setText] = useState(() => { try { return localStorage.getItem(key) || ''; } catch { return ''; } });
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try { if (text) localStorage.setItem(key, text); else localStorage.removeItem(key); } catch { /* private window */ }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [key, text]);
+  const heading = `${call.title || 'Meeting'} · ${new Date().toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' })}`;
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* no clipboard */ }
+  };
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([`${heading}\n\n${text}\n`], { type: 'text/plain;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(call.title || 'meeting').replace(/[^\w\- ]+/g, '').trim() || 'meeting'} notes.txt`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const stamp = () => setText((current) => `${current}${current && !current.endsWith('\n') ? '\n' : ''}[${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}] `);
+  return (
+    <div className="nx-notes">
+      <p className="nx-note">Only you can see these. They stay on this device for this meeting.</p>
+      <textarea
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder="Decisions, action items, things to follow up…"
+        aria-label="Your meeting notes"
+        maxLength={20000}
+        autoFocus
+      />
+      <div className="nx-notes-actions">
+        <button type="button" className="nx-btn small" onClick={stamp} title="Add the current time"><Icon name="clock" size={16} />Time</button>
+        <span className="nx-notes-spacer" />
+        <button type="button" className="nx-btn small" disabled={!text} onClick={copy}><Icon name={copied ? 'check' : 'copy'} size={16} />{copied ? 'Copied' : 'Copy'}</button>
+        <button type="button" className="nx-btn small" disabled={!text} onClick={download}><Icon name="download" size={16} />Save</button>
+      </div>
+    </div>
+  );
+}
+
+/** The meeting code in the control bar: one click copies the whole meeting link. */
+function CodeCopy({ code }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(meetingLink(code)); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* no clipboard */ }
+  };
+  return (
+    <button type="button" className={`nx-code-copy ${copied ? 'done' : ''}`} onClick={copy} title="Copy the meeting link">
+      <span>{copied ? 'Link copied' : code}</span><Icon name={copied ? 'check' : 'copy'} size={15} />
+    </button>
   );
 }
 
@@ -903,7 +967,7 @@ function DevicesPanel({ state }) {
   );
 }
 
-const PANELS = { people: 'People', chat: 'In-call messages', info: 'Meeting details', devices: 'Settings' };
+const PANELS = { people: 'People', chat: 'In-call messages', notes: 'My notes', info: 'Meeting details', devices: 'Settings' };
 
 /* ---------------------------------- hints ---------------------------------- */
 
@@ -997,6 +1061,23 @@ export default function CallRoom({ state }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [talking, setTalking] = useState(false); // holding Space to talk
   const [recordError, setRecordError] = useState('');
+  const [tip, setTip] = useState('');
+  const pipSupported = typeof document !== 'undefined' && document.pictureInPictureEnabled && !nativeCallsAvailable();
+  // Pop out: the main picture (presenter, else whoever is talking) floats above every other window.
+  const popOut = async () => {
+    setMenu(null);
+    try {
+      if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return; }
+      const video = [...document.querySelectorAll('.nx-screen video, .nx-tile.speaking video, .nx-focus video, .nx-stage .nx-tile video')]
+        .find((node) => node.srcObject && node.readyState >= 2 && node.videoWidth);
+      if (!video) { setTip('Nobody has their camera or screen on to pop out yet.'); return; }
+      await video.requestPictureInPicture();
+    } catch {
+      setTip('This browser couldn’t pop out the video.');
+    }
+  };
+  const popOutRef = useRef(popOut);
+  popOutRef.current = popOut;
   const [confirmRecord, setConfirmRecord] = useState(false);
   const [recordStatus, setRecordStatus] = useState(null); // null | 'saving' | 'saved'
   const [mobileShareHelp, setMobileShareHelp] = useState(false);
@@ -1179,6 +1260,8 @@ export default function CallRoom({ state }) {
       if (mod && event.altKey && event.code === 'KeyP') { event.preventDefault(); togglePanel('people'); return; }
       if (typing(event.target)) return;
       if (key === 'f' && !mod && !event.altKey && canFullscreen) { toggleFullscreen(); return; }
+      if (key === 'p' && !mod && !event.altKey && pipSupported) { void popOutRef.current(); return; }
+      if (key === 'n' && !mod && !event.altKey) { event.preventDefault(); togglePanel('notes'); return; }
       if (event.code === 'Space' && !event.repeat && !event.target?.closest?.('button, a')) {
         const now = latest.current;
         if (now.muted && now.micAvailable) {
@@ -1577,6 +1660,7 @@ export default function CallRoom({ state }) {
     );
   }
   if (state.sharing) toasts.push(<div key="sharing" className="nx-toast live" role="status"><Icon name="screenShare" size={18} /><span>You’re presenting to everyone</span><button type="button" className="nx-btn small" onClick={toggleScreen}>Stop presenting</button></div>);
+  if (tip) toasts.push(<div key="tip" className="nx-toast" role="status"><Icon name="info" size={18} /><span>{tip}</span><button type="button" className="nx-icon-btn" aria-label="Dismiss" onClick={() => setTip('')}><Icon name="close" size={17} /></button></div>);
   if (talking) toasts.push(<div key="ptt" className="nx-toast live" role="status"><Icon name="mic" size={18} /><span>Talking — release Space to mute</span></div>);
 
   return (
@@ -1592,16 +1676,16 @@ export default function CallRoom({ state }) {
 
       <header className="nx-top">
         <div className="nx-top-meta">
-          <span className={`nx-live ${peers.length ? 'on' : ''}`} aria-hidden="true"><i /></span>
+          {!state.guest && <button type="button" className="nx-top-btn nx-only-mobile nx-top-min" aria-label="Make the call small" title="Make the call small" onClick={() => setMinimized(true)}><Icon name="expandMore" size={22} /></button>}
           <div className="nx-title">
             <strong>{title}</strong>
             <span>
-              <Elapsed since={state.startedAt} fallback={call.video ? 'Video call' : 'Voice call'} />
-              <em>·</em>{call.peers.length} {call.peers.length === 1 ? 'person' : 'people'}
+              <span className={`nx-timer ${peers.length ? 'on' : ''}`}><i /><Elapsed since={state.startedAt} fallback={call.video ? 'Video call' : 'Voice call'} /></span>
+              {call.peers.length} {call.peers.length === 1 ? 'person' : 'people'}
               {call.code && <><em>·</em><Icon name="lock" size={12} /> Protected</>}
               {state.networkQuality !== 'unknown' && (
-                <span className={`nx-quality ${state.networkQuality}`} title={`Connection quality: ${state.networkQuality}`}>
-                  <i />{state.networkQuality}
+                <span className={`nx-quality ${state.networkQuality}`} title={`Connection: ${state.networkQuality}`} aria-label={`Connection ${state.networkQuality}`}>
+                  <i /><i /><i /><i />
                 </span>
               )}
             </span>
@@ -1620,7 +1704,7 @@ export default function CallRoom({ state }) {
           <div className="nx-segment nx-only-desktop" role="radiogroup" aria-label="Layout">
             {layoutChoices.map(([value, icon, label]) => (
               <button key={value} type="button" role="radio" aria-checked={layout === value && !pinned} className={layout === value && !pinned ? 'on' : ''} title={`${label} layout`} aria-label={`${label} layout`} onClick={() => setLayout(value)}>
-                <Icon name={icon} size={18} />
+                <Icon name={icon} size={17} /><span>{label}</span>
               </button>
             ))}
           </div>
@@ -1628,7 +1712,7 @@ export default function CallRoom({ state }) {
           <button type="button" className="nx-top-btn nx-only-mobile" aria-label="People" title="People" onClick={() => togglePanel('people')}>
             <Icon name="people" size={20} />{peopleBadge > 0 && <span className="nx-badge">{peopleBadge}</span>}
           </button>
-          {!state.guest && <button type="button" className="nx-top-btn" aria-label="Keep working (make the call small)" title="Keep working (make the call small)" onClick={() => { setMinimized(true); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); }}><Icon name="minimize" size={20} /></button>}
+          {!state.guest && <button type="button" className="nx-top-btn nx-only-desktop" aria-label="Keep working (make the call small)" title="Keep working (make the call small)" onClick={() => { setMinimized(true); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); }}><Icon name="minimize" size={20} /></button>}
         </div>
       </header>
 
@@ -1673,7 +1757,15 @@ export default function CallRoom({ state }) {
             <aside className="nx-panel" aria-label={PANELS[panel]}>
               <span className="nx-sheet-grip" aria-hidden="true" />
               <header className="nx-panel-head">
-                <h2>{PANELS[panel]}</h2>
+                {panel === 'devices' ? <h2>{PANELS[panel]}</h2> : (
+                  <div className="nx-tabs" role="tablist" aria-label="Side panel">
+                    {[['people', `People · ${call.peers.length}`], ['chat', 'Chat'], ['notes', 'Notes'], ['info', 'Details']].map(([name, label]) => (
+                      <button key={name} type="button" role="tab" aria-selected={panel === name} className={panel === name ? 'on' : ''} onClick={() => setPanel(name)}>
+                        {label}{name === 'people' && lobby.length > 0 && <span className="nx-tab-dot" />}{name === 'chat' && panel !== 'chat' && state.unread > 0 && <span className="nx-tab-dot" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <button type="button" className="nx-icon-btn" aria-label="Close" onClick={() => setPanel(null)}><Icon name="close" size={20} /></button>
               </header>
               <div className={`nx-panel-body ${panel === 'chat' ? 'flush' : ''}`}>
@@ -1681,6 +1773,7 @@ export default function CallRoom({ state }) {
                 {panel === 'chat' && <ChatPanel state={state} />}
                 {panel === 'info' && <InfoPanel state={state} />}
                 {panel === 'devices' && <DevicesPanel state={state} />}
+                {panel === 'notes' && <NotesPanel state={state} />}
               </div>
             </aside>
           </>
@@ -1725,25 +1818,22 @@ export default function CallRoom({ state }) {
       </div>
 
       <footer className="nx-bar">
-        <div className="nx-bar-info nx-only-desktop" aria-hidden="true">
+        <div className="nx-bar-info nx-only-desktop">
           <strong><Clock /></strong>
-          <span>{call.code || (call.video ? 'Video call' : 'Voice call')}</span>
+          {call.code ? <CodeCopy code={call.code} /> : <span>{call.video ? 'Video call' : 'Voice call'}</span>}
         </div>
 
         <div className="nx-dock" ref={menus}>
           <DockButton icon={micOff ? 'micOff' : 'mic'} label={micLabel} text={micOff ? 'Unmute' : 'Mic'} state={micOff ? 'off' : ''} onClick={toggleMute} aria-pressed={micOff} />
           <DockButton icon={state.cameraOn ? 'videocam' : 'videocamOff'} label={state.cameraOn ? `Turn camera off (${MOD} + E)` : `Turn camera on (${MOD} + E)`} text="Camera" state={state.cameraOn ? '' : 'off'} onClick={toggleCamera} aria-pressed={!state.cameraOn} />
+          <span className="nx-ctl-sep nx-only-desktop" aria-hidden="true" />
           <DockButton icon="screenShare" label={state.sharing ? 'Stop presenting' : canShareScreen() ? 'Share your screen' : 'Present a screen capture'} text={state.sharing ? 'Stop' : canShareScreen() ? 'Share' : 'Present'} state={state.sharing ? 'on' : ''} onClick={share} aria-pressed={state.sharing} />
           <DockButton icon="mood" label="Send a reaction" text="React" className="nx-only-desktop" state={menu === 'react' ? 'on' : ''} onClick={() => setMenu(menu === 'react' ? null : 'react')} aria-expanded={menu === 'react'} />
           <DockButton icon="hand" label={state.hand ? 'Lower hand' : `Raise hand (${MOD} + Alt + H)`} text={state.hand ? 'Lower' : 'Raise'} state={state.hand ? 'on hand' : ''} className="nx-only-desktop" onClick={toggleHand} aria-pressed={state.hand} />
-          <DockButton icon="chat" label="Chat" state={panel === 'chat' ? 'on' : ''} badge={panel === 'chat' ? 0 : state.unread} className="nx-only-mobile" onClick={() => togglePanel('chat')} />
+          <DockButton icon="chat" label="Chat" text="Chat" state={panel === 'chat' ? 'on' : ''} badge={panel === 'chat' ? 0 : state.unread} className="nx-only-mobile" onClick={() => togglePanel('chat')} />
           <DockButton icon="moreVert" label="More options" text="More" state={menu === 'more' ? 'on' : ''} badge={0} onClick={() => setMenu(menu === 'more' ? null : 'more')} aria-expanded={menu === 'more'} />
           <span className="nx-ctl-sep nx-only-desktop" aria-hidden="true" />
-          <DockButton icon="info" label="Meeting details" text="Details" state={panel === 'info' ? 'on' : ''} className="flat nx-only-desktop" onClick={() => togglePanel('info')} />
-          <DockButton icon="people" label={`People (${MOD} + Alt + P)`} text="People" state={panel === 'people' ? 'on' : ''} className="flat nx-only-desktop" badge={peopleBadge} onClick={() => togglePanel('people')} />
-          <DockButton icon="chat" label={`Chat (${MOD} + Alt + C)`} text="Chat" state={panel === 'chat' ? 'on' : ''} className="flat nx-only-desktop" badge={panel === 'chat' ? 0 : state.unread} onClick={() => togglePanel('chat')} />
-          <span className="nx-ctl-sep nx-only-desktop" aria-hidden="true" />
-          <DockButton icon="callEnd" label="Leave call" state="leave" wide="Leave" onClick={hangUp} />
+          <DockButton icon="callEnd" label="Leave call" state="leave" wide="Leave" text="Leave" onClick={hangUp} />
 
           {menu === 'react' && (
             <div className="nx-popover nx-react-pop" role="menu" aria-label="Reactions">
@@ -1765,6 +1855,8 @@ export default function CallRoom({ state }) {
                 <button type="button" onClick={() => { setPanel('info'); setMenu(null); }}><Icon name="info" size={22} /><span>Details</span></button>
                 <button type="button" onClick={() => { setPanel('people'); setMenu(null); }}><Icon name="people" size={22} /><span>People</span>{peopleBadge > 0 && <span className="nx-badge">{peopleBadge}</span>}</button>
               </div>
+              <MenuItem icon="edit" label="My notes" className="nx-only-mobile" onClick={() => { setPanel('notes'); setMenu(null); }} />
+              {pipSupported && <MenuItem icon="expand" label="Pop out video" hint="P" className="nx-only-desktop" onClick={popOut} />}
               <MenuItem icon="image" label="Present a photo or screenshot" onClick={() => { setMenu(null); picturePicker.current?.click(); }} />
               {recordingSupported() && !state.guest && <MenuItem icon="record" label={state.recording ? 'Stop recording' : 'Record meeting'} className={state.recording ? 'danger' : ''} onClick={toggleRecording} />}
               <div className="nx-menu-label">Layout</div>
@@ -1778,6 +1870,12 @@ export default function CallRoom({ state }) {
           )}
         </div>
 
+        <div className="nx-bar-side nx-only-desktop">
+          <button type="button" className={`nx-side-btn ${panel === 'info' ? 'on' : ''}`} aria-label="Meeting details" title="Meeting details" onClick={() => togglePanel('info')}><Icon name="info" size={20} /></button>
+          <button type="button" className={`nx-side-btn ${panel === 'people' ? 'on' : ''}`} aria-label={`People (${MOD} + Alt + P)`} title={`People (${MOD} + Alt + P)`} onClick={() => togglePanel('people')}><Icon name="people" size={20} />{peopleBadge > 0 && <span className="nx-badge warn">{peopleBadge}</span>}</button>
+          <button type="button" className={`nx-side-btn ${panel === 'notes' ? 'on' : ''}`} aria-label="My notes (N)" title="My notes (N)" onClick={() => togglePanel('notes')}><Icon name="edit" size={19} /></button>
+          <button type="button" className={`nx-side-btn ${panel === 'chat' ? 'on' : ''}`} aria-label={`Chat (${MOD} + Alt + C)`} title={`Chat (${MOD} + Alt + C)`} onClick={() => togglePanel('chat')}><Icon name="chat" size={20} />{panel !== 'chat' && state.unread > 0 && <span className="nx-badge">{state.unread > 9 ? '9+' : state.unread}</span>}</button>
+        </div>
       </footer>
     </div>
   );

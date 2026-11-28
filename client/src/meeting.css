@@ -379,7 +379,7 @@
 .nx-ctl.on:hover:not(:disabled) { background: #fff; }
 .nx-ctl.off .nx-ctl-label, .nx-ctl.on .nx-ctl-label { color: inherit; }
 .nx-ctl.on.hand { background: var(--nx-amber); color: #2a1a00; }
-.nx-ctl.leave { width: 68px; height: 48px; padding: 0; border-radius: 24px; background: var(--nx-danger); color: #fff; font-size: 15px; font-weight: 700; }
+.nx-ctl.leave { width: auto; min-width: 68px; height: 48px; gap: 8px; padding: 0 20px 0 16px; border-radius: 24px; background: var(--nx-danger); color: #fff; font-size: 15px; font-weight: 700; }
 .nx-ctl.leave:hover:not(:disabled) { background: var(--nx-danger-strong); }
 .nx-ctl.flat { background: transparent; }
 .nx-ctl.flat:hover:not(:disabled) { background: var(--nx-surface-3); }
@@ -402,7 +402,7 @@
 .nx-menu-check { color: #8fb0ff; }
 .nx-menu-label { padding: 10px 12px 4px; color: var(--nx-muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .nx-menu-sep { height: 1px; margin: 6px 4px; background: var(--nx-line); }
-.nx-menu-grid { display: grid !important; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--nx-line); }
+.nx-menu-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--nx-line); }
 .nx-menu-grid button { position: relative; display: grid; justify-items: center; gap: 6px; padding: 12px 4px 10px; border: 0; border-radius: 16px; background: var(--nx-surface-3); color: var(--nx-text); font-size: 11px; font-weight: 600; }
 .nx-menu-grid button.on { background: var(--nx-accent-soft); color: var(--nx-accent-ink); }
 .nx-menu-grid .nx-badge { top: 4px; right: 10px; }
@@ -705,4 +705,109 @@
 @media (prefers-reduced-motion: reduce) {
   .nx-room *, .nx-room, .nx-mini, .nx-join *, .nx-ring-backdrop *, .nx-status-toast { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .nx-float { display: none; }
+}
+
+/* =====================================================================================
+   Call screen layout: timer pill and signal bars on top, a floating labelled control bar,
+   panel shortcuts bottom-right, and People / Chat / Notes / Details as tabs in one panel.
+   ===================================================================================== */
+.nx-timer { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 7px; background: var(--nx-surface-2); color: var(--nx-text); }
+.nx-timer i { width: 7px; height: 7px; border-radius: 50%; background: var(--nx-muted); }
+.nx-timer.on i { background: var(--nx-green); animation: nx-breathe 2.4s ease-in-out infinite; }
+.nx-title span.nx-quality { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; overflow: visible; }
+.nx-quality::before { display: none; }
+.nx-quality i { width: 3px; border-radius: 1px; background: var(--nx-surface-4); }
+.nx-quality i:nth-child(1) { height: 4px; } .nx-quality i:nth-child(2) { height: 7px; } .nx-quality i:nth-child(3) { height: 10px; } .nx-quality i:nth-child(4) { height: 12px; }
+.nx-quality.good i { background: var(--nx-green); }
+.nx-quality.fair i:nth-child(-n + 3) { background: var(--nx-amber); }
+.nx-quality.poor i:nth-child(-n + 2) { background: var(--nx-danger); }
+.nx-segment { border-radius: 12px; }
+.nx-segment button { width: auto; gap: 6px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: 9px; font-size: 12.5px; font-weight: 600; }
+.nx-top-btn { border-radius: 12px; }
+
+.nx-tile.speaking { box-shadow: 0 0 0 3px var(--nx-accent), 0 0 28px rgb(138 180 248 / 30%); }
+.nx-tile-speaking { position: absolute; z-index: 2; top: 12px; left: 12px; height: 26px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 8px; background: rgb(138 180 248 / 22%); color: #d7e5ff; font-size: 12px; font-weight: 600; backdrop-filter: blur(6px); }
+.nx-tile-name { background: rgb(0 0 0 / 70%); backdrop-filter: blur(6px); }
+
+.nx-tabs { flex: 1; display: flex; gap: 4px; padding: 3px; border-radius: 11px; background: var(--nx-bg); }
+.nx-tabs button { position: relative; flex: 1; height: 34px; padding: 0 6px; border: 0; border-radius: 9px; background: none; color: var(--nx-muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.nx-tabs button:hover { color: var(--nx-text); }
+.nx-tabs button.on { background: var(--nx-surface-3); color: #fff; }
+.nx-tab-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--nx-accent); }
+.nx-panel-head { padding: 10px 8px 10px 10px; }
+
+.nx-bar-side { display: flex; justify-content: flex-end; gap: 6px; }
+.nx-side-btn { position: relative; width: 46px; height: 46px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 14px; background: var(--nx-surface-2); color: var(--nx-text); transition: background-color .15s ease; }
+.nx-side-btn:hover { background: var(--nx-surface-3); }
+.nx-side-btn.on { background: var(--nx-accent-soft); color: var(--nx-accent-ink); }
+.nx-side-btn .nx-badge { top: -4px; right: -4px; }
+.nx-badge.warn { background: #f08c00; }
+
+/* Large screens: the dock floats as one pill; every control has its name under it. */
+@media (min-width: 1181px) {
+  .nx-dock { align-items: flex-start; gap: 2px; padding: 6px 8px; border-radius: 22px; background: var(--nx-surface); box-shadow: 0 10px 30px rgb(0 0 0 / 45%); }
+  .nx-ctl-sep { align-self: center; height: 40px; margin: -18px 6px 0; }
+  .nx-ctl.labelled:not(.leave) { width: 64px; height: auto; flex-direction: column; gap: 5px; padding: 2px 0 0; border-radius: 12px; background: transparent !important; color: var(--nx-text); }
+  .nx-ctl.labelled:not(.leave) .nx-ctl-icon { width: 46px; height: 46px; border-radius: 14px; background: var(--nx-surface-3); transition: background-color .15s ease; }
+  .nx-ctl.labelled:not(.leave):hover:not(:disabled) .nx-ctl-icon { background: var(--nx-surface-4); }
+  .nx-ctl.labelled.off .nx-ctl-icon { background: var(--nx-danger); color: #fff; }
+  .nx-ctl.labelled.off:hover:not(:disabled) .nx-ctl-icon { background: var(--nx-danger-strong); }
+  .nx-ctl.labelled.on:not(.leave) .nx-ctl-icon { background: var(--nx-accent-soft); color: var(--nx-accent-ink); }
+  .nx-ctl.labelled.on.hand .nx-ctl-icon { background: var(--nx-amber); color: #2a1a00; }
+  .nx-ctl.labelled:not(.leave) .nx-ctl-label { display: block; color: var(--nx-muted); font-size: 11.5px; font-weight: 500; line-height: 1.1; white-space: nowrap; }
+  .nx-ctl.labelled:not(.leave):hover:not(:disabled) .nx-ctl-label { color: var(--nx-text); }
+  .nx-ctl.labelled .nx-badge { top: -3px; right: 6px; }
+  .nx-ctl.leave { align-self: center; height: 50px; margin: -4px 2px 0 4px; padding: 0 20px 0 16px; border-radius: 16px; }
+  .nx-ctl.leave .nx-ctl-label { display: none; }
+  .nx-bar { padding-top: 8px; }
+}
+/* Tablets: the side shortcuts are hidden with the clock; the dock still has them in More. */
+@media (max-width: 1180px) {
+  .nx-bar-side { display: none; }
+  .nx-ctl.leave .nx-ctl-label { display: none; }
+}
+
+/* Phones: header with the "make small" button first; big rounded-square controls with names. */
+@media (max-width: 760px) {
+  .nx-top-min { order: -1; flex: none; display: grid !important; }
+  .nx-top-meta { gap: 8px; }
+  .nx-title span { gap: 5px; }
+  .nx-timer { height: 20px; padding: 0 6px; }
+  .nx-tile-speaking { top: 10px; left: 10px; height: 24px; font-size: 11px; }
+  .nx-dock { max-width: 460px; align-items: flex-start; }
+  .nx-ctl, .nx-ctl.labelled { width: auto; min-width: 52px; height: auto; flex-direction: column; gap: 5px; padding: 0; border-radius: 0; background: transparent !important; color: var(--nx-text); }
+  .nx-ctl .nx-ctl-icon { width: 52px; height: 52px; border-radius: 18px; background: var(--nx-surface-3); }
+  .nx-ctl.off .nx-ctl-icon { background: var(--nx-danger); color: #fff; }
+  .nx-ctl.on .nx-ctl-icon { background: var(--nx-accent-soft); color: var(--nx-accent-ink); }
+  .nx-ctl.leave { width: auto; height: auto; padding: 0; border-radius: 0; background: transparent !important; color: var(--nx-text); }
+  .nx-ctl.leave .nx-ctl-icon { width: 64px; background: var(--nx-danger); color: #fff; }
+  .nx-ctl-label, .nx-ctl.leave .nx-ctl-label { display: block; color: var(--nx-muted); font-size: 11px; font-weight: 500; line-height: 1.1; }
+  .nx-ctl-text { display: none; }
+  .nx-ctl .nx-badge { top: -3px; right: -3px; }
+}
+
+
+/* Meeting code in the control bar: click to copy the link. */
+.nx-code-copy { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 32px; padding: 0 10px; border: 0; border-radius: 9px; background: var(--nx-surface-3); color: var(--nx-text); font-family: ui-monospace, 'Cascadia Mono', monospace; font-size: 13px; transition: background-color .15s ease; }
+.nx-code-copy:hover { background: var(--nx-surface-4); }
+.nx-code-copy.done { color: #8ce99a; font-family: inherit; }
+.nx-bar-info .nx-code-copy span { overflow: hidden; padding: 0; border: 0; text-overflow: ellipsis; }
+.nx-code-copy svg { flex: none; color: var(--nx-muted); }
+
+/* My notes: a private scratchpad for the call. */
+.nx-notes { height: 100%; display: flex; flex-direction: column; gap: 10px; }
+.nx-notes .nx-note { margin: 0; }
+.nx-notes textarea { flex: 1; min-height: 220px; width: 100%; box-sizing: border-box; resize: none; padding: 12px 14px; border: 1px solid var(--nx-line-2); border-radius: 14px; outline: 0; background: var(--nx-surface-2, var(--nx-surface)); color: var(--nx-text); font: inherit; font-size: 14px; line-height: 1.55; }
+.nx-notes textarea:focus { border-color: #8fb0ff; }
+.nx-notes-actions { display: flex; align-items: center; gap: 6px; }
+.nx-notes-actions .nx-btn { display: inline-flex; align-items: center; gap: 6px; }
+.nx-notes-spacer { flex: 1; }
+
+/* Narrow phones: six controls still fit side by side. */
+@media (max-width: 380px) {
+  .nx-dock { gap: 2px; }
+  .nx-ctl, .nx-ctl.labelled { min-width: 46px; }
+  .nx-ctl .nx-ctl-icon { width: 46px; height: 46px; border-radius: 16px; }
+  .nx-ctl.leave .nx-ctl-icon { width: 56px; }
+  .nx-ctl-label, .nx-ctl.leave .nx-ctl-label { font-size: 10px; }
 }

@@ -94,9 +94,11 @@ export function attachLive(server) {
     const onMail = () => send(ws, { type: 'mail' });
     const onNote = (to, note) => to.includes(who) && send(ws, { type: 'note', note });
     const onNoteRead = (to, payload) => to.includes(who) && send(ws, { type: 'note-read', ...payload });
+    const onNoteUpdate = (to, note) => to.includes(who) && send(ws, { type: 'note-update', note });
     mailEvents.on('changed', onMail);
     noteEvents.on('note', onNote);
     noteEvents.on('note-read', onNoteRead);
+    noteEvents.on('note-update', onNoteUpdate);
     // A group made, renamed, joined or left: its members' lists change.
     const onGroup = (to, payload) => to.includes(who) && send(ws, { type: 'group', ...payload });
     noteEvents.on('group', onGroup);
@@ -164,6 +166,7 @@ export function attachLive(server) {
       mailEvents.off('changed', onMail);
       noteEvents.off('note', onNote);
       noteEvents.off('note-read', onNoteRead);
+      noteEvents.off('note-update', onNoteUpdate);
       noteEvents.off('group', onGroup);
       notificationEvents.off('notification', onNotification);
       callEvents.off('call', onCall);

@@ -101,3 +101,33 @@ test('a group: notes and files for its members only, unread and seen per member,
   const direct = await (await mary('/notes?with=john@example.com')).json();
   assert.deepEqual(direct.map((n) => n.text), ['Direct']);
 });
+
+test('notes can be reacted to, replied to with a quote, and deleted by their sender', async () => {
+  const admin = await signIn(ADMIN);
+  for (const name of ['amy', 'ben', 'cal']) {
+    await admin('/admin/aliases', { method: 'POST', body: JSON.stringify({ address: `${name}@example.com`, password: `${name}-password-1`, displayName: name[0].toUpperCase() + name.slice(1) }) });
+  }
+  const amy = await signIn({ email: 'amy@example.com', password: 'amy-password-1' });
+  const ben = await signIn({ email: 'ben@example.com', password: 'ben-password-1' });
+  const cal = await signIn({ email: 'cal@example.com', password: 'cal-password-1' });
+
+  const first = await (await amy('/notes', { method: 'POST', body: JSON.stringify({ to: 'ben@example.com', text: 'Lunch at one?' }) })).json();
+  assert.deepEqual([first.deleted, first.replyTo, first.reactions], [false, null, {}]);
+
+  const liked = await (await ben(`/notes/${first.id}/react`, { method: 'POST', body: JSON.stringify({ emoji: '👍' }) })).json();
+  assert.deepEqual(liked.reactions, { '👍': ['ben@example.com'] });
+  const unliked = await (await ben(`/notes/${first.id}/react`, { method: 'POST', body: JSON.stringify({ emoji: '👍' }) })).json();
+  assert.deepEqual(unliked.reactions, {}, 'reacting again takes it back');
+  assert.equal((await ben(`/notes/${first.id}/react`, { method: 'POST', body: JSON.stringify({ emoji: '💩' }) })).status, 400);
+  assert.equal((await cal(`/notes/${first.id}/react`, { method: 'POST', body: JSON.stringify({ emoji: '👍' }) })).status, 404, 'outsiders cannot see the note');
+
+  const reply = await (await ben('/notes', { method: 'POST', body: JSON.stringify({ to: 'amy@example.com', text: 'Yes!', replyTo: first.id }) })).json();
+  assert.deepEqual(reply.replyTo, { id: first.id, from: 'amy@example.com', text: 'Lunch at one?' });
+  assert.equal((await cal('/notes', { method: 'POST', body: JSON.stringify({ to: 'amy@example.com', text: 'Me too', replyTo: first.id }) })).status, 400, 'only notes from the same conversation can be quoted');
+
+  assert.equal((await ben(`/notes/${first.id}`, { method: 'DELETE' })).status, 403);
+  const gone = await (await amy(`/notes/${first.id}`, { method: 'DELETE' })).json();
+  assert.deepEqual([gone.deleted, gone.text, gone.files], [true, '', []]);
+  const history = await (await ben('/notes?with=amy@example.com')).json();
+  assert.deepEqual(history.map((n) => [n.deleted, n.text]), [[true, ''], [false, 'Yes!']]);
+});
