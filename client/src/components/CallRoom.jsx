@@ -411,7 +411,7 @@ const Tile = memo(function Tile({ tile, size, compact, onPin, pinned, hug }) {
   // wide one with black bars either side.
   const [ratio, setRatio] = useState(null);
   const { name, address, stream, videoOn, muted, hand, speaking, status, mirrored, isMe, reaction, ringing } = tile;
-  const classes = ['nx-tile', speaking && 'speaking', compact && 'compact', ringing && 'ringing', videoOn && stream && 'has-video'].filter(Boolean).join(' ');
+  const classes = ['nx-tile', speaking && 'speaking', compact && 'compact', ringing && 'ringing', videoOn && stream && 'has-video', isMe && 'me'].filter(Boolean).join(' ');
   return (
     <div
       className={classes}
@@ -419,7 +419,7 @@ const Tile = memo(function Tile({ tile, size, compact, onPin, pinned, hug }) {
       style={{
         '--tile': colorFor(address || name),
         ...(size && { width: size.w, height: size.h }),
-        ...(hug && ratio && videoOn && stream && { aspectRatio: String(ratio), width: 'auto', height: '100%', maxWidth: '100%' }),
+        ...(hug && ratio && videoOn && stream && { aspectRatio: String(ratio), width: `min(100cqw, ${(100 * ratio).toFixed(2)}cqh)`, height: 'auto', maxWidth: '100%', maxHeight: '100%' }),
       }}
       data-tile-key={tile.key}
       onDoubleClick={onPin}
@@ -439,7 +439,9 @@ const Tile = memo(function Tile({ tile, size, compact, onPin, pinned, hug }) {
       <span className="nx-tile-name">
         {muted
           ? <span className="nx-tile-mic off" title="Muted"><Icon name="micOff" size={14} /></span>
-          : <span className={`nx-tile-bars ${speaking ? 'on' : ''}`} aria-hidden="true"><i /><i /><i /></span>}
+          : speaking
+            ? <span className="nx-tile-bars on" aria-hidden="true"><i /><i /><i /></span>
+            : <span className="nx-tile-mic" aria-hidden="true"><Icon name="mic" size={14} /></span>}
         <span className="nx-tile-label">{name}{isMe ? ' (you)' : ''}</span>
       </span>
       {onPin && !ringing && (
@@ -493,6 +495,35 @@ function Gallery({ tiles, pinned, onPin }) {
       <div className="nx-gallery-inner" style={{ gap }}>
         {fit && tiles.map((tile) => <Tile key={tile.key} tile={tile} size={fit} pinned={pinned === tile.key} onPin={tile.ringing ? null : () => onPin(tile.key)} />)}
       </div>
+    </div>
+  );
+}
+
+/** True while the window is phone-sized (matches the CSS breakpoint). */
+function usePhone() {
+  const query = '(max-width: 760px)';
+  const [phone, setPhone] = useState(() => window.matchMedia?.(query).matches ?? false);
+  useEffect(() => {
+    const list = window.matchMedia?.(query);
+    if (!list) return undefined;
+    const update = () => setPhone(list.matches);
+    list.addEventListener('change', update);
+    return () => list.removeEventListener('change', update);
+  }, []);
+  return phone;
+}
+
+/** Gallery on a phone: whoever is talking large on top, everyone else two across below, and your
+ * own picture floating in the corner so it never takes a slot. */
+function PhoneGallery({ lead, rest, self, pinned, onPin }) {
+  const pinOf = (tile) => (tile.ringing ? null : () => onPin(tile.key));
+  return (
+    <div className="nx-pgal">
+      <div className="nx-pgal-lead"><Tile tile={lead} pinned={pinned === lead.key} onPin={pinOf(lead)} /></div>
+      <div className={`nx-pgal-grid n-${Math.min(rest.length, 3)}`}>
+        {rest.map((tile) => <Tile key={tile.key} tile={tile} pinned={pinned === tile.key} onPin={pinOf(tile)} />)}
+      </div>
+      {self && <div className="nx-pgal-me"><Tile tile={self} compact /></div>}
     </div>
   );
 }
@@ -1055,6 +1086,7 @@ export default function CallRoom({ state }) {
   const [chromeHidden, setChromeHidden] = useState(false); // phones: tap the picture to hide the controls
   const picturePicker = useRef(null);
   const [layout, setLayoutState] = useState(readLayout);
+  const phone = usePhone();
   const [pinned, setPinned] = useState(null);
   const [hideSelf, setHideSelf] = useState(false);
   const [swapped, setSwapped] = useState(false); // 1:1: you big, them small
@@ -1436,6 +1468,8 @@ export default function CallRoom({ state }) {
         : layout !== 'grid' && solo ? 'solo'
           : 'grid';
   const focus = pinnedTile || leading;
+  // Phones in gallery with three or more people: the mockup's speaker-on-top gallery.
+  const phoneGallery = phone && view === 'grid' && others.length >= 2;
   const shownTiles = hideSelf && tiles.length > 1 ? tiles.slice(1) : tiles;
   const alone = !state.guest && Boolean(call.code) && !peers.length && !ringing.length;
   const showReady = alone && readyOpen;
@@ -1634,14 +1668,17 @@ export default function CallRoom({ state }) {
         )}
       </div>
     );
+  } else if (phoneGallery) {
+    const lead = others.includes(focus) ? focus : others[0];
+    stage = <PhoneGallery lead={lead} rest={others.filter((tile) => tile.key !== lead.key)} self={hideSelf ? null : selfTile} pinned={pinned} onPin={togglePin} />;
   } else {
     stage = <Gallery tiles={shownTiles} pinned={pinned} onPin={togglePin} />;
   }
 
   const layoutChoices = [
-    ['auto', 'mosaic', 'Auto'],
     ['grid', 'grid', 'Gallery'],
-    ['spotlight', 'spotlight', 'Spotlight'],
+    ['spotlight', 'spotlight', 'Speaker'],
+    ['auto', 'mosaic', 'Auto'],
   ];
   const toasts = [];
   if (state.notice) toasts.push(<div key="notice" className="nx-toast warn" role="alert"><Icon name="info" size={18} /><span>{state.notice}</span><button type="button" className="nx-icon-btn" aria-label="Dismiss" onClick={clearNotice}><Icon name="close" size={17} /></button></div>);
@@ -1709,6 +1746,9 @@ export default function CallRoom({ state }) {
             ))}
           </div>
           {canFullscreen && <button type="button" className="nx-top-btn nx-only-desktop" aria-label={fullscreen ? 'Leave full screen' : 'Full screen (F)'} title={fullscreen ? 'Leave full screen' : 'Full screen (F)'} onClick={toggleFullscreen}><Icon name={fullscreen ? 'fullscreenExit' : 'fullscreen'} size={20} /></button>}
+          <button type="button" className={`nx-top-btn nx-only-mobile ${menu === 'layout' ? 'on' : ''}`} aria-label="Change layout" title="Change layout" aria-expanded={menu === 'layout'} onClick={() => setMenu('layout')}>
+            <Icon name={(layoutChoices.find(([value]) => value === layout) || layoutChoices[0])[1]} size={20} />
+          </button>
           <button type="button" className="nx-top-btn nx-only-mobile" aria-label="People" title="People" onClick={() => togglePanel('people')}>
             <Icon name="people" size={20} />{peopleBadge > 0 && <span className="nx-badge">{peopleBadge}</span>}
           </button>
@@ -1840,6 +1880,21 @@ export default function CallRoom({ state }) {
               {REACTIONS.map((emoji) => (
                 <button key={emoji} type="button" role="menuitem" onClick={() => react(emoji)} aria-label={`React ${emoji}`}>{emoji}</button>
               ))}
+            </div>
+          )}
+
+          {menu === 'layout' && (
+            <div className="nx-popover nx-menu nx-layout-sheet" role="menu" aria-label="Layout">
+              <span className="nx-sheet-grip nx-only-mobile" aria-hidden="true" />
+              <div className="nx-menu-label">Layout</div>
+              <div className="nx-layout-cards">
+                {layoutChoices.map(([value, icon, label]) => (
+                  <button key={value} type="button" role="menuitemradio" aria-checked={layout === value && !pinned} className={layout === value && !pinned ? 'on' : ''} onClick={() => { setLayout(value); setPinned(null); setMenu(null); }}>
+                    <Icon name={icon} size={24} /><span>{label}</span>
+                    <small>{value === 'grid' ? 'Everyone' : value === 'spotlight' ? 'Who’s talking' : 'Picks for you'}</small>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 

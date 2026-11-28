@@ -144,6 +144,7 @@
   min-height: 32px; padding: 0 12px 0 10px; border-radius: 10px; background: var(--nx-bg); color: #fff; font-size: 13px; font-weight: 600;
 }
 .nx-tile-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-tile-mic { display: grid; place-items: center; width: 20px; height: 20px; color: var(--nx-muted); }
 .nx-tile-mic.off { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--nx-danger); color: #fff; }
 .nx-tile-bars { display: inline-flex; align-items: flex-end; gap: 2px; width: 14px; height: 14px; justify-content: center; }
 .nx-tile-bars i { width: 3px; height: 4px; border-radius: 2px; background: var(--nx-muted); }
@@ -174,6 +175,8 @@
 /* ---------- spotlight, presenting, 1:1 ---------- */
 .nx-stage-split { flex: 1; min-width: 0; display: flex; gap: 14px; }
 .nx-focus, .nx-screen { position: relative; flex: 1; min-width: 0; display: flex; justify-content: center; }
+/* The main picture keeps the video's shape and fits inside the space either way round. */
+.nx-focus { container-type: size; align-items: center; }
 /* The main picture: full size, or (when the script knows its shape) exactly the video's shape, centred. */
 .nx-focus > .nx-tile { width: 100%; height: 100%; }
 .nx-screen { overflow: hidden; border-radius: var(--nx-radius); background: #000; animation: nx-tile-in .4s var(--nx-ease) both; }
@@ -236,6 +239,25 @@
 
 /* ---------- side panel (a card at the side; a sheet on phones) ---------- */
 .nx-sheet-backdrop { display: none; }
+/* ---------- phone gallery (speaker on top, the rest two across, you in the corner) ---------- */
+.nx-pgal { position: relative; flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1.4fr) minmax(0, 1fr); gap: 8px; }
+.nx-pgal-lead, .nx-pgal-grid { min-height: 0; }
+.nx-pgal-lead > .nx-tile, .nx-pgal-grid > .nx-tile { width: 100%; height: 100%; }
+.nx-pgal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 8px; }
+.nx-pgal-grid.n-1 { grid-template-columns: minmax(0, 1fr); }
+.nx-pgal-grid.n-3 { grid-auto-rows: calc(50% - 4px); overflow-y: auto; scrollbar-width: none; }
+.nx-pgal-me {
+  position: absolute; z-index: 5; top: 10px; right: 10px; width: 92px; height: 124px; border-radius: 16px;
+  box-shadow: 0 0 0 2px var(--nx-bg), 0 10px 24px rgb(0 0 0 / 45%); animation: nx-tile-in .4s var(--nx-ease) both;
+}
+.nx-pgal-me > .nx-tile { width: 100%; height: 100%; border-radius: 16px; }
+.nx-pgal .nx-tile video.fit { object-fit: cover; background: #000; }
+/* ---------- layout picker (phones) ---------- */
+.nx-layout-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 4px 2px 6px; }
+.nx-layout-cards button { display: grid; justify-items: center; gap: 4px; padding: 14px 6px 12px; border: 2px solid transparent; border-radius: 18px; background: var(--nx-surface-3); color: var(--nx-text); font-size: 13px; font-weight: 600; }
+.nx-layout-cards button small { color: var(--nx-muted); font-size: 11px; font-weight: 500; }
+.nx-layout-cards button.on { border-color: #8fb0ff; background: var(--nx-accent-soft); color: var(--nx-accent-ink); }
+.nx-layout-cards button.on small { color: inherit; opacity: .75; }
 .nx-sheet-grip { display: none; }
 .nx-panel {
   flex: none; width: 370px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--nx-line);
@@ -554,7 +576,7 @@
 @media (max-width: 1180px) {
   .nx-bar { grid-template-columns: 1fr; justify-items: center; }
   .nx-bar-info { display: none; }
-  .nx-ctl.labelled { width: 48px; }
+  .nx-ctl.labelled:not(.leave) { width: 48px; }
   .nx-panel { width: 330px; }
   .nx-strip { width: 190px; }
   .nx-stage.has-ready .nx-ready { right: 16px; bottom: 16px; width: min(400px, calc(100% - 32px)); padding: 18px; }
@@ -568,6 +590,18 @@
   .nx-only-mobile { display: revert !important; }
   .nx-ctl.nx-only-mobile, .nx-top-btn.nx-only-mobile { display: inline-flex !important; }
   .nx-menu-grid.nx-only-mobile { display: grid !important; }
+  .nx-menu-item.nx-only-mobile { display: flex !important; }
+  /* The More sheet dims the call behind it. */
+  .nx-menu { box-shadow: 0 0 0 100vmax rgb(0 0 0 / 55%), 0 -10px 40px rgb(0 0 0 / 50%); }
+  /* Alone on a phone, your own picture fills the screen instead of sitting in a strip. */
+  .nx-solo .nx-focus > .nx-tile.me, .nx-gallery.count-1 .nx-tile.me { width: 100% !important; height: 100% !important; aspect-ratio: auto !important; }
+  /* Speaker view on a phone: the speaker fills the space above the strip. */
+  .nx-stage-split .nx-focus > .nx-tile { width: 100% !important; height: 100% !important; aspect-ratio: auto !important; }
+  .nx-stage-split .nx-focus .nx-tile video.fit { object-fit: cover; background: #000; }
+  .nx-strip .nx-tile-pin { display: none; }
+  .nx-strip > .nx-tile { aspect-ratio: 1 !important; }
+  .nx-strip .nx-tile video.fit { object-fit: cover; background: #000; }
+  .nx-solo .nx-tile.me video.fit, .nx-gallery.count-1 .nx-tile.me video.fit { object-fit: cover; background: #000; }
   .nx-menu-reactions { display: flex !important; justify-content: space-between; gap: 2px; margin: 0 0 8px; padding: 6px; border-radius: 20px; background: var(--nx-surface-3); }
   .nx-menu-reactions button { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: transparent; font-size: 24px; line-height: 1; transition: transform .15s var(--nx-ease); }
   .nx-menu-reactions button:active { transform: scale(1.3); }
