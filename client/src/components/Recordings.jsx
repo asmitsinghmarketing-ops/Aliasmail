@@ -811,7 +811,7 @@ export default function Recordings({ me, onClose }) {
                       <button type="button" className="icon-btn" aria-label={view === 'week' ? 'Next week' : 'Next month'} title="Next (Page Down)" onClick={() => move(1)}><Icon name="chevronRight" /></button>
                     </>
                   )}
-                  <h2>{heading}</h2>
+                  <h2>{view === 'month' ? <><b>{cursor.toLocaleDateString([], { month: 'long' })}</b> <span>{cursor.getFullYear()}</span></> : heading}</h2>
                 </div>
                 <div className="cal-views" role="tablist" aria-label="Calendar view">
                   {[['month', 'viewMonth', 'Month', 'M'], ['week', 'viewWeek', 'Week', 'W'], ['agenda', 'viewList', 'Agenda', 'A']].map(([value, icon, label, key]) => (
@@ -856,7 +856,11 @@ export default function Recordings({ me, onClose }) {
 
             <aside className="cal-side" aria-live="polite">
               <div className="recordings-day-head">
-                <h2>{pickedDate ? (day === today ? `Today · ${pickedDate.toLocaleDateString([], { day: 'numeric', month: 'long' })}` : longDay(pickedDate)) : ''}</h2>
+                {pickedDate && <span className="cal-side-date" aria-hidden="true"><b>{pickedDate.getDate()}</b><small>{pickedDate.toLocaleDateString([], { weekday: 'short' })}</small></span>}
+                <span className="cal-side-title">
+                  <h2>{pickedDate ? (day === today ? `Today · ${pickedDate.toLocaleDateString([], { day: 'numeric', month: 'long' })}` : longDay(pickedDate)) : ''}</h2>
+                  <small>{shown.length ? `${shownMeetings.length} meeting${shownMeetings.length === 1 ? '' : 's'} · ${shownRecordings.length} recording${shownRecordings.length === 1 ? '' : 's'}` : 'A clear day'}</small>
+                </span>
                 {day >= today && <button type="button" className="btn btn-outline" onClick={() => create(fromKey(day))}><Icon name="add" size={17} /> Schedule</button>}
               </div>
               {freeSlot && shownMeetings.length > 0 && (
@@ -931,6 +935,12 @@ export default function Recordings({ me, onClose }) {
           </div>
         )}
       </main>
+
+      {data && meetings && !editing && (
+        <button type="button" className="cal-fab" onClick={() => create(day && day >= today ? fromKey(day) : new Date())} aria-label="Schedule a meeting">
+          <Icon name="add" size={22} /> Schedule
+        </button>
+      )}
 
       {editing && (
         <ScheduleMeeting

@@ -91,7 +91,8 @@ async function main() {
     await run('npm', ['run', 'build'], { cwd: CLIENT });
     await run('npx', ['cap', 'sync', 'android'], { cwd: CLIENT });
     if (fs.existsSync(BUILT_APK)) fs.rmSync(BUILT_APK);
-    await run(process.platform === 'win32' ? 'gradlew.bat' : './gradlew', ['assembleDebug', '--no-daemon', '--no-parallel', '--max-workers=1'], { cwd: ANDROID, env: gradleEnv });
+    // Full path: Windows skips the current folder when NoDefaultCurrentDirectoryInExePath is set.
+    await run(path.join(ANDROID, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew'), ['assembleDebug', '--no-daemon', '--no-parallel', '--max-workers=1'], { cwd: ANDROID, env: gradleEnv });
     if (!fs.existsSync(BUILT_APK)) throw new Error('Gradle finished but no APK was produced');
 
     // 4. Same signing key as the build people already have, or the update can't install.

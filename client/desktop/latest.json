@@ -1,7 +1,7 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "file": "Nextspace-Desktop-Setup.exe",
-  "sha256": "062201499a9a07c559584a7eb183d1b5dc5ae5b3e164157b5baca4c54fb66217",
-  "size": 121598605,
-  "releasedAt": "2026-11-27T23:06:39.632Z"
+  "sha256": "f21c268ffbd18f7043a6227ddf3407c75d348ec09d2b03c5a98966ffead44577",
+  "size": 121598590,
+  "releasedAt": "2026-11-28T03:15:57.032Z"
 }

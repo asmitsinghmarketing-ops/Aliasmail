@@ -1856,22 +1856,21 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
               const shown = FOLDERS.filter((f) => !f.hidden && (!f.onlyWhenUsed || shownCounts[f.count] > 0 || folder === f.id));
               return shown.flatMap((f, i) => [
                 ...(f.section && f.section !== shown[i - 1]?.section ? [
-                  <button
-                    key={`section-${f.section}`}
-                    type="button"
-                    className="nav-section nav-section-toggle"
-                    aria-expanded={phone ? foldersOpen : undefined}
-                    onClick={() => phone && setFoldersOpen((value) => !value)}
-                  >
-                    <span>{f.section}</span><Icon name="arrowDrop" size={20} />
-                  </button>,
+                  <div key={`section-${f.section}`} className="nav-section">{f.section}</div>,
                 ] : []),
                 <button
                   key={f.id}
-                  className={`nav-item mobile-folder ${foldersOpen ? '' : 'mobile-folder-collapsed'} ${folder === f.id ? 'active' : ''}`}
+                  className={`nav-item mobile-folder ${folder === f.id ? 'active' : ''}`}
+                  aria-expanded={phone && f.id === 'inbox' ? foldersOpen : undefined}
                   onPointerEnter={() => prefetchMailboxList(listPath(f.id, 1, '', f.id === 'inbox' ? category : 'primary'))}
                   onFocus={() => prefetchMailboxList(listPath(f.id, 1, '', f.id === 'inbox' ? category : 'primary'))}
-                  onClick={() => goTo(f.id)}
+                  onClick={() => {
+                    if (phone && f.id === 'inbox') {
+                      setFoldersOpen((value) => !value);
+                      return;
+                    }
+                    goTo(f.id);
+                  }}
                   title={f.label}
                 >
                   <span className="nav-icon" style={{ '--c': f.color }}>
@@ -1879,12 +1878,13 @@ export default function Mailbox({ user, account = user, mailboxes = [], shared =
                   </span>
                   <span className="nav-label">{f.label}</span>
                   {f.count && shownCounts[f.count] > 0 && <span className={`count ${f.plain ? 'plain' : ''}`}>{shownCounts[f.count]}</span>}
+                  {f.id === 'inbox' && <Icon name="arrowDrop" size={20} className="inbox-accordion-icon mobile-only" />}
                 </button>,
                 ...(f.id === 'inbox'
                   ? inboxTabs.map((t) => (
                       <button
                         key={`category-${t.id}`}
-                        className={`nav-item nav-sub mobile-only mobile-folder ${foldersOpen ? '' : 'mobile-folder-collapsed'} ${folder === 'inbox' && !search && category === t.id ? 'active' : ''}`}
+                        className={`nav-item nav-sub mobile-only mobile-folder ${foldersOpen ? '' : 'mobile-inbox-collapsed'} ${folder === 'inbox' && !search && category === t.id ? 'active' : ''}`}
                         onPointerEnter={() => prefetchMailboxList(listPath('inbox', 1, '', t.id))}
                         onFocus={() => prefetchMailboxList(listPath('inbox', 1, '', t.id))}
                         onClick={() => {

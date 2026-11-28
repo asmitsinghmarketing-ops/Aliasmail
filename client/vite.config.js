@@ -11,6 +11,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // The Android SDK/JDK, native builds and the desktop installers hold hundreds of thousands of
+    // files; watching them freezes the dev server after a release build.
+    watch: { ignored: ['**/android-tools/**', '**/android/**', '**/desktop/**', '**/nextgo/**', '**/dist/**'] },
     proxy: { '/api': { target: 'http://localhost:4000', ws: true } },
     allowedHosts: [
       'trustable-sample-endowment.ngrok-free.dev'

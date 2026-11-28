@@ -26,9 +26,11 @@ const dateLabel = (value) => {
 };
 
 function TaskCard({ task, project, person, onOpen }) {
+  const late = overdue(task);
   return (
     <article
-      className={`task-card priority-${task.priority}`}
+      className={`task-card priority-${task.priority}${task.status === 'done' ? ' is-done' : ''}`}
+      style={{ '--project': project?.color || '#868e96' }}
       draggable
       onDragStart={(event) => event.dataTransfer.setData('text/task-id', task.id)}
       onClick={() => onOpen(task)}
@@ -36,13 +38,14 @@ function TaskCard({ task, project, person, onOpen }) {
       onKeyDown={(event) => event.key === 'Enter' && onOpen(task)}
     >
       <div className="task-card-top">
+        {project && <span className="task-project-chip" title={project.name}>{project.name}</span>}
         <span className={`task-priority ${task.priority}`}>{task.priority}</span>
-        {project && <span className="task-project-dot" title={project.name} style={{ '--project': project.color }} />}
       </div>
       <strong>{task.title}</strong>
       {task.description && <p>{task.description}</p>}
       <div className="task-card-meta">
-        {task.dueDate && <span className={overdue(task) ? 'task-overdue' : ''}><Icon name="event" size={15} /> {dateLabel(task.dueDate)}</span>}
+        {task.dueDate && <span className={`task-due${late ? ' task-overdue' : ''}`}><Icon name="event" size={14} /> {late ? 'Overdue · ' : ''}{dateLabel(task.dueDate)}</span>}
+        {task.status === 'done' && <span className="task-done-mark"><Icon name="checkCircle" size={14} /> Done</span>}
         <span className="push-right" />
         {person ? <Avatar url={person.avatarUrl} person={{ name: person.name, address: person.address }} color={person.color} size="xs" /> : <span className="task-unassigned" title="Unassigned"><Icon name="person" size={15} /></span>}
       </div>
@@ -53,7 +56,7 @@ function TaskCard({ task, project, person, onOpen }) {
 function TaskEditor({ draft, projects, team, saving, onChange, onSave, onDelete, onClose }) {
   return (
     <div className="task-drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <aside className="task-drawer" aria-label={draft.id ? 'Task details' : 'New task'}>
+      <aside className="task-drawer" style={{ '--project': projects.find((project) => project.id === draft.projectId)?.color || 'var(--brand)' }} aria-label={draft.id ? 'Task details' : 'New task'}>
         <header>
           <div><span className="muted small">{draft.id ? 'Task details' : 'Create task'}</span><h2>{draft.id ? draft.title : 'New task'}</h2></div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
@@ -168,7 +171,18 @@ export default function Tasks({ user, startTask, onClose }) {
     completed: data.tasks.filter((task) => task.status === 'done').length,
   }), [data.tasks, data.me]);
 
-  const updateLocal = (updated) => setData((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === updated.id ? updated : task) }));
+  const stats = useMemo(() => {
+    const open = visible.filter((task) => task.status !== 'done');
+    const done = visible.length - open.length;
+    return {
+      open: open.length,
+      doing: open.filter((task) => task.status === 'doing').length,
+      late: open.filter(overdue).length,
+      percent: visible.length ? Math.round((done / visible.length) * 100) : 0,
+    };
+  }, [visible]);
+
+  const updateLocal =(updated) => setData((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === updated.id ? updated : task) }));
   const move = async (task, status) => {
     if (task.status === status) return;
     const previous = task;
@@ -301,6 +315,14 @@ export default function Tasks({ user, startTask, onClose }) {
             </div>
             <label className="task-filter">Priority<select value={priority} onChange={(event) => setPriority(event.target.value)}><option value="all">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
           </div>
+          {!loading && data.projects.length > 0 && (
+            <div className="task-stats">
+              <div><span><Icon name="dashboard" size={16} /> Open</span><strong>{stats.open}</strong></div>
+              <div className="doing"><span><Icon name="hourglass" size={16} /> In progress</span><strong>{stats.doing}</strong></div>
+              <div className={stats.late ? 'late' : ''}><span><Icon name="clock" size={16} /> Overdue</span><strong>{stats.late}</strong></div>
+              <div className="progress"><span><Icon name="checkCircle" size={16} /> Completed</span><strong>{stats.percent}%</strong><i><b style={{ width: `${stats.percent}%` }} /></i></div>
+            </div>
+          )}
           {error && <div className="alert"><span>{error}</span><button className="link" onClick={() => setError('')}>Dismiss</button></div>}
           {notice && <div className="alert ok"><span>{notice}</span><button className="link" onClick={() => setNotice('')}>Dismiss</button></div>}
           {loading ? <PanelSkeleton /> : !data.projects.length ? (
@@ -313,10 +335,11 @@ export default function Tasks({ user, startTask, onClose }) {
                   <section
                     className="task-column"
                     key={column.id}
+                    style={{ '--column': column.color }}
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={(event) => { const id = event.dataTransfer.getData('text/task-id'); const task = data.tasks.find((item) => item.id === id); if (task) move(task, column.id); }}
                   >
-                    <header><span className="task-column-dot" style={{ '--column': column.color }} /><strong>{column.label}</strong><b>{tasks.length}</b><button className="icon-btn" onClick={() => openNew(column.id)} title={`Add to ${column.label}`}><Icon name="add" size={17} /></button></header>
+                    <header><span className="task-column-dot" /><strong>{column.label}</strong><b>{tasks.length}</b><button className="icon-btn" onClick={() => openNew(column.id)} title={`Add to ${column.label}`}><Icon name="add" size={17} /></button></header>
                     <div className="task-column-body">
                       {tasks.map((task) => <TaskCard key={task.id} task={task} project={projectsById[task.projectId]} person={peopleByAddress[task.assignee]} onOpen={setEditor} />)}
                       {!tasks.length && <button className="task-column-empty" onClick={() => openNew(column.id)}>+ Add task</button>}
@@ -329,7 +352,7 @@ export default function Tasks({ user, startTask, onClose }) {
             <div className="task-list-wrap">
               <table className="task-list"><thead><tr><th>Task</th><th>Project</th><th>Assignee</th><th>Priority</th><th>Due</th><th>Status</th></tr></thead><tbody>
                 {visible.map((task) => { const person = peopleByAddress[task.assignee]; const project = projectsById[task.projectId]; return (
-                  <tr key={task.id} onClick={() => setEditor(task)}><td><strong>{task.title}</strong>{task.description && <span>{task.description}</span>}</td><td><i style={{ '--project': project?.color }} />{project?.name}</td><td>{person ? <><Avatar url={person.avatarUrl} person={{ name: person.name, address: person.address }} color={person.color} size="xs" /> {person.name || person.address}</> : <span className="muted">Unassigned</span>}</td><td><span className={`task-priority ${task.priority}`}>{task.priority}</span></td><td className={overdue(task) ? 'task-overdue' : ''}>{dateLabel(task.dueDate) || '—'}</td><td><select value={task.status} onClick={(event) => event.stopPropagation()} onChange={(event) => move(task, event.target.value)}>{COLUMNS.map((column) => <option key={column.id} value={column.id}>{column.label}</option>)}</select></td></tr>
+                  <tr key={task.id} className={task.status === 'done' ? 'is-done' : ''} style={{ '--project': project?.color }} onClick={() => setEditor(task)}><td><strong>{task.title}</strong>{task.description && <span>{task.description}</span>}</td><td><i />{project?.name}</td><td>{person ? <span className="task-person"><Avatar url={person.avatarUrl} person={{ name: person.name, address: person.address }} color={person.color} size="xs" /> {person.name || person.address}</span> : <span className="muted">Unassigned</span>}</td><td><span className={`task-priority ${task.priority}`}>{task.priority}</span></td><td className={overdue(task) ? 'task-overdue' : ''}>{dateLabel(task.dueDate) || '—'}</td><td><select value={task.status} onClick={(event) => event.stopPropagation()} onChange={(event) => move(task, event.target.value)}>{COLUMNS.map((column) => <option key={column.id} value={column.id}>{column.label}</option>)}</select></td></tr>
                 ); })}
               </tbody></table>
               {!visible.length && <div className="empty">No tasks match this view.</div>}

@@ -297,33 +297,35 @@ export default function Settings({ color, initialTab = 'profile', onClose, onSav
   // A page in the mail area, like Gmail's settings, rather than a pop-up over it.
   return (
     <section className="settings-page" aria-labelledby="settings-title">
-      <div className="toolbar settings-bar">
-        <button type="button" className="icon-btn" aria-label="Close settings" title="Back to mail" onClick={onClose}>
-          <Icon name="back" />
-        </button>
-        <h2 id="settings-title">Settings</h2>
-      </div>
-      <div className="settings-tabs" role="tablist">
-        {[
-          ['profile', 'Profile', 'people'],
-          ['security', 'Security', 'shield'],
-          ['notifications', 'Notifications', 'bell'],
-          ...(tabs ? [['tabs', 'Tabs', 'dashboard']] : []),
-          ...(googleOn ? [['google', 'Google apps', 'apps']] : []),
-        ].map(([id, label, icon]) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === id}
-            key={id}
-            className={`settings-tab ${tab === id ? 'on' : ''}`}
-            // On a phone the row scrolls: keep the open tab in view.
-            ref={tab === id ? (node) => node?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }) : undefined}
-            onClick={() => setTab(id)}
-          >
-            <Icon name={icon} size={18} /> {label}
+      <div className="settings-head">
+        <div className="toolbar settings-bar">
+          <button type="button" className="icon-btn" aria-label="Close settings" title="Back to mail" onClick={onClose}>
+            <Icon name="back" />
           </button>
-        ))}
+          <h2 id="settings-title">Settings</h2>
+        </div>
+        <div className="settings-tabs" role="tablist">
+          {[
+            ['profile', 'Profile', 'people'],
+            ['security', 'Security', 'shield'],
+            ['notifications', 'Notifications', 'bell'],
+            ...(tabs ? [['tabs', 'Tabs', 'dashboard']] : []),
+            ...(googleOn ? [['google', 'Google apps', 'apps']] : []),
+          ].map(([id, label, icon]) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              key={id}
+              className={`settings-tab ${tab === id ? 'on' : ''}`}
+              // On a phone the row scrolls: keep the open tab in view.
+              ref={tab === id ? (node) => node?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }) : undefined}
+              onClick={() => setTab(id)}
+            >
+              <Icon name={icon} size={18} /> {label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="view-enter settings-body" key={tab}>
         {tab === 'profile' ? profileTab() : tab === 'google' ? <GoogleApps /> : tab === 'notifications' ? <NotificationSettings /> : tab === 'tabs' && tabs ? <TabSettings {...tabs} /> : form ? <SecurityPanel account={form.address} owner={form.owner} /> : <TextSkeleton lines={4} />}

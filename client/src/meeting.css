@@ -73,7 +73,7 @@
    ===================================================================================== */
 .nx-room {
   position: fixed; z-index: 110; inset: 0; display: flex; flex-direction: column; overflow: hidden;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  padding: var(--safe-top) var(--safe-right) 0 var(--safe-left);
   background: var(--nx-bg); animation: nx-fade .25s ease-out both;
 }
 .nx-native-pip { position: fixed; z-index: 200; inset: 0; overflow: hidden; background: var(--nx-bg); }
@@ -355,7 +355,7 @@
 .nx-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 /* ---------- the control bar: everything in one place ---------- */
-.nx-bar { position: relative; z-index: 7; flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 10px 20px max(14px, env(safe-area-inset-bottom)); }
+.nx-bar { position: relative; z-index: 7; flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 10px 20px max(14px, var(--safe-bottom)); }
 .nx-bar-info { min-width: 0; display: flex; align-items: center; gap: 12px; color: var(--nx-muted); font-size: 14px; white-space: nowrap; }
 .nx-bar-info strong { color: var(--nx-text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .nx-bar-info span { overflow: hidden; padding-left: 12px; border-left: 1px solid var(--nx-line-2); text-overflow: ellipsis; }
@@ -412,7 +412,7 @@
    Small call window (keep working while the call carries on)
    ===================================================================================== */
 .nx-mini {
-  position: fixed; z-index: 110; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); width: 300px; overflow: hidden;
+  position: fixed; z-index: 110; right: 16px; bottom: calc(16px + var(--safe-bottom)); width: 300px; overflow: hidden;
   border: 1px solid var(--nx-line-2); border-radius: 20px; background: var(--nx-bg); box-shadow: 0 22px 56px rgb(8 21 52 / 45%);
   animation: nx-tile-in .35s var(--nx-ease) both;
 }
@@ -458,13 +458,13 @@
 .nx-call-dock-icon { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: var(--nx-accent); color: #fff; }
 .nx-call-dock .nx-mini-btn { flex: none; width: 38px; height: 38px; }
 .nx-call-dock .nx-mini-btn.leave { width: 48px; }
-@media (max-width: 800px) { .nx-call-dock { right: 10px; bottom: calc(76px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); } }
+@media (max-width: 800px) { .nx-call-dock { right: 10px; bottom: calc(76px + var(--safe-bottom)); width: calc(100vw - 20px); } }
 
 /* =====================================================================================
    Incoming call and call status toasts
    ===================================================================================== */
 .nx-status-toast {
-  position: fixed; z-index: 130; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  position: fixed; z-index: 130; left: 50%; bottom: calc(24px + var(--safe-bottom)); transform: translateX(-50%);
   display: inline-flex; align-items: center; gap: 9px; max-width: calc(100vw - 24px); padding: 12px 18px; border-radius: 14px;
   background: var(--nx-bg); font-size: 14px; font-weight: 600; box-shadow: 0 16px 40px rgb(0 0 0 / 35%); animation: nx-rise-center .3s var(--nx-ease) both;
 }
@@ -494,7 +494,7 @@
 /* =====================================================================================
    Join page (what a meeting link opens)
    ===================================================================================== */
-.nx-join { position: relative; min-height: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden auto; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); background: var(--nx-bg); }
+.nx-join { position: relative; min-height: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden auto; padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left); background: var(--nx-bg); }
 .nx-join-brand { display: flex; align-items: center; gap: 10px; padding: 20px 28px; color: #fff; }
 .nx-join-main { flex: 1; display: flex; align-items: center; justify-content: center; gap: clamp(28px, 5vw, 64px); padding: 12px clamp(16px, 5vw, 72px) 56px; }
 .nx-join-stage { width: min(720px, 58vw); display: grid; gap: 12px; animation: nx-tile-in .5s var(--nx-ease) both; }
@@ -595,34 +595,34 @@
   .nx-pip > .nx-tile { border-radius: 22px; }
   .nx-pip .nx-tile-name { display: none; }
 
-  .nx-bar { display: flex; justify-content: center; padding: 10px 10px max(12px, env(safe-area-inset-bottom)); transition: transform .3s var(--nx-ease), opacity .2s ease; }
+  .nx-bar { display: flex; justify-content: center; padding: 10px 10px max(12px, var(--safe-bottom)); transition: transform .3s var(--nx-ease), opacity .2s ease; }
   .nx-dock { width: 100%; max-width: 440px; justify-content: space-between; gap: 4px; padding: 0; border: 0; border-radius: 0; background: transparent; }
   .nx-ctl, .nx-ctl.labelled { width: 52px; height: 52px; flex-direction: row; border-radius: 50%; }
   .nx-ctl.leave { width: 64px; height: 52px; padding: 0; border-radius: 26px; }
   .nx-ctl-text, .nx-ctl-label { display: none; }
 
   /* Tap the picture: the controls slide away for a full-screen view, and come back on the next tap. */
-  .nx-room.chrome-hidden .nx-top { position: absolute; top: env(safe-area-inset-top); left: 0; right: 0; transform: translateY(-120%); opacity: 0; pointer-events: none; }
+  .nx-room.chrome-hidden .nx-top { position: absolute; top: var(--safe-top); left: 0; right: 0; transform: translateY(-120%); opacity: 0; pointer-events: none; }
   .nx-room.chrome-hidden .nx-bar { position: absolute; bottom: 0; left: 0; right: 0; transform: translateY(120%); opacity: 0; pointer-events: none; }
-  .nx-room.chrome-hidden .nx-body { padding: 8px 8px max(8px, env(safe-area-inset-bottom)); }
+  .nx-room.chrome-hidden .nx-body { padding: 8px 8px max(8px, var(--safe-bottom)); }
 
   /* Menus and panels: rounded cards floating just above the bottom edge. */
-  .nx-popover { position: fixed; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); width: auto; max-height: 78dvh; border-radius: 28px; transform: none; animation: nx-sheet-in .35s var(--nx-ease) both; }
-  .nx-react-pop { bottom: calc(92px + env(safe-area-inset-bottom)); justify-content: space-between; padding: 8px; overflow-x: auto; }
+  .nx-popover { position: fixed; left: 8px; right: 8px; bottom: calc(8px + var(--safe-bottom)); width: auto; max-height: 78dvh; border-radius: 28px; transform: none; animation: nx-sheet-in .35s var(--nx-ease) both; }
+  .nx-react-pop { bottom: calc(92px + var(--safe-bottom)); justify-content: space-between; padding: 8px; overflow-x: auto; }
   .nx-react-pop button { width: 42px; height: 42px; font-size: 26px; }
   .nx-menu { padding: 6px 10px 12px; }
   .nx-menu-item { min-height: 52px; border-radius: 14px; font-size: 15px; }
   .nx-menu-grid button { border-radius: 18px; }
   .nx-sheet-grip { display: block; width: 40px; height: 5px; margin: 8px auto 6px; border-radius: 3px; background: var(--nx-line-2); }
   .nx-sheet-backdrop { display: block; position: fixed; z-index: 29; inset: 0; border: 0; background: rgb(4 10 26 / 60%); animation: nx-fade .2s ease-out; }
-  .nx-panel { position: fixed; z-index: 30; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); width: auto; height: calc(86dvh - env(safe-area-inset-bottom)); border-radius: 28px; animation: nx-sheet-in .35s var(--nx-ease) both; }
+  .nx-panel { position: fixed; z-index: 30; left: 8px; right: 8px; bottom: calc(8px + var(--safe-bottom)); width: auto; height: calc(86dvh - var(--safe-bottom)); border-radius: 28px; animation: nx-sheet-in .35s var(--nx-ease) both; }
   .nx-panel-head { padding-top: 4px; border-bottom: 0; }
   .nx-chat-form textarea, .nx-send { border-radius: 23px; }
   .nx-chat-form textarea { font-size: 16px; } /* 16px stops iPhones zooming in on the box */
   .nx-bubble { border-radius: 20px 20px 20px 8px; }
   .nx-msg.mine .nx-bubble { border-radius: 20px 20px 8px 20px; }
   .nx-toast { border-radius: 20px; }
-  .nx-dialog { position: fixed; bottom: calc(8px + env(safe-area-inset-bottom)); border-radius: 26px; }
+  .nx-dialog { position: fixed; bottom: calc(8px + var(--safe-bottom)); border-radius: 26px; }
   .nx-dialog-actions .nx-btn { flex: 1; min-height: 48px; border-radius: 24px; }
   .nx-lobby { left: 8px; right: 8px; width: auto; }
   .nx-lobby-card { border-radius: 22px; }
@@ -633,11 +633,11 @@
   .nx-pinned-chip { top: auto; bottom: 10px; }
   .view-present .nx-pinned-chip, .view-spotlight .nx-pinned-chip { bottom: 124px; }
 
-  .nx-mini { right: 10px; bottom: calc(76px + env(safe-area-inset-bottom)); width: 220px; border-radius: 24px; }
+  .nx-mini { right: 10px; bottom: calc(76px + var(--safe-bottom)); width: 220px; border-radius: 24px; }
   .nx-mini-picture { height: 124px; }
 
   .nx-ring-backdrop { align-items: end; padding: 10px; }
-  .nx-ring { padding: 36px 20px max(26px, env(safe-area-inset-bottom)); border-radius: 30px; animation-name: nx-sheet-in; }
+  .nx-ring { padding: 36px 20px max(26px, var(--safe-bottom)); border-radius: 30px; animation-name: nx-sheet-in; }
 
   .nx-join { height: 100dvh; }
   .nx-join-brand { padding: 14px 18px; }
@@ -646,14 +646,6 @@
   .nx-join-preview { aspect-ratio: 3 / 4; max-height: 54dvh; border-radius: 28px; }
   .nx-join-card { width: 100%; padding: 22px 18px; border-radius: 26px; }
   .nx-join-card h1 { font-size: 24px; }
-}
-
-/* Full-screen calls use the same single inset owner inside the Android app. */
-@media (max-width: 760px) {
-  html.native-android .nx-room { padding-top: 0; padding-right: 0; padding-left: 0; }
-  html.native-android .nx-bar { padding-bottom: 12px; }
-  html.native-android .nx-room.chrome-hidden .nx-top { top: 0; }
-  html.native-android .nx-room.chrome-hidden .nx-body { padding-bottom: 8px; }
 }
 
 /* =====================================================================================
